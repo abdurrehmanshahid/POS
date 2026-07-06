@@ -1,0 +1,25 @@
+# Normalize line endings on commit
+* text=auto eol=lf
+
+# Windows-specific scripts keep CRLF
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Binary assets — never diff or modify
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.pdf binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.eot binary
+*.zip binary
+
+# Language stats & diff hints
+*.lock linguist-generated=true
+package-lock.json linguist-generated=true
+pnpm-lock.yaml linguist-generated=true
+yarn.lock linguist-generated=true

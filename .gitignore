@@ -1,0 +1,51 @@
+# Dependencies
+node_modules/
+vendor/
+.venv/
+venv/
+__pycache__/
+*.pyc
+
+# Build output
+dist/
+build/
+out/
+*.tsbuildinfo
+coverage/
+.next/
+.nuxt/
+
+# Environment & secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+secrets.*
+
+# Logs
+*.log
+logs/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# OS & editor
+.DS_Store
+Thumbs.db
+.idea/
+*.swp
+*.swo
+
+# VSCode (keep shared settings, ignore local)
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+!.vscode/launch.json
+
+# Package manager
+.pnp.*
+.yarn/*
+!.yarn/patches
+!.yarn/releases
