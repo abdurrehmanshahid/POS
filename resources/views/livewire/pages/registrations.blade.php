@@ -38,6 +38,9 @@ new class extends Component {
     public bool $genChallans = true;
     public array $wizErrors = [];
 
+    /** Existing student holding the CNIC currently typed, if any. */
+    public ?int $cnicClashId = null;
+
     // ---- Shared drawer -----------------------------------------------------
     public function select(int $challanId): void { $this->drawerId = $challanId; }
     public function closeDrawer(): void { $this->drawerId = null; }
@@ -134,6 +137,117 @@ new class extends Component {
 
     public function back(): void { if ($this->step > 1) { $this->step--; } }
 
+    // ---- Live step-1 validation --------------------------------------------
+    //
+    // The wizard used to say nothing until Continue was pressed, so a mistyped
+    // CNIC surfaced only after the officer had mentally moved on, and a person
+    // already in the system was not discovered until the unique index rejected
+    // the insert at the very end. Each field now answers for itself as it is
+    // typed, and the CNIC additionally looks for the human behind it.
+
+    public function updatedNewName(): void { $this->checkName(); }
+
+    public function updatedNewGuardian(): void { $this->checkGuardian(); }
+
+    public function updatedNewPhone(): void { $this->checkPhone(); }
+
+    public function updatedNewCnic(): void { $this->checkCnic(); }
+
+    private function checkName(): void
+    {
+        $this->setFieldError('name', trim($this->newName) === '' ? 'Student name is required.' : null);
+    }
+
+    private function checkGuardian(): void
+    {
+        $this->setFieldError('guardian', trim($this->newGuardian) === '' ? 'Guardian name is required.' : null);
+    }
+
+    private function checkPhone(): void
+    {
+        $raw = trim($this->newPhone);
+        // Silent while the number is still being typed. Nagging someone about an
+        // incomplete value they are mid-way through entering trains them to
+        // ignore the error colour entirely.
+        $this->setFieldError('phone', $raw === '' || Contact::normalizePhone($raw)
+            ? null
+            : 'Enter a valid PK mobile (+92 3XX XXXXXXX).');
+    }
+
+    /**
+     * Format first, then identity. A CNIC uniquely identifies a person, so one
+     * already on file almost always means "this student is back for another
+     * course", not "a new person coincidentally shares an ID". The clash is
+     * therefore surfaced as an offer to enrol them, not as a dead end.
+     */
+    private function checkCnic(): void
+    {
+        $this->cnicClashId = null;
+        $cnic = trim($this->newCnic);
+
+        if ($cnic === '' || strlen($cnic) < 15) {
+            $this->setFieldError('cnic', null);
+
+            return;
+        }
+
+        if (! Contact::validCnic($cnic)) {
+            $this->setFieldError('cnic', 'CNIC must be #####-#######-#.');
+
+            return;
+        }
+
+        $clash = Student::withTrashed()->where('cnic', $cnic)->first();
+
+        if ($clash && $clash->trashed()) {
+            $this->setFieldError('cnic', 'That CNIC belongs to a removed student ('.$clash->student_code.'). Restore that record instead.');
+
+            return;
+        }
+
+        $this->setFieldError('cnic', null);
+        // A live student is shown as a card with an action, not as an error.
+        $this->cnicClashId = $clash?->id;
+    }
+
+    private function setFieldError(string $key, ?string $message): void
+    {
+        if ($message === null) {
+            unset($this->wizErrors[$key]);
+        } else {
+            $this->wizErrors[$key] = $message;
+        }
+    }
+
+    /**
+     * Switch to the existing person instead of minting a duplicate of them.
+     * Scoped through visibleTo so this cannot be used to reach a student the
+     * officer is not allowed to see, even though the CNIC lookup that surfaced
+     * them is deliberately global.
+     */
+    public function useExistingStudent(): void
+    {
+        $student = $this->cnicClashId
+            ? Student::visibleTo(auth()->user())->find($this->cnicClashId)
+            : null;
+
+        if (! $student) {
+            $this->dispatch('bbt-toast', tone: 'warn', title: 'That record is not yours to enrol',
+                msg: 'Ask an administrator to enrol this student.');
+
+            return;
+        }
+
+        $this->mode = 'existing';
+        $this->pickedStudentId = $student->id;
+        $this->studentSearch = $student->student_code;
+        $this->cnicClashId = null;
+        $this->wizErrors = [];
+        $this->reset('newName', 'newGuardian', 'newPhone', 'newCnic');
+
+        $this->dispatch('bbt-toast', tone: 'ok', title: 'Existing student selected', msg: $student->name.' · '.$student->student_code);
+    }
+
     public function next(): void
     {
         $this->wizErrors = [];
@@ -141,10 +255,20 @@ new class extends Component {
             if ($this->mode === 'existing') {
                 if (! $this->pickedStudentId) { $this->wizErrors['student'] = 'Select a student to continue.'; return; }
             } else {
-                if (! trim($this->newName)) { $this->wizErrors['name'] = 'Student name is required.'; }
-                if (! trim($this->newGuardian)) { $this->wizErrors['guardian'] = 'Guardian name is required.'; }
+                // Re-run every check rather than trusting what the live hooks
+                // left behind: a field never touched has never been validated.
+                $this->checkName();
+                $this->checkGuardian();
                 if (! Contact::normalizePhone($this->newPhone)) { $this->wizErrors['phone'] = 'Enter a valid PK mobile (+92 3XX XXXXXXX).'; }
                 if (! Contact::validCnic($this->newCnic)) { $this->wizErrors['cnic'] = 'CNIC must be #####-#######-#.'; }
+                else { $this->checkCnic(); }
+
+                if ($this->cnicClashId) {
+                    $this->dispatch('bbt-toast', tone: 'warn', title: 'That CNIC is already registered',
+                        msg: 'Enrol the existing student instead of creating a duplicate.');
+
+                    return;
+                }
                 if ($this->wizErrors) { $this->dispatch('bbt-toast', tone: 'err', title: 'Fix the highlighted fields'); return; }
             }
         }
@@ -227,6 +351,7 @@ new class extends Component {
                         ->orWhere('student_code', 'like', '%'.$this->studentSearch.'%'))
                         ->limit(6)->get()
                     : collect(),
+                'cnicClash' => $this->cnicClashId ? Student::find($this->cnicClashId) : null,
                 'pickedStudent' => $this->pickedStudentId ? Student::find($this->pickedStudentId) : null,
             ];
         }

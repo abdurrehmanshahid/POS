@@ -46,12 +46,52 @@
                     <button wire:click="$set('newType','T')" style="flex:1;padding:14px;border:1.5px solid {{ $newType === 'T' ? 'var(--iris)' : 'var(--border2)' }};background:{{ $newType === 'T' ? 'var(--iris-bg)' : 'var(--surface)' }};border-radius:12px;cursor:pointer;text-align:left"><div style="font-size:13.5px;font-weight:700;color:var(--ink)">Track</div><div class="tnum" style="font-size:11.5px;color:var(--muted)">T26-####</div></button>
                 </div>
                 <div style="padding:10px 14px;background:var(--iris-bg);border-radius:10px;margin-bottom:18px;font-size:12.5px;color:var(--iris);font-weight:600">ID to assign: <span class="tnum">{{ $studentCodePreview }}</span></div>
+                {{-- Every field answers as it is typed. Phone and CNIC are masked
+                     into the exact shape the server stores, so the officer reads
+                     back precisely what will be written. --}}
                 <div class="grid-2">
-                    <div><label class="label">Student name</label><input wire:model="newName" class="input {{ ($wizErrors['name'] ?? false) ? 'is-error' : '' }}" placeholder="Full name">@if ($wizErrors['name'] ?? false)<span class="field-error">{{ $wizErrors['name'] }}</span>@endif</div>
-                    <div><label class="label">Guardian name</label><input wire:model="newGuardian" class="input {{ ($wizErrors['guardian'] ?? false) ? 'is-error' : '' }}" placeholder="Guardian / parent">@if ($wizErrors['guardian'] ?? false)<span class="field-error">{{ $wizErrors['guardian'] }}</span>@endif</div>
-                    <div><label class="label">Phone</label><input wire:model="newPhone" class="input {{ ($wizErrors['phone'] ?? false) ? 'is-error' : '' }}" placeholder="+92 3XX XXXXXXX">@if ($wizErrors['phone'] ?? false)<span class="field-error">{{ $wizErrors['phone'] }}</span>@endif</div>
-                    <div><label class="label">CNIC / B-Form</label><input wire:model="newCnic" class="input {{ ($wizErrors['cnic'] ?? false) ? 'is-error' : '' }}" placeholder="#####-#######-#">@if ($wizErrors['cnic'] ?? false)<span class="field-error">{{ $wizErrors['cnic'] }}</span>@endif</div>
+                    <div>
+                        <label class="label">Student name</label>
+                        <input wire:model.live.debounce.400ms="newName" class="input {{ ($wizErrors['name'] ?? false) ? 'is-error' : '' }}" placeholder="Full name">
+                        @if ($wizErrors['name'] ?? false)<span class="field-error">{{ $wizErrors['name'] }}</span>@endif
+                    </div>
+                    <div>
+                        <label class="label">Guardian name</label>
+                        <input wire:model.live.debounce.400ms="newGuardian" class="input {{ ($wizErrors['guardian'] ?? false) ? 'is-error' : '' }}" placeholder="Guardian / parent">
+                        @if ($wizErrors['guardian'] ?? false)<span class="field-error">{{ $wizErrors['guardian'] }}</span>@endif
+                    </div>
+                    <div>
+                        <label class="label">Phone</label>
+                        <input wire:model.live.debounce.400ms="newPhone" inputmode="numeric" maxlength="18"
+                               x-data x-on:input="window.bbtApplyMask($el, window.bbtMaskPhone)"
+                               class="input {{ ($wizErrors['phone'] ?? false) ? 'is-error' : '' }}" placeholder="+92 3XX XXXXXXX">
+                        @if ($wizErrors['phone'] ?? false)<span class="field-error">{{ $wizErrors['phone'] }}</span>@endif
+                    </div>
+                    <div>
+                        <label class="label">CNIC / B-Form</label>
+                        <input wire:model.live.debounce.400ms="newCnic" inputmode="numeric" maxlength="15"
+                               x-data x-on:input="window.bbtApplyMask($el, window.bbtMaskCnic)"
+                               class="input {{ ($wizErrors['cnic'] ?? false) ? 'is-error' : '' }}" placeholder="#####-#######-#">
+                        @if ($wizErrors['cnic'] ?? false)<span class="field-error">{{ $wizErrors['cnic'] }}</span>@endif
+                    </div>
                 </div>
+
+                {{-- A CNIC already on file means the person is already a student.
+                     Offer them rather than blocking, since "back for another
+                     course" is overwhelmingly the reason this happens. --}}
+                @if ($cnicClash)
+                    <div class="anim-fade" style="display:flex;align-items:center;gap:13px;margin-top:16px;padding:14px 16px;border:1.5px solid var(--due);background:var(--due-bg);border-radius:13px">
+                        <x-ui.avatar :name="$cnicClash->name" variant="orange" :size="38" />
+                        <div style="flex:1;min-width:0">
+                            <div style="font-size:12px;font-weight:800;color:var(--due);letter-spacing:.02em;text-transform:uppercase">Already registered</div>
+                            <div style="font-size:14px;font-weight:700;color:var(--ink);margin-top:2px">{{ $cnicClash->name }}</div>
+                            <div class="tnum" style="font-size:12px;color:var(--muted)">{{ $cnicClash->student_code }} · {{ $cnicClash->cnic }}</div>
+                        </div>
+                        <button class="btn btn-accent" style="flex:none" wire:click="useExistingStudent">
+                            <x-icon name="check" :size="15" /> Enrol this student
+                        </button>
+                    </div>
+                @endif
             @endif
         @endif
 

@@ -30,10 +30,28 @@ new class extends Component {
 
     public string $fCnic = '';
 
+    /**
+     * `drawerOpen` and `selectedId` are two pieces of state describing one
+     * thing, so they are only ever set together, and only for a student who
+     * actually resolves through the visibility scope. When they drifted apart
+     * the drawer rendered as an empty white panel with no header and therefore
+     * no close button, because the shell was gated on the flag while its
+     * contents were gated on the record.
+     */
     public function viewStudent(int $id): void
     {
+        if (! Student::visibleTo(auth()->user())->whereKey($id)->exists()) {
+            return;
+        }
+
         $this->selectedId = $id;
         $this->drawerOpen = true;
+    }
+
+    public function closeDrawer(): void
+    {
+        $this->drawerOpen = false;
+        $this->selectedId = null;
     }
 
     /**
@@ -237,13 +255,14 @@ new class extends Component {
         </div>
     </div>
 
-    {{-- Student drawer --}}
-    <div x-data="{ open: @entangle('drawerOpen') }">
-        <template x-if="open">
-            <div>
-                <div class="drawer-backdrop" @click="open=false"></div>
-                <div class="drawer">
-                    @if ($selected)
+    {{-- Student drawer. Gated on $selected, never on the flag alone: an open
+         drawer with nothing to show is an unclosable white rectangle. --}}
+    @if ($selected)
+        <div x-data="{ open: @entangle('drawerOpen') }">
+            <template x-if="open">
+                <div>
+                    <div class="drawer-backdrop" wire:click="closeDrawer"></div>
+                    <div class="drawer">
                         @php
                             $recent = $selected->admissions->sortByDesc('id')->first();
                             $enrolledBy = $recent?->enroller?->name ?? 'Not enrolled';
@@ -254,7 +273,7 @@ new class extends Component {
                                 <div style="font-size:16px;font-weight:800;color:var(--ink)">{{ $selected->name }}</div>
                                 <div class="tnum" style="font-size:12.5px;color:var(--iris);font-weight:700;margin-top:2px">{{ $selected->student_code }}</div>
                             </div>
-                            <button class="btn-icon" @click="open=false"><x-icon name="x" :size="18" /></button>
+                            <button class="btn-icon" wire:click="closeDrawer"><x-icon name="x" :size="18" /></button>
                         </div>
                         <div class="drawer-body">
                             <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px 18px;margin-bottom:24px">
@@ -311,11 +330,11 @@ new class extends Component {
                                 @endif
                             </div>
                         </div>
-                    @endif
+                    </div>
                 </div>
-            </div>
-        </template>
-    </div>
+            </template>
+        </div>
+    @endif
 
     {{-- ---- Add / edit student drawer ------------------------------------ --}}
     <div x-data="{ open: @entangle('formOpen') }">
@@ -373,12 +392,16 @@ new class extends Component {
                             <div style="height:12px"></div>
 
                             <label class="label">Phone</label>
-                            <input wire:model="fPhone" type="text" class="input tnum" placeholder="0300 1234567" style="margin-bottom:4px">
+                            <input wire:model="fPhone" type="text" inputmode="numeric" maxlength="18"
+                                   x-data x-on:input="window.bbtApplyMask($el, window.bbtMaskPhone)"
+                                   class="input tnum" placeholder="+92 300 1234567" style="margin-bottom:4px">
                             @error('fPhone')<div style="font-size:11.5px;color:var(--over);margin-bottom:8px">{{ $message }}</div>@enderror
                             <div style="height:12px"></div>
 
                             <label class="label">CNIC / B-Form</label>
-                            <input wire:model="fCnic" type="text" class="input tnum" placeholder="35201-1234567-1" style="margin-bottom:4px">
+                            <input wire:model="fCnic" type="text" inputmode="numeric" maxlength="15"
+                                   x-data x-on:input="window.bbtApplyMask($el, window.bbtMaskCnic)"
+                                   class="input tnum" placeholder="35201-1234567-1" style="margin-bottom:4px">
                             @error('fCnic')<div style="font-size:11.5px;color:var(--over);margin-bottom:8px">{{ $message }}</div>@enderror
 
                             <div style="display:flex;gap:10px;margin-top:24px">

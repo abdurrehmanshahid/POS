@@ -260,15 +260,21 @@ new class extends Component {
                         </div>
                     @endif
 
-                    <div style="display:flex;align-items:center;justify-content:space-between;padding-top:4px;border-top:1px solid var(--surface3)">
+                    {{-- The fee is the number people scan for, so it never wraps
+                         and never shares a line with a word. Deactivate is an
+                         icon: spelling it out cost ~90px and pushed the amount
+                         onto two lines on anything narrower than a desktop. --}}
+                    <div class="card-foot">
                         <div>
                             <div style="font-size:10.5px;font-weight:700;letter-spacing:.04em;color:var(--faint)">FEE</div>
-                            <div class="tnum" style="font-size:16px;font-weight:800;color:var(--ink)">{{ Format::money($c->fee) }}</div>
+                            <div class="tnum" style="font-size:16px;font-weight:800;color:var(--ink);white-space:nowrap">{{ Format::money($c->fee) }}</div>
                         </div>
                         @if ($canManage)
-                            <div style="display:flex;gap:7px">
-                                <button class="btn btn-sm btn-ghost" wire:click.stop="toggleActive({{ $c->id }})">
-                                    {{ $c->is_active ? 'Deactivate' : 'Activate' }}
+                            @php $toggleLabel = $c->is_active ? 'Deactivate course' : 'Activate course'; @endphp
+                            <div class="card-foot-actions">
+                                <button class="btn-icon btn-icon-plain" wire:click.stop="toggleActive({{ $c->id }})"
+                                        title="{{ $toggleLabel }}" aria-label="{{ $toggleLabel }}">
+                                    <x-icon :name="$c->is_active ? 'minus-circle' : 'check-circle'" :size="17" />
                                 </button>
                                 <button class="btn btn-sm btn-primary" wire:click.stop="editCourse({{ $c->id }})">
                                     <x-icon name="edit" :size="14" /> Edit

@@ -9,6 +9,10 @@ use Livewire\Volt\Component;
 
 new class extends Component {
     public string $q = '';
+
+    /** all | paid | unpaid | overdue. Status was only reachable by typing it. */
+    public string $state = 'all';
+
     public ?int $drawerId = null;
     public ?int $payId = null;
     public string $payMethod = '';
@@ -96,9 +100,21 @@ new class extends Component {
         $L = app(Ledger::class);
         $matcher = new Matcher($this->q);
 
-        $rows = $this->scoped()
-            ->with(['admission.student', 'admission.course'])
-            ->get()
+        $all = $this->scoped()->with(['admission.student', 'admission.course'])->get();
+
+        // Counts come from the unfiltered set, so a chip always shows how many
+        // it would reveal rather than how many survived the current filter.
+        $counts = [
+            'all' => $all->count(),
+            'paid' => $all->where('status', 'paid')->count(),
+            'unpaid' => $all->filter(fn (Challan $c) => $c->paymentState() === 'unpaid')->count(),
+            'overdue' => $all->filter(fn (Challan $c) => $c->paymentState() === 'overdue')->count(),
+        ];
+
+        $rows = $all
+            ->when($this->state !== 'all', fn ($rows) => $rows->filter(
+                fn (Challan $c) => $c->paymentState() === $this->state
+            ))
             ->filter(function (Challan $c) use ($matcher) {
                 $a = $c->admission;
 
@@ -121,6 +137,7 @@ new class extends Component {
             'received' => $L->received($user),
             'outstanding' => $L->outstanding($user),
             'rows' => $rows,
+            'counts' => $counts,
             'selected' => $this->drawerId
                 ? $this->scoped()->with(['admission.student', 'admission.course.trainer', 'admission.enroller', 'discountApprover', 'auditLogs.actor', 'installments'])->find($this->drawerId)
                 : null,
@@ -147,9 +164,21 @@ new class extends Component {
         </div>
     @endif
 
-    <div style="display:flex;align-items:center;gap:14px;margin-bottom:16px">
-        <div style="flex:1"><span style="font-size:15px;font-weight:700;color:var(--ink)">Fee challans</span> <span style="font-size:12.5px;color:var(--muted)">{{ $rows->count() }} shown</span></div>
+    <div style="display:flex;align-items:center;gap:14px;margin-bottom:16px;flex-wrap:wrap">
+        <div style="flex:1;min-width:150px"><span style="font-size:15px;font-weight:700;color:var(--ink)">Fee challans</span> <span style="font-size:12.5px;color:var(--muted)">{{ $rows->count() }} shown</span></div>
         <div class="search" style="width:300px"><x-icon name="search" :size="15" /><input wire:model.live.debounce.200ms="q" class="input" placeholder="Search challan #, student, course, status…"></div>
+    </div>
+
+    {{-- Status was previously reachable only by typing it into the search box,
+         which is not an affordance so much as a secret. --}}
+    <div style="display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap">
+        @foreach (['all' => 'All', 'unpaid' => 'Unpaid', 'overdue' => 'Overdue', 'paid' => 'Paid'] as $key => $label)
+            <button wire:click="$set('state', '{{ $key }}')"
+                    class="btn btn-sm {{ $state === $key ? 'btn-primary' : 'btn-ghost' }}">
+                {{ $label }}
+                <span class="tnum" style="opacity:.65;margin-left:4px">{{ $counts[$key] }}</span>
+            </button>
+        @endforeach
     </div>
 
     <div class="panel scroll-x">
@@ -173,9 +202,18 @@ new class extends Component {
                         <td class="right tnum" style="font-weight:700">{{ Format::money($c->net_amount) }}</td>
                         <td><x-ui.pill :tone="$tone" :dot="true">{{ $label }}</x-ui.pill></td>
                         <td class="right">
-                            @if ($canPay && ! $c->isPaid())
-                                <button class="btn btn-ghost btn-sm" wire:click.stop="askPay({{ $c->id }})">Mark paid</button>
-                            @endif
+                            <div style="display:flex;gap:6px;justify-content:flex-end;align-items:center">
+                                @if ($canPay && ! $c->isPaid())
+                                    <button class="btn btn-ghost btn-sm" wire:click.stop="askPay({{ $c->id }})">Mark paid</button>
+                                @endif
+                                {{-- The PDF used to be reachable only after opening the
+                                     drawer, so the commonest action on the screen was
+                                     also the least visible one. --}}
+                                <a class="btn-icon btn-icon-plain" href="{{ route('challans.pdf', $c) }}" target="_blank"
+                                   wire:click.stop title="View challan PDF" aria-label="View challan PDF">
+                                    <x-icon name="eye" :size="16" />
+                                </a>
+                            </div>
                         </td>
                     </tr>
                 @empty

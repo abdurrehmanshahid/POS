@@ -240,15 +240,54 @@ td.tnum, th.tnum { white-space: nowrap; }
   .sidebar.collapsed .nav-label, .sidebar.collapsed .nav-section { display:block; }
   .main { padding:16px 13px 60px; }
   .topbar { padding:0 14px; }
-  .grid-3, .grid-2, .split { grid-template-columns:1fr !important; }
+  /* .grid-2/.grid-3 are auto-fit and collapse on their own, so they are
+     deliberately not forced to one column here: a 760px tablet still fits two. */
+  .split { grid-template-columns:1fr; }
   .main .panel .table { min-width:560px; }
   .scroll-x { overflow-x:auto; -webkit-overflow-scrolling:touch; }
 }
 
+/* Phones. The drawer becomes a full-width sheet, because 540px of drawer on a
+   390px screen was only ever showing 94vw of it anyway. */
+@media (max-width:560px) {
+  .drawer { width:100%; max-width:100%; }
+  .main { padding:14px 11px 56px; }
+  .card-foot { align-items:flex-start; }
+  .kpi-num { font-size:21px; }
+  .search { width:100% !important; }
+}
+
 /* ---- Grids ------------------------------------------------------------ */
-.grid-3 { display:grid; grid-template-columns:repeat(3,1fr); gap:16px; }
-.grid-2 { display:grid; grid-template-columns:repeat(2,1fr); gap:16px; }
+/* auto-fit rather than a fixed count: the columns collapse when the content
+   stops fitting, instead of at whatever viewport width we guessed. The `min()`
+   keeps a single card from overflowing a phone, where 260px + padding > 100vw. */
+.grid-3 { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(260px,100%),1fr)); gap:16px; }
+.grid-2 { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(300px,100%),1fr)); gap:16px; }
 .split { display:grid; grid-template-columns:1.5fr 1fr; gap:16px; }
+@media (max-width:1024px) { .split { grid-template-columns:1fr; } }
+
+/* ---- Card footer ------------------------------------------------------ */
+/* Amount on the left, actions on the right. `gap` + `flex-wrap` means a narrow
+   card drops the actions onto their own line rather than crushing the number. */
+.card-foot { display:flex; align-items:center; justify-content:space-between;
+  gap:12px; flex-wrap:wrap; padding-top:8px; border-top:1px solid var(--surface3); }
+.card-foot-actions { display:flex; align-items:center; gap:7px; flex:0 0 auto; }
+
+/* ---- Navigation progress ---------------------------------------------- */
+/* Fixed to the viewport top, above everything including drawers. Width is
+   driven by a transition rather than real progress, because wire:navigate
+   cannot report how far along a fetch is; it eases to 90% and the `is-done`
+   class snaps it home. */
+.nav-progress { position:fixed; top:0; left:0; z-index:200; height:2px; width:0;
+  background:linear-gradient(90deg,var(--iris),var(--orange));
+  transition:width .45s cubic-bezier(.2,.8,.2,1), opacity .25s ease; }
+.nav-progress.is-running { width:90%; transition-duration:8s; }
+.nav-progress.is-done { width:100%; opacity:0; transition-duration:.18s,.22s; }
+
+/* Livewire dims a region it is refreshing, so a slow filter reads as pending
+   rather than as stale data the user assumes is current. */
+[wire\:loading\.class~="is-busy"].is-busy, .is-busy { opacity:.55; pointer-events:none;
+  transition:opacity .12s ease; }
 
 /* ---- Super admin panel ------------------------------------------------
    The panel reuses the entire design system but shifts the sidebar accent from

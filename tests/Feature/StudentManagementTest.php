@@ -206,4 +206,93 @@ class StudentManagementTest extends TestCase
             'course_id' => $course->id,
         ]);
     }
+
+    // ---- Live step-1 validation --------------------------------------------
+
+    /**
+     * A CNIC identifies a person, so one already on file means the student is
+     * back for another course. The wizard offers them rather than letting the
+     * officer fill in a whole duplicate and discover the clash at submit.
+     */
+    public function test_typing_an_existing_cnic_offers_that_student_instead_of_duplicating_them(): void
+    {
+        $existing = Student::where('student_code', 'R26-0009')->firstOrFail();
+
+        $c = Livewire::actingAs($this->admin())
+            ->test('pages.registrations')
+            ->call('openWizard')
+            ->set('newCnic', $existing->cnic);
+
+        $c->assertSet('cnicClashId', $existing->id);
+
+        // Continue stays refused while the clash stands, even with every other
+        // field filled in perfectly.
+        $c->set('newName', 'Someone Else')
+            ->set('newGuardian', 'Some Guardian')
+            ->set('newPhone', '+92 300 1234567')
+            ->call('next')
+            ->assertSet('step', 1);
+
+        // Taking the offer switches the wizard onto the existing record.
+        $c->call('useExistingStudent')
+            ->assertSet('mode', 'existing')
+            ->assertSet('pickedStudentId', $existing->id)
+            ->assertSet('cnicClashId', null)
+            ->assertSet('newCnic', '');
+    }
+
+    public function test_step_one_fields_validate_as_they_are_typed(): void
+    {
+        $c = Livewire::actingAs($this->admin())
+            ->test('pages.registrations')
+            ->call('openWizard');
+
+        // Still on step 1, nothing submitted, yet the field already objects.
+        $c->set('newPhone', '12345');
+        $this->assertArrayHasKey('phone', $c->get('wizErrors'));
+
+        $c->set('newPhone', '03001234567');
+        $this->assertArrayNotHasKey('phone', $c->get('wizErrors'));
+
+        $c->set('newCnic', '35201-123');
+        $this->assertArrayNotHasKey('cnic', $c->get('wizErrors'), 'Silent while still being typed.');
+
+        $c->set('newCnic', '35201-1234567-9');
+        $this->assertArrayNotHasKey('cnic', $c->get('wizErrors'));
+        $c->assertSet('cnicClashId', null);
+    }
+
+    // ---- Drawer state -------------------------------------------------------
+
+    /**
+     * The drawer shell used to be gated on the open flag while its contents were
+     * gated on the resolved record, so a student the viewer cannot see produced
+     * an empty white panel with no header and therefore no close button.
+     */
+    public function test_the_drawer_never_opens_without_a_student_to_show(): void
+    {
+        $officer = $this->officer();
+
+        // A student this officer did not enrol: outside their visibility scope.
+        $unreachable = Student::whereNotIn('id', function ($q) use ($officer) {
+            $q->select('student_id')->from('admissions')->where('enrolled_by', $officer->id);
+        })->firstOrFail();
+
+        Livewire::actingAs($officer)
+            ->test('pages.students')
+            ->call('viewStudent', $unreachable->id)
+            ->assertSet('drawerOpen', false)
+            ->assertSet('selectedId', null);
+    }
+
+    public function test_the_drawer_opens_for_a_visible_student_and_closes_cleanly(): void
+    {
+        Livewire::actingAs($this->admin())
+            ->test('pages.students')
+            ->call('viewStudent', Student::where('student_code', 'R26-0009')->firstOrFail()->id)
+            ->assertSet('drawerOpen', true)
+            ->call('closeDrawer')
+            ->assertSet('drawerOpen', false)
+            ->assertSet('selectedId', null);
+    }
 }
