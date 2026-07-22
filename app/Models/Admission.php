@@ -17,7 +17,7 @@ class Admission extends Model
     use HasFactory;
 
     protected $fillable = [
-        'reg_no', 'student_id', 'course_id', 'enrolled_by', 'status', 'rejection_reason',
+        'reg_no', 'student_id', 'course_id', 'cohort_id', 'enrolled_by', 'status', 'rejection_reason',
     ];
 
     public function student(): BelongsTo
@@ -28,6 +28,15 @@ class Admission extends Model
     public function course(): BelongsTo
     {
         return $this->belongsTo(Course::class);
+    }
+
+    /**
+     * The batch this enrolment sits in. Nullable: enrolments that predate
+     * cohorts have none, and inventing one would be fabricating history.
+     */
+    public function cohort(): BelongsTo
+    {
+        return $this->belongsTo(Cohort::class);
     }
 
     public function enroller(): BelongsTo

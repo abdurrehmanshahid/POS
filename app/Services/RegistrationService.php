@@ -19,7 +19,7 @@ use InvalidArgumentException;
  */
 class RegistrationService
 {
-    public function __construct(private Sequences $sequences) {}
+    public function __construct(private Sequences $sequences, private Cohorts $cohorts) {}
 
     /**
      * @param  array{
@@ -67,6 +67,10 @@ class RegistrationService
                     'reg_no' => $this->sequences->nextAdmissionNo(),
                     'student_id' => $student->id,
                     'course_id' => $course->id,
+                    // Joins whichever batch of this course is currently taking
+                    // students. Null when the course runs no batches, which is
+                    // valid: not every course is taught in intakes.
+                    'cohort_id' => $this->cohorts->openFor($course->id)?->id,
                     'enrolled_by' => $actor->id,
                     'status' => 'validated',
                 ]);

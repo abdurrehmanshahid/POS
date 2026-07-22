@@ -34,6 +34,19 @@ class Course extends Model
         return $this->hasMany(Admission::class);
     }
 
+    public function cohorts(): HasMany
+    {
+        return $this->hasMany(Cohort::class);
+    }
+
+    /** The intake new enrolments on this course join, if one is open. */
+    public function openCohort(): ?Cohort
+    {
+        return $this->relationLoaded('cohorts')
+            ? $this->cohorts->firstWhere('is_open', true)
+            : $this->cohorts()->where('is_open', true)->first();
+    }
+
     // ---- Seats / capacity (spec §7.9) --------------------------------------
 
     /** Seats consumed = validated admissions. Uses the loaded collection when present. */

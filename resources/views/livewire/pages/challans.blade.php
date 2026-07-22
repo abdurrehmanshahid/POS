@@ -65,6 +65,9 @@ new class extends Component {
         $this->dispatch('bbt-toast',
             tone: 'ok',
             title: $settled ? 'Payment recorded' : 'Part payment received',
+            // Fully qualified: the template below already imports Format, and
+            // Volt compiles both blocks into one file where a second `use` of
+            // the same name is a fatal error.
             msg: $challan->challan_no.' · '.\App\Support\Format::money($this->payAmount).' · '.$this->payMethod,
         );
     }
@@ -148,7 +151,7 @@ new class extends Component {
             'rows' => $rows,
             'counts' => $counts,
             'selected' => $this->drawerId
-                ? $this->scoped()->with(['admission.student', 'admission.course.trainer', 'admission.enroller', 'discountApprover', 'auditLogs.actor', 'installments', 'payments.receiver'])->find($this->drawerId)
+                ? $this->scoped()->with(['admission.student', 'admission.course.trainer', 'admission.cohort', 'admission.enroller', 'discountApprover', 'auditLogs.actor', 'installments', 'payments.receiver'])->find($this->drawerId)
                 : null,
             'payChallan' => $this->payId ? $this->scoped()->with(['admission.student', 'payments'])->find($this->payId) : null,
         ];

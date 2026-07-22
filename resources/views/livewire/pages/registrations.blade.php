@@ -66,7 +66,9 @@ new class extends Component {
         $this->dispatch('bbt-toast',
             tone: 'ok',
             title: $challan->fresh()->isPaid() ? 'Payment recorded' : 'Part payment received',
-            msg: $challan->challan_no.' · '.Format::money($this->payAmount).' · '.$this->payMethod,
+            // Fully qualified: the template below already imports Format, and
+            // Volt compiles both blocks into one file.
+            msg: $challan->challan_no.' · '.\App\Support\Format::money($this->payAmount).' · '.$this->payMethod,
         );
     }
 
@@ -373,7 +375,7 @@ new class extends Component {
             'scopeLabel' => $canAll ? 'All registrations' : 'My registrations',
             'rows' => $admissions,
             'selected' => $this->drawerId
-                ? $this->scopedChallans()->with(['admission.student', 'admission.course.trainer', 'admission.enroller', 'discountApprover', 'auditLogs.actor', 'installments', 'payments.receiver'])->find($this->drawerId)
+                ? $this->scopedChallans()->with(['admission.student', 'admission.course.trainer', 'admission.cohort', 'admission.enroller', 'discountApprover', 'auditLogs.actor', 'installments', 'payments.receiver'])->find($this->drawerId)
                 : null,
             'payChallan' => $this->payId ? $this->scopedChallans()->with(['admission.student', 'payments'])->find($this->payId) : null,
         ], $wizard);

@@ -28,6 +28,7 @@ final class Nav
             ],
             'Catalog & People' => [
                 ['route' => 'courses', 'perm' => 'courses.view', 'label' => 'Courses', 'icon' => 'courses'],
+                ['route' => 'cohorts', 'perm' => 'cohorts.manage', 'label' => 'Batches', 'icon' => 'users'],
                 ['route' => 'students', 'perm' => 'students.view', 'label' => 'Students', 'icon' => 'students'],
                 ['route' => 'staff', 'perm' => 'staff.view', 'label' => 'Staff & Roles', 'icon' => 'staff'],
             ],
@@ -48,6 +49,7 @@ final class Nav
             'challans' => 'challans.view',
             'students' => 'students.view',
             'courses' => 'courses.view',
+            'cohorts' => 'cohorts.manage',
             'staff' => 'staff.view',
             'reports' => 'reports.view',
             'datamodel' => 'datamodel.view',
@@ -76,6 +78,7 @@ final class Nav
             'registrations' => ['Registrations', 'Enrol students and track status'],
             'challans' => ['Fee Challans', 'Vouchers, payments and audit'],
             'courses' => ['Courses', 'Catalog, fees and capacity'],
+            'cohorts' => ['Batches', 'Course intakes and their students'],
             'students' => ['Students', 'Student records and fee status'],
             'staff' => ['Staff & Roles', 'Users, roles and permissions'],
             // Not "attendance": nothing in the system captures it, and the card

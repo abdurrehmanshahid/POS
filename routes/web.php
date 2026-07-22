@@ -50,6 +50,7 @@ Route::middleware('auth')->group(function () {
         Volt::route('registrations', 'pages.registrations')->middleware('permission:registrations.view')->name('registrations');
         Volt::route('challans', 'pages.challans')->middleware('permission:challans.view')->name('challans');
         Volt::route('courses', 'pages.courses')->middleware('permission:courses.view')->name('courses');
+        Volt::route('cohorts', 'pages.cohorts')->middleware('permission:cohorts.manage')->name('cohorts');
         Volt::route('students', 'pages.students')->middleware('permission:students.view')->name('students');
         Volt::route('staff', 'pages.staff')->middleware('permission:staff.view')->name('staff');
         Volt::route('reports', 'pages.reports')->middleware('permission:reports.view')->name('reports');

@@ -17,6 +17,8 @@ use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use InvalidArgumentException;
+use Livewire\Livewire;
+use PHPUnit\Framework\Attributes\DataProvider;
 use RuntimeException;
 use Tests\TestCase;
 
@@ -266,6 +268,38 @@ class InstituteCoreTest extends TestCase
         $this->assertSame(0, $challan->balance());
         $this->assertCount(1, $challan->payments);
         $this->assertSame(25000, $challan->payments->first()->amount);
+    }
+
+    /**
+     * Drives the real screens, not just the service. Both pages own a copy of
+     * the pay flow, so a mistake in one is invisible to a test of the other.
+     */
+    #[DataProvider('payScreens')]
+    public function test_the_pay_dialog_records_a_part_payment_on_each_screen(string $screen): void
+    {
+        $challan = Challan::where('challan_no', 'CH-2026-1076')->firstOrFail(); // unpaid, net 25000
+
+        Livewire::actingAs($this->admin())
+            ->test($screen)
+            ->call('askPay', $challan->id)
+            ->assertSet('payAmount', 25000)   // pre-filled with the full balance
+            ->set('payAmount', 10000)
+            ->set('payMethod', 'Cash')
+            ->call('confirmPay')
+            ->assertSet('payId', null);
+
+        $challan->refresh();
+        $this->assertSame(10000, $challan->paidAmount());
+        $this->assertSame(15000, $challan->balance());
+        $this->assertNotSame('paid', $challan->status);
+    }
+
+    public static function payScreens(): array
+    {
+        return [
+            'challans screen' => ['pages.challans'],
+            'registrations screen' => ['pages.registrations'],
+        ];
     }
 
     public function test_cancel_voids_challan_from_totals(): void

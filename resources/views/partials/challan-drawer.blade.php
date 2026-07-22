@@ -36,6 +36,7 @@
                     <div><div style="color:var(--faint)">Trainer</div><div style="color:var(--ink);font-weight:600">{{ $a->course->trainer?->name ?? 'None' }}</div></div>
                     <div><div style="color:var(--faint)">Enrolled by</div><div style="color:var(--ink);font-weight:600">{{ $a->enroller->name }}</div></div>
                     <div><div style="color:var(--faint)">Due date</div><div class="tnum" style="color:var(--ink);font-weight:600">{{ Format::date($selected->due_date) }}</div></div>
+                    <div><div style="color:var(--faint)">Batch</div><div style="color:{{ $a->cohort ? 'var(--ink)' : 'var(--faint)' }};font-weight:600">{{ $a->cohort?->name ?? 'No batch' }}</div></div>
                 </div>
                 @if ($a->status === 'cancelled' && $a->rejection_reason)
                     <div style="margin-top:12px;padding:10px 12px;background:var(--over-bg);border:1px solid var(--over-br);border-radius:10px;font-size:12px;color:var(--over)">Cancelled · {{ $a->rejection_reason }}</div>
