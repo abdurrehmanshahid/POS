@@ -16,31 +16,85 @@ use RuntimeException;
  */
 class ChallanActions
 {
-    /** Record a payment (spec §7.6). Requires a payment method. */
+    /** Settle the whole outstanding balance in one movement (spec §7.6). */
     public function markPaid(Challan $challan, User $actor, string $via): Challan
     {
-        $methods = ['Cash', 'Bank transfer', 'Card', 'Wallet', 'Cheque'];
-        if (! in_array($via, $methods, true)) {
+        return $this->recordPayment($challan, $actor, $challan->balance(), $via);
+    }
+
+    /**
+     * Record one collection against a challan.
+     *
+     * Partial collection is the normal case at the counter: a student pays an
+     * advance on admission and the rest later. Each handover is its own row, so
+     * the challan can say who took how much, when and by what method, rather
+     * than collapsing the whole history into a single paid flag.
+     *
+     * The flag is still maintained, because the status pill, the overdue query
+     * and every existing report read it; it now simply describes whether the
+     * balance has reached zero.
+     */
+    public function recordPayment(Challan $challan, User $actor, int $amount, string $via, ?string $note = null): Challan
+    {
+        if (! in_array($via, config('institute.payment_methods'), true)) {
             throw new RuntimeException('Invalid payment method.');
         }
         if ($challan->status === 'paid') {
             throw new RuntimeException('Challan is already paid.');
         }
+        if ($amount <= 0) {
+            throw new RuntimeException('A payment must be greater than zero.');
+        }
 
-        return DB::transaction(function () use ($challan, $actor, $via) {
+        $balance = $challan->balance();
+        if ($amount > $balance) {
+            // Refusing rather than clamping: someone handing over more than is
+            // owed has misread something, and silently pocketing the difference
+            // would put money in the system that reconciles against nothing.
+            throw new RuntimeException('That is more than the outstanding balance of '.Format::money($balance).'.');
+        }
+
+        return DB::transaction(function () use ($challan, $actor, $amount, $via, $note, $balance) {
+            $challan->payments()->create([
+                'amount' => $amount,
+                'method' => $via,
+                'received_by' => $actor->id,
+                'received_at' => now(),
+                'note' => $note,
+            ]);
+
+            $settled = $amount >= $balance;
+
+            // Derived from the balance read before the insert, not by asking the
+            // relation again: it may already be loaded, and would answer with a
+            // cached collection that predates the row we just wrote.
+            $paidBefore = $challan->net_amount - $balance;
+            $stillDue = $balance - $amount;
+
             $challan->update([
-                'status' => 'paid',
-                'paid_at' => now(),
+                'status' => $settled ? 'paid' : $challan->status,
+                'paid_at' => $settled ? now() : null,
                 'paid_via' => $via,
             ]);
-            $challan->installments()->update(['status' => 'paid', 'paid_at' => now()]);
 
-            Audit::markedPaid($challan, $actor, $via);
+            if ($settled) {
+                $challan->installments()->update(['status' => 'paid', 'paid_at' => now()]);
+                Audit::markedPaid($challan, $actor, $via);
+            } else {
+                Audit::record('Part payment received', $actor, [
+                    'subject' => $challan,
+                    'subject_label' => $challan->challan_no,
+                    'field' => 'paid_amount',
+                    'old_value' => (string) $paidBefore,
+                    'new_value' => (string) ($paidBefore + $amount),
+                ]);
+            }
 
             AppNotification::create([
                 'type' => 'payment',
-                'title' => 'Payment recorded',
-                'sub' => $challan->admission->student->name.', '.Format::money($challan->net_amount).' ('.$via.')',
+                'title' => $settled ? 'Payment recorded' : 'Part payment received',
+                'sub' => $challan->admission->student->name.', '.Format::money($amount).' ('.$via.')'
+                    .($settled ? '' : ', '.Format::money($stillDue).' still due'),
                 'student_id' => $challan->admission->student_id,
                 'challan_id' => $challan->id,
                 'is_revenue' => true,

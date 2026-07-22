@@ -50,8 +50,21 @@
                         <div style="display:flex;justify-content:space-between;padding:8px 0;font-size:13px;border-top:1px solid var(--surface3)"><span style="color:var(--muted)">Discount<div style="font-size:11px;color:var(--faint)">{{ $selected->discount_reason }} · approved by {{ $selected->discountApprover?->name }}</div></span><span class="tnum" style="font-weight:600;color:var(--over)">− {{ Format::money($selected->discount_amount) }}</span></div>
                     @endif
                     <div style="display:flex;justify-content:space-between;padding:10px 0 4px;font-size:14px;border-top:2px solid var(--border)"><span style="font-weight:700;color:var(--ink)">Net payable</span><span class="tnum" style="font-weight:800;color:var(--navy)">{{ Format::money($selected->net_amount) }}</span></div>
+
+                    {{-- Collections, one line per handover of money. --}}
+                    @foreach ($selected->payments->sortBy('received_at') as $p)
+                        <div style="display:flex;justify-content:space-between;padding:7px 0;font-size:12.5px;border-top:1px solid var(--surface3)">
+                            <span style="color:var(--muted)">{{ Format::date($p->received_at) }} · {{ $p->method }}<div style="font-size:11px;color:var(--faint)">received by {{ $p->receiver?->name ?? 'system' }}</div></span>
+                            <span class="tnum" style="font-weight:600;color:var(--paid)">{{ Format::money($p->amount) }}</span>
+                        </div>
+                    @endforeach
+
+                    @if ($selected->balance() > 0 && $selected->paidAmount() > 0)
+                        <div style="display:flex;justify-content:space-between;padding:9px 0 4px;font-size:13.5px;border-top:1px solid var(--border)"><span style="font-weight:700;color:var(--due)">Balance due</span><span class="tnum" style="font-weight:800;color:var(--due)">{{ Format::money($selected->balance()) }}</span></div>
+                    @endif
+
                     @if ($selected->isPaid())
-                        <div style="margin-top:8px;font-size:12px;color:var(--paid);font-weight:600">Paid {{ Format::date($selected->paid_at) }} via {{ $selected->paid_via }}</div>
+                        <div style="margin-top:8px;font-size:12px;color:var(--paid);font-weight:600">Settled {{ Format::date($selected->paid_at) }} via {{ $selected->paid_via }}</div>
                     @endif
                 </div>
             </div>
@@ -91,10 +104,36 @@
             <div class="dialog-body">
                 <h3 style="font-size:17px;font-weight:800;color:var(--ink);margin:0 0 4px">Record payment</h3>
                 <p style="font-size:13px;color:var(--muted);margin:0 0 16px">Confirm collection for <b class="tnum">{{ $payChallan->challan_no }}</b>.</p>
-                <div style="background:var(--surface2);border:1px solid var(--border);border-radius:12px;padding:12px 14px;margin-bottom:16px;display:flex;justify-content:space-between;align-items:center">
-                    <span style="font-size:12.5px;color:var(--muted)">Net payable</span>
-                    <span class="tnum" style="font-size:18px;font-weight:800;color:var(--navy)">{{ Format::money($payChallan->net_amount) }}</span>
+                <div style="background:var(--surface2);border:1px solid var(--border);border-radius:12px;padding:12px 14px;margin-bottom:16px">
+                    <div style="display:flex;justify-content:space-between;align-items:center">
+                        <span style="font-size:12.5px;color:var(--muted)">Net payable</span>
+                        <span class="tnum" style="font-size:15px;font-weight:700;color:var(--ink2)">{{ Format::money($payChallan->net_amount) }}</span>
+                    </div>
+                    @if ($payChallan->paidAmount() > 0)
+                        <div style="display:flex;justify-content:space-between;align-items:center;margin-top:6px">
+                            <span style="font-size:12.5px;color:var(--muted)">Already received</span>
+                            <span class="tnum" style="font-size:15px;font-weight:700;color:var(--paid)">{{ Format::money($payChallan->paidAmount()) }}</span>
+                        </div>
+                    @endif
+                    <div style="display:flex;justify-content:space-between;align-items:center;margin-top:6px;padding-top:8px;border-top:1px solid var(--border)">
+                        <span style="font-size:12.5px;color:var(--muted)">Outstanding balance</span>
+                        <span class="tnum" style="font-size:18px;font-weight:800;color:var(--navy)">{{ Format::money($payChallan->balance()) }}</span>
+                    </div>
                 </div>
+
+                {{-- Pre-filled with the full balance. Editing it down records an
+                     advance and leaves the challan open for the remainder. --}}
+                <div class="label">Amount received</div>
+                <input type="number" wire:model.live="payAmount" min="1" max="{{ $payChallan->balance() }}"
+                       class="input tnum" style="margin-bottom:4px">
+                @if ($payAmount > 0 && $payAmount < $payChallan->balance())
+                    <div style="font-size:11.5px;color:var(--due);font-weight:600;margin-bottom:14px">
+                        Part payment · {{ Format::money($payChallan->balance() - $payAmount) }} will remain due
+                    </div>
+                @else
+                    <div style="height:14px"></div>
+                @endif
+
                 <div class="label">Payment method</div>
                 <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:18px">
                     @foreach (config('institute.payment_methods') as $m)
@@ -103,7 +142,7 @@
                 </div>
                 <div style="display:flex;gap:10px;justify-content:flex-end">
                     <button class="btn btn-ghost" wire:click="$set('payId', null)">Cancel</button>
-                    <button class="btn btn-primary" wire:click="confirmPay" @disabled(! $payMethod)>Confirm payment</button>
+                    <button class="btn btn-primary" wire:click="confirmPay" @disabled(! $payMethod || $payAmount < 1 || $payAmount > $payChallan->balance())>Confirm payment</button>
                 </div>
             </div>
         </div>

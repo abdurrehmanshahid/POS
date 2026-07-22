@@ -168,6 +168,16 @@ class DemoDataSeeder extends Seeder
             }
             if ($status === 'paid') {
                 Audit::markedPaid($challan, $enroller, $via, Carbon::parse($paidAt.' 12:00:00'));
+
+                // Collections are their own rows now, and Ledger::received()
+                // sums them. A challan flagged paid with no payment row would
+                // read as billed-but-never-collected.
+                $challan->payments()->create([
+                    'amount' => $challan->net_amount,
+                    'method' => $via,
+                    'received_by' => $enroller->id,
+                    'received_at' => Carbon::parse($paidAt.' 12:00:00'),
+                ]);
             }
         }
 

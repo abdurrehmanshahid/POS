@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Models\Admission;
 use App\Models\Challan;
 use App\Models\Course;
+use App\Models\Payment;
 use App\Models\User;
 use App\Support\Clock;
 use Illuminate\Database\Eloquent\Builder;
@@ -35,9 +36,17 @@ class Ledger
         return (int) $this->scopedChallans($user)->sum('net_amount');
     }
 
+    /**
+     * Money actually collected: Σ payments, not Σ net of the challans flagged
+     * paid. The two agree whenever every challan was settled in one movement,
+     * and diverge exactly when a student has paid an advance, which is the case
+     * the flag could never express.
+     */
     public function received(User $user): int
     {
-        return (int) $this->scopedChallans($user)->where('status', 'paid')->sum('net_amount');
+        return (int) Payment::query()
+            ->whereIn('challan_id', $this->scopedChallans($user)->select('challans.id'))
+            ->sum('amount');
     }
 
     public function outstanding(User $user): int
@@ -94,8 +103,10 @@ class Ledger
      */
     public function revenueByCourse(User $user, int $limit = 5): array
     {
+        // Σ payments, matching received(): a course where students are halfway
+        // through paying should show the half that arrived, not zero and not all.
         return $this->scopedChallans($user)
-            ->where('challans.status', 'paid')
+            ->join('payments', 'payments.challan_id', '=', 'challans.id')
             ->join('admissions', 'admissions.id', '=', 'challans.admission_id')
             ->join('courses', 'courses.id', '=', 'admissions.course_id')
             ->groupBy('courses.id', 'courses.title', 'courses.code')
@@ -104,7 +115,7 @@ class Ledger
             ->get([
                 'courses.title as title',
                 'courses.code as code',
-                DB::raw('SUM(challans.net_amount) as amount'),
+                DB::raw('SUM(payments.amount) as amount'),
             ])
             ->map(fn ($r) => ['title' => $r->title, 'code' => $r->code, 'amount' => (int) $r->amount])
             ->all();

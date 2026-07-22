@@ -17,6 +17,7 @@ new class extends Component {
     public ?int $drawerId = null;
     public ?int $payId = null;
     public string $payMethod = '';
+    public int $payAmount = 0;
     public ?int $cancelAdmId = null;
     public string $cancelReason = '';
     public string $cancelError = '';
@@ -44,20 +45,29 @@ new class extends Component {
     // ---- Shared drawer -----------------------------------------------------
     public function select(int $challanId): void { $this->drawerId = $challanId; }
     public function closeDrawer(): void { $this->drawerId = null; }
-    public function askPay(int $id): void { $this->payId = $id; $this->payMethod = ''; }
+    public function askPay(int $id): void
+    {
+        $this->payId = $id;
+        $this->payMethod = '';
+        $this->payAmount = (int) ($this->scopedChallans()->find($id)?->balance() ?? 0);
+    }
 
     public function confirmPay(): void
     {
         $challan = $this->scopedChallans()->find($this->payId);
         if (! $challan || ! auth()->user()->can('challans.pay')) { abort(403); }
         try {
-            app(ChallanActions::class)->markPaid($challan, auth()->user(), $this->payMethod);
+            app(ChallanActions::class)->recordPayment($challan, auth()->user(), $this->payAmount, $this->payMethod);
         } catch (\Throwable $e) {
             $this->dispatch('bbt-toast', tone: 'err', title: 'Could not record payment', msg: $e->getMessage());
             return;
         }
         $this->payId = null;
-        $this->dispatch('bbt-toast', tone: 'ok', title: 'Payment recorded', msg: $challan->challan_no.' · '.$this->payMethod);
+        $this->dispatch('bbt-toast',
+            tone: 'ok',
+            title: $challan->fresh()->isPaid() ? 'Payment recorded' : 'Part payment received',
+            msg: $challan->challan_no.' · '.Format::money($this->payAmount).' · '.$this->payMethod,
+        );
     }
 
     public function askCancel(int $admissionId): void { $this->cancelAdmId = $admissionId; $this->cancelReason = ''; $this->cancelError = ''; }
@@ -363,9 +373,9 @@ new class extends Component {
             'scopeLabel' => $canAll ? 'All registrations' : 'My registrations',
             'rows' => $admissions,
             'selected' => $this->drawerId
-                ? $this->scopedChallans()->with(['admission.student', 'admission.course.trainer', 'admission.enroller', 'discountApprover', 'auditLogs.actor', 'installments'])->find($this->drawerId)
+                ? $this->scopedChallans()->with(['admission.student', 'admission.course.trainer', 'admission.enroller', 'discountApprover', 'auditLogs.actor', 'installments', 'payments.receiver'])->find($this->drawerId)
                 : null,
-            'payChallan' => $this->payId ? $this->scopedChallans()->with('admission.student')->find($this->payId) : null,
+            'payChallan' => $this->payId ? $this->scopedChallans()->with(['admission.student', 'payments'])->find($this->payId) : null,
         ], $wizard);
     }
 }; ?>

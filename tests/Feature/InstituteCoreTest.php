@@ -212,6 +212,62 @@ class InstituteCoreTest extends TestCase
         $this->assertTrue($challan->auditLogs()->where('action', 'Marked paid')->exists());
     }
 
+    /**
+     * The counter case the paid/unpaid flag could never express: an advance now,
+     * the balance later. Both movements are their own rows and revenue reflects
+     * the money as it actually arrives.
+     */
+    public function test_a_part_payment_is_collected_without_settling_the_challan(): void
+    {
+        $L = app(Ledger::class);
+        $admin = $this->admin();
+        $receivedBefore = $L->received($admin);
+
+        $challan = Challan::where('challan_no', 'CH-2026-1076')->firstOrFail(); // unpaid, net 25000
+        app(ChallanActions::class)->recordPayment($challan, $admin, 10000, 'Cash');
+
+        $challan->refresh();
+        $this->assertNotSame('paid', $challan->status, 'Money is still owed, so it is not settled.');
+        $this->assertSame(10000, $challan->paidAmount());
+        $this->assertSame(15000, $challan->balance());
+        $this->assertTrue($challan->isPartiallyPaid());
+
+        // The advance counts as revenue the moment it is taken, and the
+        // reporting invariant still holds mid-way through a collection.
+        $this->assertSame($receivedBefore + 10000, $L->received($admin));
+        $this->assertSame($L->billed($admin), $L->received($admin) + $L->outstanding($admin));
+
+        // Settling the remainder closes it out.
+        app(ChallanActions::class)->recordPayment($challan, $admin, 15000, 'Bank transfer');
+        $challan->refresh();
+
+        $this->assertSame('paid', $challan->status);
+        $this->assertSame(0, $challan->balance());
+        $this->assertSame(25000, $challan->paidAmount());
+        $this->assertCount(2, $challan->payments);
+        $this->assertSame($receivedBefore + 25000, $L->received($admin));
+    }
+
+    public function test_a_payment_cannot_exceed_the_outstanding_balance(): void
+    {
+        $challan = Challan::where('challan_no', 'CH-2026-1076')->firstOrFail();
+
+        $this->expectException(RuntimeException::class);
+        app(ChallanActions::class)->recordPayment($challan, $this->admin(), 99999, 'Cash');
+    }
+
+    public function test_mark_paid_settles_the_whole_balance_in_one_movement(): void
+    {
+        $challan = Challan::where('challan_no', 'CH-2026-1076')->firstOrFail();
+        app(ChallanActions::class)->markPaid($challan, $this->admin(), 'Cash');
+
+        $challan->refresh();
+        $this->assertSame('paid', $challan->status);
+        $this->assertSame(0, $challan->balance());
+        $this->assertCount(1, $challan->payments);
+        $this->assertSame(25000, $challan->payments->first()->amount);
+    }
+
     public function test_cancel_voids_challan_from_totals(): void
     {
         $L = app(Ledger::class);

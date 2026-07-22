@@ -45,6 +45,11 @@ class Challan extends Model
         return $this->hasMany(Installment::class);
     }
 
+    public function payments(): HasMany
+    {
+        return $this->hasMany(Payment::class);
+    }
+
     public function auditLogs(): HasMany
     {
         return $this->hasMany(AuditLog::class);
@@ -52,9 +57,34 @@ class Challan extends Model
 
     // ---- Derived state -----------------------------------------------------
 
+    /**
+     * Total collected so far. Uses the loaded relation when it is already in
+     * memory, so rendering a table of challans does not fire a query per row.
+     */
+    public function paidAmount(): int
+    {
+        return (int) ($this->relationLoaded('payments')
+            ? $this->payments->sum('amount')
+            : $this->payments()->sum('amount'));
+    }
+
+    /** What is still owed. Never negative: an overpayment is not a debt. */
+    public function balance(): int
+    {
+        return max(0, $this->net_amount - $this->paidAmount());
+    }
+
     public function isPaid(): bool
     {
         return $this->status === 'paid';
+    }
+
+    /** Collected something, but not all of it. Drives the challan's advance line. */
+    public function isPartiallyPaid(): bool
+    {
+        $paid = $this->paidAmount();
+
+        return $paid > 0 && $paid < $this->net_amount;
     }
 
     /** Unpaid and past its due date (spec §7.8). */
