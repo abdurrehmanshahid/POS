@@ -1,0 +1,315 @@
+<?php
+
+use App\Services\Reporting;
+use App\Support\Clock;
+use App\Support\Format;
+use App\Support\Period;
+use Livewire\Volt\Component;
+
+/**
+ * Reports (spec §9.8, rebuilt).
+ *
+ * What changed and why:
+ *  - The period selector used to be decorative: three options that filtered
+ *    nothing. It now resolves to a real date range that every figure below is
+ *    filtered by, and the resolved range is printed so the filter is never
+ *    ambiguous.
+ *  - Daily collections sat on a "roadmap" banner. They are the report a front
+ *    desk actually needs at closing time, so they now lead the page.
+ *  - The attendance card rendered hardcoded 92% and 78% figures that were pure
+ *    invention and could never change, because nothing in the system captures
+ *    attendance. Inventing numbers on a financial report is worse than omitting
+ *    them, so it is gone until attendance capture exists.
+ *  - Export raised a toast and produced no file. It now streams a real .xlsx.
+ */
+new class extends Component {
+    /**
+     * The selected preset KEY. Deliberately not named `$period`: `with()`
+     * returns the resolved Period object under that name, and a Livewire public
+     * property always shadows a `with()` key of the same name, so the view would
+     * silently receive the string instead of the object.
+     */
+    public string $periodKey = 'month';
+
+    public string $from = '';
+
+    public string $to = '';
+
+    public function setPeriod(string $key): void
+    {
+        $this->periodKey = array_key_exists($key, Period::PRESETS) ? $key : 'month';
+    }
+
+    public function with(): array
+    {
+        $user = auth()->user();
+        $period = Period::resolve($this->periodKey, $this->from ?: null, $this->to ?: null);
+        $reporting = app(Reporting::class);
+
+        // Money blocks are gated by revenue.view, separately from scoping
+        // (spec §6): officers see their own students but never money totals.
+        $canSeeMoney = $user->can('revenue.view');
+        $canSeeOfficers = $canSeeMoney && $user->can('scope.all');
+
+        $series = $canSeeMoney ? $reporting->collectionSeries($user, $period) : collect();
+        $courses = $canSeeMoney ? $reporting->revenueByCourse($user, $period) : collect();
+
+        return [
+            'period' => $period,
+            // The SELECTED key, which is not always the resolved one: picking
+            // "Custom" before typing dates resolves to the month as a fallback.
+            // The control must reflect the choice, or "Custom" can never be
+            // selected long enough to reveal its own date inputs.
+            'selectedKey' => $this->periodKey,
+            'presets' => Period::PRESETS,
+            'canSeeMoney' => $canSeeMoney,
+            'summary' => $canSeeMoney ? $reporting->summary($user, $period) : null,
+            'series' => $series,
+            'seriesPeak' => max(1, $series->max('total') ?: 1),
+            'methods' => $canSeeMoney ? $reporting->byPaymentMethod($user, $period) : collect(),
+            'courses' => $courses,
+            'coursePeak' => max(1, $courses->max('total') ?: 1),
+            'dues' => $reporting->duesAgeing($user),
+            'officers' => $canSeeOfficers ? $reporting->officerPerformance($period) : collect(),
+            'today' => Clock::today(),
+        ];
+    }
+}; ?>
+
+<div class="container-app anim-fade">
+
+    {{-- Toolbar: one row, one baseline, filters left and the action right. --}}
+    <div class="toolbar">
+        <div class="segmented">
+            @foreach ($presets as $key => $label)
+                <button wire:click="setPeriod('{{ $key }}')" class="{{ $selectedKey === $key ? 'on' : '' }}">{{ $label }}</button>
+            @endforeach
+        </div>
+
+        @if ($selectedKey === 'custom')
+            <input type="date" wire:model.live="from" class="input" style="width:156px;height:42px">
+            <span style="font-size:12.5px;color:var(--muted)">to</span>
+            <input type="date" wire:model.live="to" class="input" style="width:156px;height:42px">
+        @endif
+
+        <div class="toolbar-grow"></div>
+
+        <span class="tnum" style="font-size:12.5px;color:var(--muted);white-space:nowrap">{{ $period->rangeLabel() }}</span>
+
+        <a href="{{ route('reports.export', array_filter(['period' => $selectedKey, 'from' => $from, 'to' => $to])) }}"
+           class="btn btn-ghost">
+            <x-icon name="download" :size="16" /> Export Excel
+        </a>
+    </div>
+
+    @if ($canSeeMoney)
+        {{-- Headline figures, including the per-day metric ----------------- --}}
+        <div class="grid-3" style="margin-bottom:16px">
+            @foreach ([
+                ['Collected', $summary['collected'], $summary['payments'].' payment'.($summary['payments'] === 1 ? '' : 's'), 'var(--paid)'],
+                ['Average per day', $summary['per_day'], 'across '.$summary['days'].' day'.($summary['days'] === 1 ? '' : 's'), 'var(--navy2)'],
+                ['Collected today', $summary['today'], Format::date($today), 'var(--iris)'],
+            ] as [$label, $value, $sub, $colour])
+                <div class="card" style="padding:18px 20px">
+                    <div style="font-size:11.5px;font-weight:700;color:var(--faint);letter-spacing:.06em;text-transform:uppercase">{{ $label }}</div>
+                    <div class="tnum" style="font-size:26px;font-weight:800;color:{{ $colour }};margin:7px 0 3px;letter-spacing:-.02em">{{ Format::money($value) }}</div>
+                    <div class="tnum" style="font-size:12px;color:var(--muted)">{{ $sub }}</div>
+                </div>
+            @endforeach
+        </div>
+
+        <div class="split" style="margin-bottom:22px">
+            {{-- Daily collections --------------------------------------- --}}
+            <div class="panel">
+                <div class="panel-head">
+                    <x-icon name="reports" :size="18" style="color:var(--navy2)" />
+                    <h3 class="panel-title">Collections by {{ $period->granularity() }}</h3>
+                    <span class="tnum" style="margin-left:auto;font-size:12px;color:var(--muted)">{{ Format::money($summary['collected']) }} total</span>
+                </div>
+                <div style="padding:20px">
+                    @if ($series->sum('total') > 0)
+                        <div style="display:flex;align-items:flex-end;gap:4px;height:180px">
+                            @foreach ($series as $b)
+                                <div style="flex:1;min-width:0;display:flex;flex-direction:column;align-items:center;gap:6px;height:100%;justify-content:flex-end"
+                                     title="{{ $b->label }} {{ $b->sub }}: {{ Format::money($b->total) }}">
+                                    @if ($b->total > 0)
+                                        <div class="tnum" style="font-size:9.5px;color:var(--faint);font-weight:700;white-space:nowrap">{{ round($b->total / 1000) }}k</div>
+                                    @endif
+                                    <div style="width:100%;border-radius:4px 4px 0 0;min-height:3px;background:{{ $b->total > 0 ? 'var(--navy2)' : 'var(--surface3)' }};height:{{ max(2, round($b->total / $seriesPeak * 100)) }}%"></div>
+                                    @if ($series->count() <= 31)
+                                        <div class="tnum" style="font-size:9.5px;color:var(--muted);font-weight:600">{{ $b->label }}</div>
+                                    @endif
+                                </div>
+                            @endforeach
+                        </div>
+                    @else
+                        <div class="empty-state">No payments were recorded in this period.</div>
+                    @endif
+                </div>
+            </div>
+
+            {{-- Payment methods ------------------------------------------ --}}
+            <div class="panel">
+                <div class="panel-head">
+                    <x-icon name="challans" :size="18" style="color:var(--navy2)" />
+                    <h3 class="panel-title">By payment method</h3>
+                </div>
+                <div style="padding:6px 20px 16px">
+                    @forelse ($methods as $m)
+                        <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 0;border-bottom:1px solid var(--border)">
+                            <div style="min-width:0">
+                                <div style="font-size:13.5px;font-weight:600;color:var(--ink)">{{ $m->method }}</div>
+                                <div class="tnum" style="font-size:11.5px;color:var(--muted)">{{ $m->count }} payment{{ $m->count === 1 ? '' : 's' }}</div>
+                            </div>
+                            <span class="tnum" style="font-size:14px;font-weight:800;color:var(--ink)">{{ Format::money($m->total) }}</span>
+                        </div>
+                    @empty
+                        <div class="empty-state">Nothing collected in this period.</div>
+                    @endforelse
+                </div>
+            </div>
+        </div>
+
+        {{-- Revenue by course ---------------------------------------------- --}}
+        <div class="panel" style="margin-bottom:22px">
+            <div class="panel-head">
+                <x-icon name="courses" :size="18" style="color:var(--navy2)" />
+                <h3 class="panel-title">Revenue by course</h3>
+            </div>
+            <div style="padding:18px 20px">
+                @forelse ($courses as $c)
+                    <div style="margin-bottom:15px">
+                        <div style="display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin-bottom:6px">
+                            <span style="font-size:13px;font-weight:600;color:var(--ink);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
+                                {{ $c->title }}
+                                <span class="tnum" style="color:var(--muted);font-weight:500">· {{ $c->code }} · {{ $c->enrolments }} paid</span>
+                            </span>
+                            <span class="tnum" style="font-size:13px;font-weight:800;color:var(--ink);flex:none">{{ Format::money($c->total) }}</span>
+                        </div>
+                        <div style="height:9px;border-radius:5px;background:var(--surface3);overflow:hidden">
+                            <div style="height:100%;border-radius:5px;background:var(--navy2);width:{{ max(1, round($c->total / $coursePeak * 100)) }}%"></div>
+                        </div>
+                    </div>
+                @empty
+                    <div class="empty-state">No course revenue in this period.</div>
+                @endforelse
+            </div>
+        </div>
+    @endif
+
+    {{-- Officer performance ------------------------------------------------ --}}
+    @if ($officers->isNotEmpty())
+        <div class="panel" style="margin-bottom:22px">
+            <div class="panel-head">
+                <x-icon name="trending-up" :size="18" style="color:var(--navy2)" />
+                <h3 class="panel-title">Officer performance</h3>
+                <span style="margin-left:auto;font-size:12px;color:var(--muted)">{{ $period->label() }}</span>
+            </div>
+            <div class="scroll-x">
+                <table class="table">
+                    <thead>
+                        <tr><th>Officer</th><th>Enrolments</th><th>Billed</th><th>Collected</th><th>Collection rate</th><th>Avg discount</th></tr>
+                    </thead>
+                    <tbody>
+                        @foreach ($officers as $o)
+                            @php
+                                $rate = $o->collection_rate;
+                                $rateColour = $rate === null ? 'var(--faint)'
+                                    : ($rate >= 80 ? 'var(--paid)' : ($rate >= 50 ? 'var(--due)' : 'var(--over)'));
+                            @endphp
+                            <tr @style(['opacity:.5' => $o->is_removed])>
+                                <td>
+                                    <div style="display:flex;align-items:center;gap:11px">
+                                        <x-ui.avatar :name="$o->name" :variant="$o->role_id === 'admin' ? 'navy' : 'orange'" :size="32" />
+                                        <div style="min-width:0">
+                                            <div style="font-weight:600;color:var(--ink)">{{ $o->name }}</div>
+                                            <div class="tnum" style="font-size:12px;color:var(--muted)">{{ $o->username }}</div>
+                                        </div>
+                                    </div>
+                                </td>
+                                <td class="tnum" style="font-weight:700">{{ $o->enrolments }}</td>
+                                <td class="tnum">{{ Format::money($o->billed) }}</td>
+                                <td class="tnum" style="font-weight:700;color:var(--paid)">{{ Format::money($o->received) }}</td>
+                                <td>
+                                    @if ($rate === null)
+                                        <span style="font-size:12.5px;color:var(--faint)">no billing</span>
+                                    @else
+                                        <div style="display:flex;align-items:center;gap:9px;min-width:120px">
+                                            <div style="flex:1;height:6px;border-radius:3px;background:var(--surface3);overflow:hidden">
+                                                <div style="height:100%;border-radius:3px;width:{{ $rate }}%;background:{{ $rateColour }}"></div>
+                                            </div>
+                                            <span class="tnum" style="font-size:12.5px;font-weight:800;color:{{ $rateColour }}">{{ $rate }}%</span>
+                                        </div>
+                                    @endif
+                                </td>
+                                <td class="tnum" style="color:var(--muted)">{{ $o->avg_discount > 0 ? Format::money($o->avg_discount) : 'none' }}</td>
+                            </tr>
+                        @endforeach
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    @endif
+
+    {{-- Outstanding dues, with ageing --------------------------------------- --}}
+    <div class="panel">
+        <div class="panel-head">
+            <x-icon name="alert" :size="18" style="color:var(--due)" />
+            <h3 class="panel-title">Outstanding dues</h3>
+            <span class="tnum" style="margin-left:auto;font-size:12px;color:var(--muted)">
+                {{ Format::money($dues['total']) }} owed in total
+            </span>
+        </div>
+
+        {{-- Ageing buckets. Deliberately NOT filtered by the period: money owed
+             since March is still owed today, and hiding it because the filter
+             says "this month" is how bad debt goes unnoticed. --}}
+        <div class="ageing-row">
+            @foreach ($dues['buckets'] as $b)
+                <div style="background:var(--surface);padding:14px 16px">
+                    <div style="font-size:11px;font-weight:700;color:var(--faint);letter-spacing:.05em;text-transform:uppercase">{{ $b['label'] }}</div>
+                    <div class="tnum" style="font-size:18px;font-weight:800;margin-top:5px;color:{{ $b['total'] > 0 ? ($b['tone'] === 'overdue' ? 'var(--over)' : ($b['tone'] === 'unpaid' ? 'var(--due)' : 'var(--ink)')) : 'var(--faint)' }}">
+                        {{ Format::money($b['total']) }}
+                    </div>
+                    <div class="tnum" style="font-size:11.5px;color:var(--muted);margin-top:2px">{{ $b['count'] }} challan{{ $b['count'] === 1 ? '' : 's' }}</div>
+                </div>
+            @endforeach
+        </div>
+
+        <div class="scroll-x">
+            <table class="table">
+                <thead>
+                    <tr><th>Student</th><th>Courses</th><th>Overdue by</th><th class="right">Owes</th></tr>
+                </thead>
+                <tbody>
+                    @forelse ($dues['students'] as $s)
+                        <tr>
+                            <td>
+                                <div style="display:flex;align-items:center;gap:11px">
+                                    <x-ui.avatar :name="$s->name" variant="orange" :size="30" />
+                                    <div style="min-width:0">
+                                        <div style="font-weight:600;color:var(--ink)">{{ $s->name }}</div>
+                                        <div class="tnum" style="font-size:12px;color:var(--iris);font-weight:700">{{ $s->code }}</div>
+                                    </div>
+                                </div>
+                            </td>
+                            <td style="color:var(--muted);font-size:12.5px">{{ $s->courses }}</td>
+                            <td>
+                                @if ($s->days_late > 0)
+                                    <x-ui.pill :tone="$s->days_late > 60 ? 'overdue' : 'unpaid'" :dot="true">
+                                        {{ $s->days_late }} day{{ $s->days_late === 1 ? '' : 's' }}
+                                    </x-ui.pill>
+                                @else
+                                    <span style="font-size:12.5px;color:var(--muted)">not yet due</span>
+                                @endif
+                            </td>
+                            <td class="right tnum" style="font-weight:800;color:var(--ink);white-space:nowrap">{{ Format::money($s->amount) }}</td>
+                        </tr>
+                    @empty
+                        <tr><td colspan="4" class="empty-state">Every challan in scope is settled.</td></tr>
+                    @endforelse
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
