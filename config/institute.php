@@ -17,6 +17,26 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Identifier prefix
+    |--------------------------------------------------------------------------
+    |
+    | Stamped onto every system-generated identifier: student codes, admission
+    | numbers and challan numbers alike, so anything printed on a document is
+    | recognisably this institute's.
+    |
+    | Single-sourced here rather than written into Sequences, because changing
+    | it is not a code change and because the seeder, the wizard previews and
+    | the backfill migration all have to agree with it exactly.
+    |
+    | Changing this AFTER go-live does not rewrite existing records: identifiers
+    | are already printed on issued challans. New records would simply carry the
+    | new prefix, leaving the series inconsistent. Decide it once, up front.
+    |
+    */
+    'code_prefix' => env('INSTITUTE_CODE_PREFIX', 'BBT-'),
+
+    /*
+    |--------------------------------------------------------------------------
     | Self-service password reset
     |--------------------------------------------------------------------------
     |

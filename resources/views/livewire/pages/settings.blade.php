@@ -79,7 +79,7 @@ new class extends Component {
                     <div class="label" style="margin-bottom:3px">Next challan serial</div>
                     <div style="font-size:12px;color:var(--muted)">System-generated &amp; atomic · cannot be reset by hand.</div>
                 </div>
-                <span class="tnum" style="font-size:15px;font-weight:800;color:var(--ink);font-family:ui-monospace,'SF Mono',Menlo,monospace">CH-2026-{{ $nextSerial }}</span>
+                <span class="tnum" style="font-size:15px;font-weight:800;color:var(--ink);font-family:ui-monospace,'SF Mono',Menlo,monospace">{{ \App\Services\Sequences::challanNo($nextSerial) }}</span>
             </div>
         </div>
     </div>

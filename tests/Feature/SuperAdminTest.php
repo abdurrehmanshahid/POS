@@ -119,7 +119,7 @@ class SuperAdminTest extends TestCase
     public function test_removal_requires_both_the_typed_phrase_and_a_code(): void
     {
         $su = $this->su();
-        $student = Student::where('student_code', 'R26-0001')->firstOrFail();
+        $student = Student::where('student_code', 'BBT-R26-0001')->firstOrFail();
 
         $c = Livewire::actingAs($su, 'superadmin')
             ->test('superadmin.students')
@@ -131,12 +131,12 @@ class SuperAdminTest extends TestCase
         $this->assertNotNull(Student::find($student->id), 'Must not delete on a wrong phrase.');
 
         // Correct phrase, wrong code.
-        $c->set('dangerTyped', 'R26-0001')->set('dangerSecret', '000000')
+        $c->set('dangerTyped', 'BBT-R26-0001')->set('dangerSecret', '000000')
             ->set('dangerReason', 'test')->call('confirmDanger');
         $this->assertNotNull(Student::find($student->id), 'Must not delete on a bad code.');
 
         // Both correct.
-        $c->set('dangerTyped', 'R26-0001')->set('dangerSecret', $this->code())
+        $c->set('dangerTyped', 'BBT-R26-0001')->set('dangerSecret', $this->code())
             ->set('dangerReason', 'Left the institute')->call('confirmDanger');
 
         $this->assertNull(Student::find($student->id), 'Removed from normal queries.');
@@ -146,12 +146,12 @@ class SuperAdminTest extends TestCase
     public function test_removal_is_audited_with_its_reason(): void
     {
         $su = $this->su();
-        $student = Student::where('student_code', 'R26-0001')->firstOrFail();
+        $student = Student::where('student_code', 'BBT-R26-0001')->firstOrFail();
 
         Livewire::actingAs($su, 'superadmin')
             ->test('superadmin.students')
             ->call('askRemove', $student->id)
-            ->set('dangerTyped', 'R26-0001')
+            ->set('dangerTyped', 'BBT-R26-0001')
             ->set('dangerSecret', $this->code())
             ->set('dangerReason', 'Duplicate record')
             ->call('confirmDanger');
@@ -196,17 +196,17 @@ class SuperAdminTest extends TestCase
     {
         $su = $this->su();
         $code = $this->code();
-        $a = Student::where('student_code', 'R26-0001')->firstOrFail();
-        $b = Student::where('student_code', 'R26-0010')->firstOrFail();
+        $a = Student::where('student_code', 'BBT-R26-0001')->firstOrFail();
+        $b = Student::where('student_code', 'BBT-R26-0010')->firstOrFail();
 
         $c = Livewire::actingAs($su, 'superadmin')->test('superadmin.students');
 
-        $c->call('askRemove', $a->id)->set('dangerTyped', 'R26-0001')
+        $c->call('askRemove', $a->id)->set('dangerTyped', 'BBT-R26-0001')
             ->set('dangerSecret', $code)->set('dangerReason', 'one')->call('confirmDanger');
         $this->assertNull(Student::find($a->id));
 
         // Same code again on a different record must be refused.
-        $c->call('askRemove', $b->id)->set('dangerTyped', 'R26-0010')
+        $c->call('askRemove', $b->id)->set('dangerTyped', 'BBT-R26-0010')
             ->set('dangerSecret', $code)->set('dangerReason', 'two')->call('confirmDanger');
         $this->assertNotNull(Student::find($b->id), 'A used code must not authorise a second removal.');
     }

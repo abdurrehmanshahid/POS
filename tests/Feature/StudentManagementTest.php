@@ -50,7 +50,7 @@ class StudentManagementTest extends TestCase
         $student = Student::where('cnic', '35201-7654321-3')->firstOrFail();
 
         $this->assertSame('Bilal Ahmed', $student->name);
-        $this->assertSame('R26-0011', $student->student_code, 'Takes the next R serial.');
+        $this->assertSame('BBT-R26-0011', $student->student_code, 'Takes the next R serial.');
         $this->assertCount(0, $student->admissions, 'No course, no admission, no challan.');
         $this->assertDatabaseHas('audit_logs', ['action' => 'Student created', 'subject_id' => $student->id]);
     }
@@ -68,7 +68,7 @@ class StudentManagementTest extends TestCase
             ->call('saveStudent')
             ->assertHasNoErrors();
 
-        $this->assertSame('T26-0003', Student::where('cnic', '35202-1112223-4')->value('student_code'));
+        $this->assertSame('BBT-T26-0003', Student::where('cnic', '35202-1112223-4')->value('student_code'));
     }
 
     public function test_phone_is_normalised_and_cnic_format_is_enforced(): void
@@ -127,7 +127,7 @@ class StudentManagementTest extends TestCase
 
     public function test_admin_can_edit_a_student_and_the_change_is_audited(): void
     {
-        $student = Student::where('student_code', 'R26-0009')->firstOrFail();
+        $student = Student::where('student_code', 'BBT-R26-0009')->firstOrFail();
 
         Livewire::actingAs($this->admin())
             ->test('pages.students')
@@ -148,7 +148,7 @@ class StudentManagementTest extends TestCase
 
     public function test_student_code_cannot_be_changed_by_editing(): void
     {
-        $student = Student::where('student_code', 'R26-0009')->firstOrFail();
+        $student = Student::where('student_code', 'BBT-R26-0009')->firstOrFail();
 
         Livewire::actingAs($this->admin())
             ->test('pages.students')
@@ -159,13 +159,13 @@ class StudentManagementTest extends TestCase
             ->assertHasNoErrors();
 
         $student->refresh();
-        $this->assertSame('R26-0009', $student->student_code);
+        $this->assertSame('BBT-R26-0009', $student->student_code);
         $this->assertSame('R', $student->type);
     }
 
     public function test_enrol_deep_link_opens_the_wizard_at_step_two_with_the_student_chosen(): void
     {
-        $student = Student::where('student_code', 'R26-0009')->firstOrFail();
+        $student = Student::where('student_code', 'BBT-R26-0009')->firstOrFail();
 
         Livewire::actingAs($this->officer())
             ->withQueryParams(['enrol' => $student->id])
@@ -179,7 +179,7 @@ class StudentManagementTest extends TestCase
     public function test_enrol_deep_link_respects_scope(): void
     {
         // A student that belongs only to another officer's enrolments.
-        $student = Student::where('student_code', 'R26-0007')->firstOrFail(); // enrolled by admin
+        $student = Student::where('student_code', 'BBT-R26-0007')->firstOrFail(); // enrolled by admin
 
         Livewire::actingAs($this->officer())
             ->withQueryParams(['enrol' => $student->id])
@@ -189,7 +189,7 @@ class StudentManagementTest extends TestCase
 
     public function test_enrolling_an_existing_student_adds_an_admission_without_a_new_student(): void
     {
-        $student = Student::where('student_code', 'R26-0009')->firstOrFail();
+        $student = Student::where('student_code', 'BBT-R26-0009')->firstOrFail();
         $before = Student::count();
         $course = Course::where('code', 'GD-101')->firstOrFail();
 
@@ -216,7 +216,7 @@ class StudentManagementTest extends TestCase
      */
     public function test_typing_an_existing_cnic_offers_that_student_instead_of_duplicating_them(): void
     {
-        $existing = Student::where('student_code', 'R26-0009')->firstOrFail();
+        $existing = Student::where('student_code', 'BBT-R26-0009')->firstOrFail();
 
         $c = Livewire::actingAs($this->admin())
             ->test('pages.registrations')
@@ -289,7 +289,7 @@ class StudentManagementTest extends TestCase
     {
         Livewire::actingAs($this->admin())
             ->test('pages.students')
-            ->call('viewStudent', Student::where('student_code', 'R26-0009')->firstOrFail()->id)
+            ->call('viewStudent', Student::where('student_code', 'BBT-R26-0009')->firstOrFail()->id)
             ->assertSet('drawerOpen', true)
             ->call('closeDrawer')
             ->assertSet('drawerOpen', false)

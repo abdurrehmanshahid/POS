@@ -16,12 +16,36 @@ use Illuminate\Support\Facades\DB;
  */
 class Sequences
 {
-    /** R26-0011 / T26-0003, 4-digit, independent per type (spec §7.3). */
+    /**
+     * The institute stamp on every generated identifier, e.g. `BBT-`.
+     *
+     * Public because the wizard previews an ID before it is allocated and the
+     * seeder writes historical ones directly; all three must produce byte-for-
+     * byte the same string or a preview will not match what gets assigned.
+     */
+    public static function prefix(): string
+    {
+        return (string) config('institute.code_prefix', '');
+    }
+
+    /** BBT-R26-0011 / BBT-T26-0003, 4-digit, independent per type (spec §7.3). */
     public function nextStudentCode(string $type): string
     {
         $value = $this->bump('student:'.$type);
 
-        return sprintf('%s26-%04d', $type, $value);
+        return self::studentCode($type, $value);
+    }
+
+    /** Format a student code from its parts, without touching the counter. */
+    public static function studentCode(string $type, int $value): string
+    {
+        return sprintf('%s%s26-%04d', self::prefix(), $type === 'T' ? 'T' : 'R', $value);
+    }
+
+    /** Format an admission number from its serial. */
+    public static function admissionNo(int $value): string
+    {
+        return sprintf('%sADM-%04d', self::prefix(), $value);
     }
 
     /**
@@ -41,17 +65,23 @@ class Sequences
         $type = $type === 'T' ? 'T' : 'R';
         $value = Counter::where('key', 'student:'.$type)->value('value') ?? 1;
 
-        return sprintf('%s26-%04d', $type, $value);
+        return self::studentCode($type, $value);
     }
 
-    /** ADM-0012, global sequence (spec §7.4). */
+    /** BBT-ADM-0012, global sequence (spec §7.4). */
     public function nextAdmissionNo(): string
     {
-        return sprintf('ADM-%04d', $this->bump('admission'));
+        return self::admissionNo($this->bump('admission'));
+    }
+
+    /** The admission number that WOULD be assigned next, without consuming it. */
+    public function peekAdmissionNo(): string
+    {
+        return self::admissionNo((int) (Counter::where('key', 'admission')->value('value') ?? 1));
     }
 
     /**
-     * CH-2026-1086, plain integer, no zero-pad. The serial lives in
+     * BBT-CH-2026-1086, plain integer, no zero-pad. The serial lives in
      * settings.next_challan_serial (the atomic counter that "cannot be reset by
      * hand", spec §2.12 / §7.4).
      */
@@ -62,8 +92,14 @@ class Sequences
             $serial = $setting->next_challan_serial;
             $setting->update(['next_challan_serial' => $serial + 1]);
 
-            return 'CH-2026-'.$serial;
+            return self::challanNo($serial);
         });
+    }
+
+    /** Format a challan number from its serial. */
+    public static function challanNo(int $serial): string
+    {
+        return self::prefix().'CH-2026-'.$serial;
     }
 
     /** Atomically read-and-advance a named counter; returns the value used. */

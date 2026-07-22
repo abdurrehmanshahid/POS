@@ -12,6 +12,7 @@ use App\Models\Student;
 use App\Models\Teacher;
 use App\Models\User;
 use App\Services\Audit;
+use App\Services\Sequences;
 use Illuminate\Database\Seeder;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
@@ -101,9 +102,14 @@ class DemoDataSeeder extends Seeder
             11 => ['R26-0001', 'R', 'Ahmad Ameer Sani', '35202-1122334-2', 'Ameer Sani', '+92 300 1122334', '2026-06-13'],
             12 => ['R26-0010', 'R', 'Yasmeen Rafique', '35201-2233445-5', 'Rafique Ahmed', '+92 345 2233445', '2026-06-13'],
         ];
+        // The literals above are the bare series, so the tables stay readable.
+        // The institute prefix is applied on write from the same config the
+        // Sequences service reads, so seeded and generated codes cannot drift.
+        $prefix = Sequences::prefix();
+
         foreach ($studentRows as $i => [$code, $type, $name, $cnic, $guardian, $phone, $joined]) {
             $s = Student::create([
-                'student_code' => $code,
+                'student_code' => $prefix.$code,
                 'type' => $type,
                 'name' => $name,
                 'guardian_name' => $guardian,
@@ -136,7 +142,7 @@ class DemoDataSeeder extends Seeder
             $atDate = Carbon::parse($at);
 
             $admission = Admission::create([
-                'reg_no' => $regNo,
+                'reg_no' => $prefix.$regNo,
                 'student_id' => $students[$sIdx]->id,
                 'course_id' => $courses[$code]->id,
                 'enrolled_by' => $by,
@@ -145,7 +151,7 @@ class DemoDataSeeder extends Seeder
             $this->backdate('admissions', $admission->id, $at);
 
             $challan = Challan::create([
-                'challan_no' => $chNo,
+                'challan_no' => $prefix.$chNo,
                 'admission_id' => $admission->id,
                 'base_amount' => $base,
                 'discount_amount' => $disc,

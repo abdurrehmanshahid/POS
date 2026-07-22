@@ -93,7 +93,7 @@ class ScreensTest extends TestCase
 
     public function test_challan_pdf_is_permission_gated_and_scoped(): void
     {
-        $challan = Challan::where('challan_no', 'CH-2026-1076')->firstOrFail(); // enrolled_by admin(1)
+        $challan = Challan::where('challan_no', 'BBT-CH-2026-1076')->firstOrFail(); // enrolled_by admin(1)
 
         $this->actingAs($this->admin())
             ->get(route('challans.pdf', $challan))
@@ -114,7 +114,7 @@ class ScreensTest extends TestCase
         $body = $res->streamedContent();
         $this->assertStringStartsWith("\xEF\xBB\xBF", $body);
         $this->assertStringContainsString('Student ID,Name,Type', $body);
-        $this->assertStringContainsString('R26-0009', $body);
+        $this->assertStringContainsString('BBT-R26-0009', $body);
     }
 
     public function test_admin_can_render_every_screen(): void
@@ -144,9 +144,9 @@ class ScreensTest extends TestCase
             ->assertSet('step', 3)
             ->call('submit');
 
-        $this->assertDatabaseHas('students', ['name' => 'Wizard Test', 'student_code' => 'R26-0011']);
-        $this->assertDatabaseHas('admissions', ['reg_no' => 'ADM-0012', 'enrolled_by' => $officer->id]);
-        $this->assertDatabaseHas('challans', ['challan_no' => 'CH-2026-1086', 'base_amount' => 20000]);
+        $this->assertDatabaseHas('students', ['name' => 'Wizard Test', 'student_code' => 'BBT-R26-0011']);
+        $this->assertDatabaseHas('admissions', ['reg_no' => 'BBT-ADM-0012', 'enrolled_by' => $officer->id]);
+        $this->assertDatabaseHas('challans', ['challan_no' => 'BBT-CH-2026-1086', 'base_amount' => 20000]);
     }
 
     public function test_wizard_blocks_invalid_new_student(): void
@@ -163,7 +163,7 @@ class ScreensTest extends TestCase
 
     public function test_challans_mark_paid_flow(): void
     {
-        $challan = Challan::where('challan_no', 'CH-2026-1077')->firstOrFail(); // unpaid
+        $challan = Challan::where('challan_no', 'BBT-CH-2026-1077')->firstOrFail(); // unpaid
 
         Livewire::actingAs($this->admin())->test('pages.challans')
             ->call('askPay', $challan->id)

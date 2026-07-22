@@ -1,7 +1,7 @@
 {{-- 3-step New Registration wizard (spec §9.3). Uses the registrations component's
      props/methods: step, mode, newType, new*, courseIds, discountPct, discountReason,
      genChallans, wizErrors; toggleCourse, pickStudent, next, back, submit, closeWizard. --}}
-@php use App\Support\Format; @endphp
+@php use App\Support\Format; use App\Services\Sequences; @endphp
 
 <div class="anim-fade" style="max-width:900px;margin:0 auto">
     {{-- Progress --}}
@@ -42,8 +42,8 @@
                 </div>
             @else
                 <div style="display:flex;gap:10px;margin-bottom:18px">
-                    <button wire:click="$set('newType','R')" style="flex:1;padding:14px;border:1.5px solid {{ $newType === 'R' ? 'var(--iris)' : 'var(--border2)' }};background:{{ $newType === 'R' ? 'var(--iris-bg)' : 'var(--surface)' }};border-radius:12px;cursor:pointer;text-align:left"><div style="font-size:13.5px;font-weight:700;color:var(--ink)">Regular</div><div class="tnum" style="font-size:11.5px;color:var(--muted)">R26-####</div></button>
-                    <button wire:click="$set('newType','T')" style="flex:1;padding:14px;border:1.5px solid {{ $newType === 'T' ? 'var(--iris)' : 'var(--border2)' }};background:{{ $newType === 'T' ? 'var(--iris-bg)' : 'var(--surface)' }};border-radius:12px;cursor:pointer;text-align:left"><div style="font-size:13.5px;font-weight:700;color:var(--ink)">Track</div><div class="tnum" style="font-size:11.5px;color:var(--muted)">T26-####</div></button>
+                    <button wire:click="$set('newType','R')" style="flex:1;padding:14px;border:1.5px solid {{ $newType === 'R' ? 'var(--iris)' : 'var(--border2)' }};background:{{ $newType === 'R' ? 'var(--iris-bg)' : 'var(--surface)' }};border-radius:12px;cursor:pointer;text-align:left"><div style="font-size:13.5px;font-weight:700;color:var(--ink)">Regular</div><div class="tnum" style="font-size:11.5px;color:var(--muted)">{{ Sequences::prefix() }}R26-####</div></button>
+                    <button wire:click="$set('newType','T')" style="flex:1;padding:14px;border:1.5px solid {{ $newType === 'T' ? 'var(--iris)' : 'var(--border2)' }};background:{{ $newType === 'T' ? 'var(--iris-bg)' : 'var(--surface)' }};border-radius:12px;cursor:pointer;text-align:left"><div style="font-size:13.5px;font-weight:700;color:var(--ink)">Track</div><div class="tnum" style="font-size:11.5px;color:var(--muted)">{{ Sequences::prefix() }}T26-####</div></button>
                 </div>
                 <div style="padding:10px 14px;background:var(--iris-bg);border-radius:10px;margin-bottom:18px;font-size:12.5px;color:var(--iris);font-weight:600">ID to assign: <span class="tnum">{{ $studentCodePreview }}</span></div>
                 {{-- Every field answers as it is typed. Phone and CNIC are masked

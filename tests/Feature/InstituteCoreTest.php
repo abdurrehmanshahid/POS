@@ -114,13 +114,13 @@ class InstituteCoreTest extends TestCase
     {
         $seq = app(Sequences::class);
 
-        $this->assertSame('R26-0011', $seq->nextStudentCode('R'));
-        $this->assertSame('T26-0003', $seq->nextStudentCode('T'));
-        $this->assertSame('ADM-0012', $seq->nextAdmissionNo());
-        $this->assertSame('CH-2026-1086', $seq->nextChallanNo());
+        $this->assertSame('BBT-R26-0011', $seq->nextStudentCode('R'));
+        $this->assertSame('BBT-T26-0003', $seq->nextStudentCode('T'));
+        $this->assertSame('BBT-ADM-0012', $seq->nextAdmissionNo());
+        $this->assertSame('BBT-CH-2026-1086', $seq->nextChallanNo());
         // Advanced by one each.
-        $this->assertSame('R26-0012', $seq->nextStudentCode('R'));
-        $this->assertSame('CH-2026-1087', $seq->nextChallanNo());
+        $this->assertSame('BBT-R26-0012', $seq->nextStudentCode('R'));
+        $this->assertSame('BBT-CH-2026-1087', $seq->nextChallanNo());
     }
 
     // ---- Registration fan-out ---------------------------------------------
@@ -142,7 +142,7 @@ class InstituteCoreTest extends TestCase
 
         $this->assertCount(2, $result['admissions']);
         $this->assertCount(2, $result['challans']);
-        $this->assertSame('R26-0011', $result['student']->student_code);
+        $this->assertSame('BBT-R26-0011', $result['student']->student_code);
 
         // WD-101 fee 20000, 10% -> disc 2000, net 18000; discount audited.
         $wd = collect($result['challans'])->firstWhere('base_amount', 20000);
@@ -205,7 +205,7 @@ class InstituteCoreTest extends TestCase
 
     public function test_mark_paid_records_payment_and_audit(): void
     {
-        $challan = Challan::where('challan_no', 'CH-2026-1076')->firstOrFail();
+        $challan = Challan::where('challan_no', 'BBT-CH-2026-1076')->firstOrFail();
         app(ChallanActions::class)->markPaid($challan, $this->admin(), 'Bank transfer');
 
         $challan->refresh();
@@ -225,7 +225,7 @@ class InstituteCoreTest extends TestCase
         $admin = $this->admin();
         $receivedBefore = $L->received($admin);
 
-        $challan = Challan::where('challan_no', 'CH-2026-1076')->firstOrFail(); // unpaid, net 25000
+        $challan = Challan::where('challan_no', 'BBT-CH-2026-1076')->firstOrFail(); // unpaid, net 25000
         app(ChallanActions::class)->recordPayment($challan, $admin, 10000, 'Cash');
 
         $challan->refresh();
@@ -252,7 +252,7 @@ class InstituteCoreTest extends TestCase
 
     public function test_a_payment_cannot_exceed_the_outstanding_balance(): void
     {
-        $challan = Challan::where('challan_no', 'CH-2026-1076')->firstOrFail();
+        $challan = Challan::where('challan_no', 'BBT-CH-2026-1076')->firstOrFail();
 
         $this->expectException(RuntimeException::class);
         app(ChallanActions::class)->recordPayment($challan, $this->admin(), 99999, 'Cash');
@@ -260,7 +260,7 @@ class InstituteCoreTest extends TestCase
 
     public function test_mark_paid_settles_the_whole_balance_in_one_movement(): void
     {
-        $challan = Challan::where('challan_no', 'CH-2026-1076')->firstOrFail();
+        $challan = Challan::where('challan_no', 'BBT-CH-2026-1076')->firstOrFail();
         app(ChallanActions::class)->markPaid($challan, $this->admin(), 'Cash');
 
         $challan->refresh();
@@ -277,7 +277,7 @@ class InstituteCoreTest extends TestCase
     #[DataProvider('payScreens')]
     public function test_the_pay_dialog_records_a_part_payment_on_each_screen(string $screen): void
     {
-        $challan = Challan::where('challan_no', 'CH-2026-1076')->firstOrFail(); // unpaid, net 25000
+        $challan = Challan::where('challan_no', 'BBT-CH-2026-1076')->firstOrFail(); // unpaid, net 25000
 
         Livewire::actingAs($this->admin())
             ->test($screen)
@@ -308,7 +308,7 @@ class InstituteCoreTest extends TestCase
         $admin = $this->admin();
         $before = $L->billed($admin);
 
-        $admission = Admission::where('reg_no', 'ADM-0002')->firstOrFail(); // unpaid 25000
+        $admission = Admission::where('reg_no', 'BBT-ADM-0002')->firstOrFail(); // unpaid 25000
         app(ChallanActions::class)->cancel($admission, $admin, 'Duplicate enrolment');
 
         $this->assertSame('cancelled', $admission->fresh()->status);
@@ -326,7 +326,7 @@ class InstituteCoreTest extends TestCase
         $L = app(Ledger::class);
         $admin = $this->admin();
 
-        $admission = Admission::where('reg_no', 'ADM-0002')->firstOrFail();
+        $admission = Admission::where('reg_no', 'BBT-ADM-0002')->firstOrFail();
         app(ChallanActions::class)->markPaid($admission->challan, $admin, 'Cash');
         $receivedBefore = $L->received($admin);
 

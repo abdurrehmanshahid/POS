@@ -348,15 +348,18 @@ new class extends Component {
             $nextAdm = (int) (Counter::where('key', 'admission')->value('value') ?? 12);
             $nextStud = (int) (Counter::where('key', 'student:'.$this->newType)->value('value') ?? 1);
             $count = max(1, $selectedCourses->count());
+            // Formatted by Sequences, not by a second copy of the sprintf: a
+            // preview that disagrees with what gets assigned is worse than none.
+            $seq = \App\Services\Sequences::class;
 
             $wizard = [
                 'activeCourses' => $activeCourses,
                 'selectedCourses' => $selectedCourses,
                 'base' => $base, 'disc' => $disc, 'net' => $base - $disc,
-                'studentCodePreview' => sprintf('%s26-%04d', $this->newType, $nextStud),
+                'studentCodePreview' => $seq::studentCode($this->newType, $nextStud),
                 'admPreview' => $count === 1
-                    ? sprintf('ADM-%04d', $nextAdm)
-                    : sprintf('ADM-%04d to ADM-%04d', $nextAdm, $nextAdm + $count - 1),
+                    ? $seq::admissionNo($nextAdm)
+                    : $seq::admissionNo($nextAdm).' to '.$seq::admissionNo($nextAdm + $count - 1),
                 'matches' => $this->mode === 'existing' && strlen(trim($this->studentSearch)) >= 1
                     ? Student::where(fn ($w) => $w->where('name', 'like', '%'.$this->studentSearch.'%')
                         ->orWhere('cnic', 'like', '%'.$this->studentSearch.'%')
