@@ -5,6 +5,7 @@ namespace Database\Seeders;
 use App\Models\Admission;
 use App\Models\AppNotification;
 use App\Models\Challan;
+use App\Models\Cohort;
 use App\Models\Counter;
 use App\Models\Course;
 use App\Models\Setting;
@@ -185,6 +186,32 @@ class DemoDataSeeder extends Seeder
                     'received_at' => Carbon::parse($paidAt.' 12:00:00'),
                 ]);
             }
+        }
+
+        // ---- Batches -------------------------------------------------------
+        // One open intake per course that is actually running, so the demo shows
+        // a populated "Batch #" on the challan rather than a dash. Written
+        // directly rather than through the Cohorts service: the service audits
+        // every open, and seed data is history, not activity.
+        foreach ([
+            ['SHOP-101', 'Batch # 11', '2026-06-18'],
+            ['ODOO-301', 'Batch # 3', '2026-07-03'],
+            ['AI-201', 'Batch # 6', '2026-06-24'],
+            ['DMM-101', 'Batch # 9', '2026-06-27'],
+            ['WD-101', 'Batch # 4', '2026-07-01'],
+        ] as [$code, $batch, $startsOn]) {
+            $cohort = Cohort::create([
+                'name' => $batch,
+                'course_id' => $courses[$code]->id,
+                'starts_on' => $startsOn,
+                'capacity' => $courses[$code]->capacity,
+                'is_open' => true,
+                'created_by' => $admin->id,
+            ]);
+
+            Admission::where('course_id', $courses[$code]->id)
+                ->where('status', '!=', 'cancelled')
+                ->update(['cohort_id' => $cohort->id]);
         }
 
         // ---- Counters after seed (§14.4), the NEXT value to assign --------

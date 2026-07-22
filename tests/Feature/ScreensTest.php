@@ -4,7 +4,10 @@ namespace Tests\Feature;
 
 use App\Models\Challan;
 use App\Models\Course;
+use App\Models\Setting;
 use App\Models\User;
+use App\Services\ChallanActions;
+use App\Support\Format;
 use Database\Seeders\DatabaseSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
@@ -104,6 +107,40 @@ class ScreensTest extends TestCase
         $this->actingAs($this->officer())
             ->get(route('challans.pdf', $challan))
             ->assertForbidden();
+    }
+
+    /**
+     * The voucher prints three copies, one each for the student, head office and
+     * the campus, matching the form the institute already hands over the
+     * counter. Rendered rather than asserted on the blade, because a DomPDF
+     * template that throws only does so at render time.
+     */
+    public function test_the_challan_pdf_renders_three_copies_with_advance_and_balance(): void
+    {
+        $challan = Challan::where('challan_no', 'BBT-CH-2026-1076')->firstOrFail(); // unpaid, net 25000
+        app(ChallanActions::class)->recordPayment($challan, $this->admin(), 10000, 'Cash');
+
+        $html = view('challans.pdf', [
+            'challan' => $challan->fresh()->load('admission.student', 'admission.course', 'admission.cohort', 'admission.enroller', 'payments'),
+            'settings' => Setting::current(),
+        ])->render();
+
+        foreach (['Student Copy', 'Head Office Copy', 'Campus Copy'] as $copy) {
+            $this->assertStringContainsString($copy, $html);
+        }
+
+        $this->assertStringContainsString('Advance Payment', $html);
+        $this->assertStringContainsString('Balance', $html);
+        $this->assertStringContainsString('PART PAID', $html, 'A partly collected challan is neither paid nor unpaid.');
+        $this->assertStringContainsString(Format::money(10000), $html);
+        $this->assertStringContainsString(Format::money(15000), $html);
+        $this->assertStringContainsString('BBT-CH-2026-1076', $html);
+
+        // And it survives an actual PDF render.
+        $this->actingAs($this->admin())
+            ->get(route('challans.pdf', $challan))
+            ->assertOk()
+            ->assertHeader('content-type', 'application/pdf');
     }
 
     public function test_students_export_streams_csv_with_bom(): void

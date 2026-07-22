@@ -40,14 +40,25 @@ class CohortTest extends TestCase
         return Course::where('code', $code)->firstOrFail();
     }
 
+    /**
+     * A course the seed gives enrolments but no batch, so these tests exercise
+     * adoption from a genuinely unbatched starting point. The seed opens batches
+     * on SHOP-101, ODOO-301, AI-201, DMM-101 and WD-101; VE-101 and GD-101 are
+     * deliberately left without one.
+     */
+    private const UNBATCHED = 'VE-101';
+
     // ---- Backward: opening a batch adopts the course's existing students ----
 
     public function test_opening_a_batch_adopts_the_courses_unbatched_enrolments(): void
     {
-        $course = $this->course('SHOP-101');
-        $existing = Admission::where('course_id', $course->id)->where('status', '!=', 'cancelled')->pluck('id');
+        $course = $this->course(self::UNBATCHED);
+        $existing = Admission::where('course_id', $course->id)
+            ->where('status', '!=', 'cancelled')
+            ->whereNull('cohort_id')
+            ->pluck('id');
 
-        $this->assertNotEmpty($existing, 'Seed must have SHOP-101 enrolments for this to mean anything.');
+        $this->assertNotEmpty($existing, 'Seed must leave '.self::UNBATCHED.' enrolments unbatched for this to mean anything.');
 
         $cohort = app(Cohorts::class)->create($this->admin(), [
             'name' => 'Batch # 11',
@@ -62,7 +73,7 @@ class CohortTest extends TestCase
     /** A student who finished an earlier intake is not dragged into the new one. */
     public function test_opening_a_batch_does_not_steal_students_from_another_batch(): void
     {
-        $course = $this->course('SHOP-101');
+        $course = $this->course(self::UNBATCHED);
         $service = app(Cohorts::class);
 
         $first = $service->create($this->admin(), ['name' => 'Batch # 10', 'course_id' => $course->id]);
@@ -81,7 +92,7 @@ class CohortTest extends TestCase
 
     public function test_a_new_enrolment_joins_the_open_batch_automatically(): void
     {
-        $course = $this->course('WD-101');
+        $course = $this->course('GD-101');   // no seeded batch
         $cohort = app(Cohorts::class)->create($this->admin(), [
             'name' => 'Batch # 4',
             'course_id' => $course->id,
