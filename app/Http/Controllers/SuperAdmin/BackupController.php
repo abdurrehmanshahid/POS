@@ -5,6 +5,7 @@ namespace App\Http\Controllers\SuperAdmin;
 use App\Http\Controllers\Controller;
 use App\Services\Audit;
 use App\Services\DatabaseBackup;
+use App\Support\DownloadTicket;
 use Illuminate\Http\Request;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 
@@ -16,11 +17,19 @@ use Symfony\Component\HttpFoundation\StreamedResponse;
  * ledger in one file. So each download is itself an audited event: if a dump
  * ever leaves the building, the activity log says who took it, from where, and
  * exactly when.
+ *
+ * Auditing is forensics, though, not prevention. Holding a session is not the
+ * same as being at the keyboard, so these routes additionally demand a ticket
+ * that only a fresh step-up challenge can mint (see {@see DownloadTicket}).
+ * Without it, exfiltrating the whole database from an unattended super-admin
+ * session took fewer steps than deleting a single course.
  */
 class BackupController extends Controller
 {
     public function sql(Request $request, DatabaseBackup $backup): StreamedResponse
     {
+        abort_unless(DownloadTicket::consume('sql'), 403, 'Confirm again to download a backup.');
+
         $actor = $request->user('superadmin');
         $filename = 'bbt-backup-'.now()->format('Y-m-d-His').'.sql';
 
@@ -34,6 +43,8 @@ class BackupController extends Controller
 
     public function csv(Request $request, string $table, DatabaseBackup $backup): StreamedResponse
     {
+        abort_unless(DownloadTicket::consume('csv:'.$table), 403, 'Confirm again to export a table.');
+
         $actor = $request->user('superadmin');
 
         // streamTableCsv 404s on anything outside the allow-list, so a crafted

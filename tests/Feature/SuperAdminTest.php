@@ -332,9 +332,35 @@ class SuperAdminTest extends TestCase
 
     // ---- Backups -------------------------------------------------------------------
 
+    /**
+     * A dump holds every password hash and encrypted 2FA secret in the system,
+     * so a live session alone must not be enough to take one (issue #12).
+     */
+    public function test_backup_download_is_refused_without_a_fresh_step_up(): void
+    {
+        $su = $this->su();
+
+        $this->actingAs($su, 'superadmin')
+            ->get(route('superadmin.backups.sql'))
+            ->assertForbidden();
+
+        $this->actingAs($su, 'superadmin')
+            ->get(route('superadmin.backups.csv', ['table' => 'students']))
+            ->assertForbidden();
+
+        $this->assertDatabaseMissing('audit_logs', ['action' => 'Database backup downloaded']);
+    }
+
     public function test_backup_download_streams_sql_and_is_audited(): void
     {
         $su = $this->su();
+
+        Livewire::actingAs($su, 'superadmin')
+            ->test('superadmin.backups')
+            ->call('askSql')
+            ->set('dangerSecret', $this->code())
+            ->call('confirmDanger')
+            ->assertRedirect(route('superadmin.backups.sql'));
 
         $response = $this->actingAs($su, 'superadmin')->get(route('superadmin.backups.sql'));
         $response->assertOk();
@@ -346,9 +372,32 @@ class SuperAdminTest extends TestCase
         $this->assertDatabaseHas('audit_logs', ['action' => 'Database backup downloaded']);
     }
 
+    /** The ticket authorises exactly one download; a replayed URL gets nothing. */
+    public function test_a_backup_ticket_cannot_be_spent_twice(): void
+    {
+        $su = $this->su();
+
+        Livewire::actingAs($su, 'superadmin')
+            ->test('superadmin.backups')
+            ->call('askSql')
+            ->set('dangerSecret', $this->code())
+            ->call('confirmDanger');
+
+        $this->actingAs($su, 'superadmin')->get(route('superadmin.backups.sql'))->assertOk();
+        $this->actingAs($su, 'superadmin')->get(route('superadmin.backups.sql'))->assertForbidden();
+    }
+
     public function test_csv_export_rejects_unknown_tables(): void
     {
         $su = $this->su();
+
+        // Cleared the step-up, so this proves the allow-list rejects the table
+        // rather than the ticket gate rejecting the request.
+        Livewire::actingAs($su, 'superadmin')
+            ->test('superadmin.backups')
+            ->call('askCsv', 'not_a_table')
+            ->set('dangerSecret', $this->code())
+            ->call('confirmDanger');
 
         $this->actingAs($su, 'superadmin')
             ->get(route('superadmin.backups.csv', ['table' => 'not_a_table']))

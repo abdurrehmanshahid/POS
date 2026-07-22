@@ -1,6 +1,8 @@
 <?php
 
 use App\Services\DatabaseBackup;
+use App\Support\Concerns\ConfirmsDangerously;
+use App\Support\DownloadTicket;
 use Illuminate\Support\Facades\DB;
 use Livewire\Attributes\Layout;
 use Livewire\Volt\Component;
@@ -9,8 +11,66 @@ use Livewire\Volt\Component;
  * Backup and export. On cPanel with no shell access this is the realistic
  * disaster-recovery path, so the copy tells the operator exactly how to restore
  * rather than leaving them to work it out during an incident.
+ *
+ * Both downloads are gated by the same step-up dialog as a record purge. A dump
+ * carries every password hash and encrypted 2FA secret in the system, so taking
+ * one should cost at least as much friction as deleting one row.
  */
 new #[Layout('components.layouts.super')] class extends Component {
+    use ConfirmsDangerously;
+
+    /** Which artefact the open dialog authorises, '' | 'sql' | 'csv:<table>'. */
+    public string $pendingRef = '';
+
+    private function actor()
+    {
+        return auth()->guard('superadmin')->user();
+    }
+
+    public function askSql(): void
+    {
+        $this->pendingRef = 'sql';
+        $this->askDanger([
+            'kind' => 'download',
+            'title' => 'Download full database backup',
+            'body' => 'The .sql file contains every table in this system, including staff password hashes, encrypted two-factor secrets and the entire money ledger. Anyone who obtains the file obtains the institute. Store it off this server and treat it like cash.',
+            'confirmLabel' => 'Download backup',
+        ]);
+    }
+
+    public function askCsv(string $table): void
+    {
+        $this->pendingRef = 'csv:'.$table;
+        $this->askDanger([
+            'kind' => 'download',
+            'title' => 'Export '.$table,
+            'body' => 'Every row of the '.$table.' table leaves the system as a CSV file. The export is recorded against your name in the activity log.',
+            'confirmLabel' => 'Export table',
+        ]);
+    }
+
+    public function confirmDanger(): void
+    {
+        if (! $this->dangerCleared($this->actor())) {
+            return;
+        }
+
+        $ref = $this->pendingRef;
+        $this->closeDanger();
+        $this->pendingRef = '';
+
+        // The ticket names one artefact and dies on first use, so the redirect
+        // below is the only request that can ever spend it.
+        DownloadTicket::issue($ref);
+
+        $url = $ref === 'sql'
+            ? route('superadmin.backups.sql')
+            : route('superadmin.backups.csv', ['table' => substr($ref, 4)]);
+
+        // navigate:false on purpose, a SPA fetch cannot save a file to disk.
+        $this->redirect($url, navigate: false);
+    }
+
     public function with(): array
     {
         $backup = app(DatabaseBackup::class);
@@ -44,9 +104,9 @@ new #[Layout('components.layouts.super')] class extends Component {
                     {{ count($summary) }} tables · {{ number_format($totalRows) }} rows · {{ $driver }} · {{ $database }}
                 </p>
             </div>
-            <a href="{{ route('superadmin.backups.sql') }}" class="btn btn-accent" style="flex:none;height:44px">
+            <button wire:click="askSql" class="btn btn-accent" style="flex:none;height:44px">
                 <x-icon name="download" :size="17" /> Download .sql
-            </a>
+            </button>
         </div>
     </div>
 
@@ -79,9 +139,9 @@ new #[Layout('components.layouts.super')] class extends Component {
                             <td class="tnum" style="color:{{ $count > 0 ? 'var(--ink2)' : 'var(--faint)' }}">{{ number_format($count) }}</td>
                             <td class="right">
                                 @if ($count > 0)
-                                    <a href="{{ route('superadmin.backups.csv', ['table' => $table]) }}" class="btn btn-ghost btn-sm">
+                                    <button wire:click="askCsv('{{ $table }}')" class="btn btn-ghost btn-sm">
                                         <x-icon name="download" :size="14" /> CSV
-                                    </a>
+                                    </button>
                                 @else
                                     <span style="font-size:12.5px;color:var(--faint)">empty</span>
                                 @endif
@@ -92,4 +152,6 @@ new #[Layout('components.layouts.super')] class extends Component {
             </table>
         </div>
     </div>
+
+    @include('partials.danger-dialog')
 </div>

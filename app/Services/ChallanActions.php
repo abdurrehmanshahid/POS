@@ -53,12 +53,22 @@ class ChallanActions
     /**
      * Cancel a registration (spec §7.7). Soft, sets admission to cancelled with
      * a required reason; the linked challan is voided from money totals and lists.
+     *
+     * A PAID registration cannot be cancelled. Every money query in Ledger
+     * excludes cancelled admissions, so cancelling a paid one would retroactively
+     * erase revenue the institute actually banked from every report, with no
+     * refund record and nothing to show it ever happened. Cancellation is for
+     * enrolments that were never collected on; giving money back is a refund,
+     * which is a separate and explicit act.
      */
     public function cancel(Admission $admission, User $actor, string $reason): Admission
     {
         $reason = trim($reason);
         if ($reason === '') {
             throw new RuntimeException('A cancellation reason is required.');
+        }
+        if ($admission->challan?->status === 'paid') {
+            throw new RuntimeException('This registration is already paid. Record a refund instead of cancelling it.');
         }
 
         return DB::transaction(function () use ($admission, $actor, $reason) {

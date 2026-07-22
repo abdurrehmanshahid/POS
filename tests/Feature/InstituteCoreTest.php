@@ -15,7 +15,9 @@ use App\Services\Sequences;
 use Database\Seeders\DatabaseSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\DB;
 use InvalidArgumentException;
+use RuntimeException;
 use Tests\TestCase;
 
 /**
@@ -163,6 +165,40 @@ class InstituteCoreTest extends TestCase
         ]);
     }
 
+    /**
+     * The slider bounds this in the UI, but the percentage arrives over the wire
+     * and a tampered request can carry anything. Over 100 the derived discount
+     * exceeds the base and net_amount goes negative into an unsignedInteger
+     * column (issue #10).
+     */
+    public function test_discount_outside_0_to_100_is_rejected(): void
+    {
+        $L = app(Ledger::class);
+        $before = Challan::count();
+
+        foreach ([150, -10] as $i => $pct) {
+            try {
+                app(RegistrationService::class)->register($this->officer(), [
+                    'new_student' => [
+                        'type' => 'R', 'name' => 'X', 'guardian_name' => 'Y',
+                        'phone' => '+92 300 0000000', 'cnic' => '35201-000000'.$i.'-3',
+                    ],
+                    'course_ids' => Course::where('code', 'WD-101')->pluck('id')->all(),
+                    'discount_pct' => $pct,
+                    'discount_reason' => 'Tampered request',
+                ]);
+                $this->fail("A discount of {$pct}% should be rejected.");
+            } catch (InvalidArgumentException $e) {
+                $this->assertStringContainsString('between 0 and 100', $e->getMessage());
+            }
+        }
+
+        // Nothing was persisted and the reporting invariant still holds.
+        $this->assertSame($before, Challan::count());
+        $this->assertSame(0, Challan::where('net_amount', '>', DB::raw('base_amount'))->count());
+        $this->assertSame($L->billed($this->admin()), $L->received($this->admin()) + $L->outstanding($this->admin()));
+    }
+
     // ---- Mark paid / cancel ------------------------------------------------
 
     public function test_mark_paid_records_payment_and_audit(): void
@@ -187,6 +223,34 @@ class InstituteCoreTest extends TestCase
 
         $this->assertSame('cancelled', $admission->fresh()->status);
         $this->assertSame($before - 25000, $L->billed($admin));
+    }
+
+    /**
+     * Every money query excludes cancelled admissions, so cancelling a PAID
+     * registration used to erase banked revenue from every report retroactively,
+     * with no refund record (issue #11). Cancellation is for uncollected
+     * enrolments; giving money back is a separate, explicit act.
+     */
+    public function test_paid_registration_cannot_be_cancelled(): void
+    {
+        $L = app(Ledger::class);
+        $admin = $this->admin();
+
+        $admission = Admission::where('reg_no', 'ADM-0002')->firstOrFail();
+        app(ChallanActions::class)->markPaid($admission->challan, $admin, 'Cash');
+        $receivedBefore = $L->received($admin);
+
+        try {
+            app(ChallanActions::class)->cancel($admission, $admin, 'Student changed their mind');
+            $this->fail('Cancelling a paid registration should be refused.');
+        } catch (RuntimeException $e) {
+            $this->assertStringContainsString('already paid', $e->getMessage());
+        }
+
+        // The enrolment survives and the collected money is still on the books.
+        $this->assertNotSame('cancelled', $admission->fresh()->status);
+        $this->assertSame($receivedBefore, $L->received($admin));
+        $this->assertSame($L->billed($admin), $L->received($admin) + $L->outstanding($admin));
     }
 
     public function test_audit_rows_are_append_only_on_seed(): void

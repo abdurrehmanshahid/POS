@@ -40,6 +40,15 @@ class RegistrationService
         if ($courseIds === []) {
             throw new InvalidArgumentException('Select at least one course.');
         }
+        // The wizard's slider already bounds this, but a slider is a suggestion,
+        // not a constraint: the pct arrives over the wire and a tampered request
+        // can carry anything. Above 100 the derived discount exceeds the base and
+        // net_amount goes negative into an unsignedInteger column, which either
+        // throws at the driver or silently wraps and breaks the reporting
+        // invariant that billed = received + outstanding.
+        if ($pct < 0 || $pct > 100) {
+            throw new InvalidArgumentException('Discount must be between 0 and 100 percent.');
+        }
         if ($pct > 0 && $reason === null) {
             throw new InvalidArgumentException('A discount requires a reason.');
         }
