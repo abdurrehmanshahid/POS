@@ -6,6 +6,9 @@ delivered it.
 
 - Repository: `GhazanfarSheikh/POS`
 - Target board: Azure DevOps, organization `bigbinarytech`, project `bigbinarytech-POS`
+- Board: <https://dev.azure.com/bigbinarytech/bigbinarytech-POS/_backlogs/backlog>
+- Process: Agile (migrated from Basic before creation, while the board was empty)
+- Work items: `#33` through `#77`, 8 Epics and 37 User Stories
 - History covered: all 13 commits, `78d73b2` (2026-07-05) through `f37cda7` (2026-07-22)
 - Totals: 8 epics, 37 stories
 
@@ -24,6 +27,31 @@ Every story carries the same block, in the same order:
 - **As / I want / So that** states the story in stakeholder terms.
 - **What / How / Why / Acceptance** records the change, the technique, the
   reason, and the observable condition that proves it is finished.
+
+## How the semantic values resolved on this board
+
+The project ran the **Basic** process, which has no `User Story` type at all,
+only Epic, Issue and Task. Because the board was still empty, the process was
+migrated to **Agile** before anything was created, so there were no existing
+items to convert by hand. Note that the project property string read
+`System.Process Template: Scrum` throughout, which was simply wrong; the
+authoritative work item type list is what identified Basic.
+
+| Semantic value in this file | Resolved to (Agile) |
+| --- | --- |
+| Tier `epic` | `Epic` |
+| Tier `story` | `User Story` |
+| State `proposed` | `New` |
+| State `in-progress` | `Active` |
+| State `done` | `Closed`, with `ClosedBy` set |
+
+Acceptance text lives in the dedicated
+`Microsoft.VSTS.Common.AcceptanceCriteria` field, which Agile provides. Under
+Basic it would have had to be folded into the description instead, since that
+process has no such field.
+
+Stories are parented directly to Epics. Agile's full hierarchy is Epic, then
+Feature, then User Story, so the Feature tier is intentionally unused here.
 
 ## Provenance and its one honest limitation
 
@@ -68,10 +96,12 @@ Two things a reader might expect to find here and will not:
 Establish the repository as a governed, CI gated project before any product
 code lands, so that every later change arrives through a reviewed flow.
 
+Work item: [#33](https://dev.azure.com/bigbinarytech/bigbinarytech-POS/_workitems/edit/33)
 State: `in-progress` (US-1.3 is still open)
 
 ### US-1.1: Establish the repository under governance and CI
 
+- Work item: [#34](https://dev.azure.com/bigbinarytech/bigbinarytech-POS/_workitems/edit/34)
 - Tier: `story`
 - State: `done`
 - Commits: `78d73b2`, `cd38c8d` (PR #1)
@@ -96,6 +126,7 @@ State: `in-progress` (US-1.3 is still open)
 
 ### US-1.2: Keep CI action versions current automatically
 
+- Work item: [#35](https://dev.azure.com/bigbinarytech/bigbinarytech-POS/_workitems/edit/35)
 - Tier: `story`
 - State: `done`
 - Commits: `1d3719d` (PR #2), `f8433be` (PR #3), `f6ace58` (PR #4), `18f6b63` (PR #8)
@@ -116,6 +147,7 @@ State: `in-progress` (US-1.3 is still open)
 
 ### US-1.3: Land the outstanding setup-python upgrade
 
+- Work item: [#36](https://dev.azure.com/bigbinarytech/bigbinarytech-POS/_workitems/edit/36)
 - Tier: `story`
 - State: `proposed`
 - Commits: none yet (open branch `origin/dependabot/github_actions/actions/setup-python-7`)
@@ -140,10 +172,12 @@ State: `in-progress` (US-1.3 is still open)
 Stand up the Laravel and Livewire Volt application, the shared interface
 vocabulary every screen is built from, and the operational documentation.
 
+Work item: [#37](https://dev.azure.com/bigbinarytech/bigbinarytech-POS/_workitems/edit/37)
 State: `done`
 
 ### US-2.1: Stand up the Laravel and Livewire Volt application skeleton
 
+- Work item: [#38](https://dev.azure.com/bigbinarytech/bigbinarytech-POS/_workitems/edit/38)
 - Tier: `story`
 - State: `done`
 - Commits: `c921dcb`
@@ -170,6 +204,7 @@ State: `done`
 
 ### US-2.2: Establish the shared UI component library and application shell
 
+- Work item: [#39](https://dev.azure.com/bigbinarytech/bigbinarytech-POS/_workitems/edit/39)
 - Tier: `story`
 - State: `done`
 - Commits: `c921dcb`
@@ -195,6 +230,7 @@ State: `done`
 
 ### US-2.3: Document the stack, deployment contract and security posture
 
+- Work item: [#40](https://dev.azure.com/bigbinarytech/bigbinarytech-POS/_workitems/edit/40)
 - Tier: `story`
 - State: `done`
 - Commits: `c921dcb`, `aca78f7` (closes issue #13)
@@ -220,6 +256,7 @@ State: `done`
 
 ### US-2.4: Tighten layout density and make the grids genuinely responsive
 
+- Work item: [#41](https://dev.azure.com/bigbinarytech/bigbinarytech-POS/_workitems/edit/41)
 - Tier: `story`
 - State: `done`
 - Commits: `3e617de`
@@ -248,10 +285,12 @@ State: `done`
 Prove who is at the keyboard, with a second factor, throttling and a step up
 challenge in front of anything dangerous.
 
+Work item: [#42](https://dev.azure.com/bigbinarytech/bigbinarytech-POS/_workitems/edit/42)
 State: `done`
 
 ### US-3.1: Sign in with password, throttling and strength rules
 
+- Work item: [#43](https://dev.azure.com/bigbinarytech/bigbinarytech-POS/_workitems/edit/43)
 - Tier: `story`
 - State: `done`
 - Commits: `c921dcb`
@@ -276,6 +315,7 @@ State: `done`
 
 ### US-3.2: Enrol and challenge a second factor
 
+- Work item: [#44](https://dev.azure.com/bigbinarytech/bigbinarytech-POS/_workitems/edit/44)
 - Tier: `story`
 - State: `done`
 - Commits: `c921dcb`
@@ -302,6 +342,7 @@ State: `done`
 
 ### US-3.3: Reset passwords by administrator issue, with self service held off
 
+- Work item: [#45](https://dev.azure.com/bigbinarytech/bigbinarytech-POS/_workitems/edit/45)
 - Tier: `story`
 - State: `done`
 - Commits: `c921dcb`
@@ -328,6 +369,7 @@ State: `done`
 
 ### US-3.4: Require a step up challenge for dangerous actions and data egress
 
+- Work item: [#46](https://dev.azure.com/bigbinarytech/bigbinarytech-POS/_workitems/edit/46)
 - Tier: `story`
 - State: `done`
 - Commits: `c921dcb`, `aca78f7` (closes issue #12)
@@ -361,10 +403,12 @@ State: `done`
 Decide what each role may do, enforce it on the server, and stop the
 permission system being used to escalate itself.
 
+Work item: [#47](https://dev.azure.com/bigbinarytech/bigbinarytech-POS/_workitems/edit/47)
 State: `done`
 
 ### US-4.1: Define roles and permissions and gate every screen server side
 
+- Work item: [#48](https://dev.azure.com/bigbinarytech/bigbinarytech-POS/_workitems/edit/48)
 - Tier: `story`
 - State: `done`
 - Commits: `c921dcb`
@@ -391,6 +435,7 @@ State: `done`
 
 ### US-4.2: Prevent privilege escalation through the permission system
 
+- Work item: [#49](https://dev.azure.com/bigbinarytech/bigbinarytech-POS/_workitems/edit/49)
 - Tier: `story`
 - State: `done`
 - Commits: `c921dcb`
@@ -414,6 +459,7 @@ State: `done`
 
 ### US-4.3: Guard record removal behind an explicit dangerous confirmation
 
+- Work item: [#50](https://dev.azure.com/bigbinarytech/bigbinarytech-POS/_workitems/edit/50)
 - Tier: `story`
 - State: `done`
 - Commits: `c921dcb`
@@ -441,10 +487,12 @@ State: `done`
 The domain the institute actually runs on: the schema, registering a student,
 the course catalog, batches, and the identifiers printed on documents.
 
+Work item: [#51](https://dev.azure.com/bigbinarytech/bigbinarytech-POS/_workitems/edit/51)
 State: `done`
 
 ### US-5.1: Model the institute domain and migrate the schema
 
+- Work item: [#52](https://dev.azure.com/bigbinarytech/bigbinarytech-POS/_workitems/edit/52)
 - Tier: `story`
 - State: `done`
 - Commits: `c921dcb`
@@ -471,6 +519,7 @@ State: `done`
 
 ### US-5.2: Register a student through a guided wizard
 
+- Work item: [#53](https://dev.azure.com/bigbinarytech/bigbinarytech-POS/_workitems/edit/53)
 - Tier: `story`
 - State: `done`
 - Commits: `c921dcb`
@@ -495,6 +544,7 @@ State: `done`
 
 ### US-5.3: Validate registration as it is typed and surface returning students
 
+- Work item: [#54](https://dev.azure.com/bigbinarytech/bigbinarytech-POS/_workitems/edit/54)
 - Tier: `story`
 - State: `done`
 - Commits: `3e617de`
@@ -518,6 +568,7 @@ State: `done`
 
 ### US-5.4: Bound the discount so billing cannot be driven negative
 
+- Work item: [#55](https://dev.azure.com/bigbinarytech/bigbinarytech-POS/_workitems/edit/55)
 - Tier: `story`
 - State: `done`
 - Commits: `aca78f7` (closes issue #10)
@@ -537,6 +588,7 @@ State: `done`
 
 ### US-5.5: Manage the student directory within the viewer's scope
 
+- Work item: [#56](https://dev.azure.com/bigbinarytech/bigbinarytech-POS/_workitems/edit/56)
 - Tier: `story`
 - State: `done`
 - Commits: `c921dcb`, `3e617de`
@@ -564,6 +616,7 @@ State: `done`
 
 ### US-5.6: Manage the course catalog and its fee structure
 
+- Work item: [#57](https://dev.azure.com/bigbinarytech/bigbinarytech-POS/_workitems/edit/57)
 - Tier: `story`
 - State: `done`
 - Commits: `c921dcb`
@@ -584,6 +637,7 @@ State: `done`
 
 ### US-5.7: Run courses in batches that enrolments join automatically
 
+- Work item: [#58](https://dev.azure.com/bigbinarytech/bigbinarytech-POS/_workitems/edit/58)
 - Tier: `story`
 - State: `done`
 - Commits: `8ba9c55`
@@ -615,6 +669,7 @@ State: `done`
 
 ### US-5.8: Manage teaching staff, roles and permissions
 
+- Work item: [#59](https://dev.azure.com/bigbinarytech/bigbinarytech-POS/_workitems/edit/59)
 - Tier: `story`
 - State: `done`
 - Commits: `c921dcb`
@@ -636,6 +691,7 @@ State: `done`
 
 ### US-5.9: Stamp the institute prefix on every generated identifier
 
+- Work item: [#60](https://dev.azure.com/bigbinarytech/bigbinarytech-POS/_workitems/edit/60)
 - Tier: `story`
 - State: `done`
 - Commits: `9923abd`
@@ -673,10 +729,12 @@ State: `done`
 Bill an enrolment, take money at the counter in more than one movement, and
 print the voucher the institute already hands over.
 
+Work item: [#61](https://dev.azure.com/bigbinarytech/bigbinarytech-POS/_workitems/edit/61)
 State: `done`
 
 ### US-6.1: Issue and manage fee challans against an admission
 
+- Work item: [#62](https://dev.azure.com/bigbinarytech/bigbinarytech-POS/_workitems/edit/62)
 - Tier: `story`
 - State: `done`
 - Commits: `c921dcb`
@@ -701,6 +759,7 @@ State: `done`
 
 ### US-6.2: Record collections as payments so a challan can be part paid
 
+- Work item: [#63](https://dev.azure.com/bigbinarytech/bigbinarytech-POS/_workitems/edit/63)
 - Tier: `story`
 - State: `done`
 - Commits: `91acbbf`
@@ -733,6 +792,7 @@ State: `done`
 
 ### US-6.3: Refuse cancellation of a registration that has been paid
 
+- Work item: [#64](https://dev.azure.com/bigbinarytech/bigbinarytech-POS/_workitems/edit/64)
 - Tier: `story`
 - State: `done`
 - Commits: `aca78f7` (closes issue #11)
@@ -753,6 +813,7 @@ State: `done`
 
 ### US-6.4: Rebuild the challan PDF as the three copy voucher
 
+- Work item: [#65](https://dev.azure.com/bigbinarytech/bigbinarytech-POS/_workitems/edit/65)
 - Tier: `story`
 - State: `done`
 - Commits: `f37cda7`
@@ -782,6 +843,7 @@ State: `done`
 
 ### US-6.5: Filter and act on challans directly from the list
 
+- Work item: [#66](https://dev.azure.com/bigbinarytech/bigbinarytech-POS/_workitems/edit/66)
 - Tier: `story`
 - State: `done`
 - Commits: `3e617de`
@@ -805,10 +867,12 @@ State: `done`
 
 Turn the operational record into the figures the institute manages by.
 
+Work item: [#67](https://dev.azure.com/bigbinarytech/bigbinarytech-POS/_workitems/edit/67)
 State: `done`
 
 ### US-7.1: Show the institute's headline figures on a dashboard
 
+- Work item: [#68](https://dev.azure.com/bigbinarytech/bigbinarytech-POS/_workitems/edit/68)
 - Tier: `story`
 - State: `done`
 - Commits: `c921dcb`
@@ -833,6 +897,7 @@ State: `done`
 
 ### US-7.2: Report on revenue and enrolment across periods
 
+- Work item: [#69](https://dev.azure.com/bigbinarytech/bigbinarytech-POS/_workitems/edit/69)
 - Tier: `story`
 - State: `done`
 - Commits: `c921dcb`
@@ -858,6 +923,7 @@ State: `done`
 
 ### US-7.3: Export reports and student records as CSV
 
+- Work item: [#70](https://dev.azure.com/bigbinarytech/bigbinarytech-POS/_workitems/edit/70)
 - Tier: `story`
 - State: `done`
 - Commits: `c921dcb`
@@ -883,10 +949,12 @@ State: `done`
 A separate operator identity above the institute, with impersonation, audit,
 backups and monitoring.
 
+Work item: [#71](https://dev.azure.com/bigbinarytech/bigbinarytech-POS/_workitems/edit/71)
 State: `done`
 
 ### US-8.1: Provide a separate super admin identity and console
 
+- Work item: [#72](https://dev.azure.com/bigbinarytech/bigbinarytech-POS/_workitems/edit/72)
 - Tier: `story`
 - State: `done`
 - Commits: `c921dcb`
@@ -910,6 +978,7 @@ State: `done`
 
 ### US-8.2: Impersonate an institute user for support
 
+- Work item: [#73](https://dev.azure.com/bigbinarytech/bigbinarytech-POS/_workitems/edit/73)
 - Tier: `story`
 - State: `done`
 - Commits: `c921dcb`
@@ -930,6 +999,7 @@ State: `done`
 
 ### US-8.3: Audit every privileged action
 
+- Work item: [#74](https://dev.azure.com/bigbinarytech/bigbinarytech-POS/_workitems/edit/74)
 - Tier: `story`
 - State: `done`
 - Commits: `c921dcb`
@@ -952,6 +1022,7 @@ State: `done`
 
 ### US-8.4: Notify users in the application
 
+- Work item: [#75](https://dev.azure.com/bigbinarytech/bigbinarytech-POS/_workitems/edit/75)
 - Tier: `story`
 - State: `done`
 - Commits: `c921dcb`
@@ -972,6 +1043,7 @@ State: `done`
 
 ### US-8.5: Back up and restore the database from the console
 
+- Work item: [#76](https://dev.azure.com/bigbinarytech/bigbinarytech-POS/_workitems/edit/76)
 - Tier: `story`
 - State: `done`
 - Commits: `c921dcb`, `aca78f7` (issue #12)
@@ -994,6 +1066,7 @@ State: `done`
 
 ### US-8.6: Monitor platform performance and activity
 
+- Work item: [#77](https://dev.azure.com/bigbinarytech/bigbinarytech-POS/_workitems/edit/77)
 - Tier: `story`
 - State: `done`
 - Commits: `c921dcb`
