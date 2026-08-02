@@ -163,7 +163,7 @@ new #[Layout('components.layouts.guest')] class extends Component {
 
     {{-- Form panel --}}
     <div style="display:flex;align-items:center;justify-content:center;padding:40px;background:var(--bg)">
-        <div style="width:100%;max-width:410px" x-data="{ show: false }">
+        <div style="width:100%;max-width:410px">
             <h2 style="font-size:25px;font-weight:800;color:var(--ink);margin:0 0 6px;letter-spacing:-.01em">Sign in</h2>
             <p style="font-size:14px;color:var(--muted);margin:0 0 24px">Enter your credentials to continue to the portal.</p>
 
@@ -179,7 +179,14 @@ new #[Layout('components.layouts.guest')] class extends Component {
                 <input wire:model="user" type="text" placeholder="adminansar" class="input" style="margin-bottom:16px" autofocus>
 
                 <label class="label">Password</label>
-                <div style="position:relative;margin-bottom:16px">
+                {{-- `show` is scoped here, on the element that directly owns both
+                     consumers below, and pinned with wire:key. Held on the outer
+                     panel it was a sibling of the @error block, so a Livewire morph
+                     that rewrote that block could replace the scope owner while the
+                     input and button still evaluated `show`, throwing
+                     "show is not defined" on every sign-in. Scope and consumers now
+                     morph as one subtree. --}}
+                <div style="position:relative;margin-bottom:16px" x-data="{ show: false }" wire:key="password-field">
                     <input wire:model="password" :type="show ? 'text' : 'password'" placeholder="Enter password" class="input" style="padding-right:74px">
                     <button @click="show = !show" type="button" style="position:absolute;right:8px;top:50%;transform:translateY(-50%);height:32px;padding:0 11px;border:none;background:var(--surface3);color:var(--ink2);border-radius:8px;font-size:12px;font-weight:700;cursor:pointer" x-text="show ? 'Hide' : 'Show'"></button>
                 </div>
