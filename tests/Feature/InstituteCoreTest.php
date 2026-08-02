@@ -334,13 +334,84 @@ class InstituteCoreTest extends TestCase
             app(ChallanActions::class)->cancel($admission, $admin, 'Student changed their mind');
             $this->fail('Cancelling a paid registration should be refused.');
         } catch (RuntimeException $e) {
-            $this->assertStringContainsString('already paid', $e->getMessage());
+            $this->assertStringContainsString('Money has been collected', $e->getMessage());
         }
 
         // The enrolment survives and the collected money is still on the books.
         $this->assertNotSame('cancelled', $admission->fresh()->status);
         $this->assertSame($receivedBefore, $L->received($admin));
         $this->assertSame($L->billed($admin), $L->received($admin) + $L->outstanding($admin));
+    }
+
+    /**
+     * The guard above originally tested `status === 'paid'`. Part payments landed
+     * after it, and an advance leaves the status short of paid, so a part
+     * collected enrolment slipped straight through the check and took its banked
+     * advance out of every report on the way. The guard tests collections now.
+     */
+    public function test_part_paid_registration_cannot_be_cancelled(): void
+    {
+        $L = app(Ledger::class);
+        $admin = $this->admin();
+
+        $admission = Admission::where('reg_no', 'BBT-ADM-0002')->firstOrFail(); // unpaid 25000
+        app(ChallanActions::class)->recordPayment($admission->challan, $admin, 10000, 'Cash');
+
+        $challan = $admission->challan->fresh();
+        $this->assertNotSame('paid', $challan->status, 'An advance must leave the status short of paid.');
+        $this->assertTrue($challan->isPartiallyPaid());
+
+        $receivedBefore = $L->received($admin);
+
+        try {
+            app(ChallanActions::class)->cancel($admission, $admin, 'Student changed their mind');
+            $this->fail('Cancelling a part paid registration should be refused.');
+        } catch (RuntimeException $e) {
+            $this->assertStringContainsString('Money has been collected', $e->getMessage());
+        }
+
+        // The advance is still on the books and the ledger still reconciles.
+        $this->assertNotSame('cancelled', $admission->fresh()->status);
+        $this->assertSame($receivedBefore, $L->received($admin));
+        $this->assertSame($L->billed($admin), $L->received($admin) + $L->outstanding($admin));
+    }
+
+    /** An enrolment nobody has paid anything against is still cancellable. */
+    public function test_uncollected_registration_is_still_cancellable(): void
+    {
+        $admin = $this->admin();
+        $admission = Admission::where('reg_no', 'BBT-ADM-0002')->firstOrFail();
+
+        $this->assertFalse($admission->challan->hasCollections());
+        app(ChallanActions::class)->cancel($admission, $admin, 'Duplicate enrolment');
+
+        $this->assertSame('cancelled', $admission->fresh()->status);
+    }
+
+    /**
+     * The drawer used to offer Cancel on any live enrolment, so a collected-on
+     * one showed a button whose only possible outcome was the server refusing it.
+     * The button now reads the same predicate the service enforces.
+     */
+    #[DataProvider('payScreens')]
+    public function test_the_drawer_hides_cancel_once_money_is_collected(string $screen): void
+    {
+        $challan = Challan::where('challan_no', 'BBT-CH-2026-1076')->firstOrFail(); // unpaid, net 25000
+
+        // Uncollected: the action is genuinely available, so it is offered.
+        Livewire::actingAs($this->admin())
+            ->test($screen)
+            ->call('select', $challan->id)
+            ->assertSeeHtml('wire:click="askCancel('.$challan->admission_id.')"');
+
+        // A part payment is enough to take it away, not just a full settlement.
+        app(ChallanActions::class)->recordPayment($challan, $this->admin(), 10000, 'Cash');
+        $this->assertTrue($challan->fresh()->hasCollections());
+
+        Livewire::actingAs($this->admin())
+            ->test($screen)
+            ->call('select', $challan->id)
+            ->assertDontSeeHtml('wire:click="askCancel('.$challan->admission_id.')"');
     }
 
     public function test_audit_rows_are_append_only_on_seed(): void

@@ -108,12 +108,17 @@ class ChallanActions
      * Cancel a registration (spec §7.7). Soft, sets admission to cancelled with
      * a required reason; the linked challan is voided from money totals and lists.
      *
-     * A PAID registration cannot be cancelled. Every money query in Ledger
-     * excludes cancelled admissions, so cancelling a paid one would retroactively
+     * A COLLECTED ON registration cannot be cancelled. Every money query in
+     * Ledger excludes cancelled admissions, so cancelling one would retroactively
      * erase revenue the institute actually banked from every report, with no
      * refund record and nothing to show it ever happened. Cancellation is for
      * enrolments that were never collected on; giving money back is a refund,
      * which is a separate and explicit act.
+     *
+     * This tests `hasCollections()` and not the `paid` status. Part payments
+     * arrived after this guard did, and a Rs 20,000 advance against a Rs 40,000
+     * fee leaves the status short of paid, so a status-only check waved through
+     * exactly the case the guard exists to stop.
      */
     public function cancel(Admission $admission, User $actor, string $reason): Admission
     {
@@ -121,8 +126,8 @@ class ChallanActions
         if ($reason === '') {
             throw new RuntimeException('A cancellation reason is required.');
         }
-        if ($admission->challan?->status === 'paid') {
-            throw new RuntimeException('This registration is already paid. Record a refund instead of cancelling it.');
+        if ($admission->challan?->hasCollections()) {
+            throw new RuntimeException('Money has been collected against this registration. Record a refund instead of cancelling it.');
         }
 
         return DB::transaction(function () use ($admission, $actor, $reason) {

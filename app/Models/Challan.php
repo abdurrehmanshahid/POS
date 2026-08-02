@@ -87,6 +87,19 @@ class Challan extends Model
         return $paid > 0 && $paid < $this->net_amount;
     }
 
+    /**
+     * Whether any money has been banked against this challan.
+     *
+     * Cancellation tests this rather than `isPaid()`, because an advance leaves
+     * `status` short of paid while the institute has genuinely taken the money.
+     * Checking only the status would let a part-collected enrolment be cancelled
+     * and silently erase that advance from every report (see ChallanActions).
+     */
+    public function hasCollections(): bool
+    {
+        return $this->isPaid() || $this->paidAmount() > 0;
+    }
+
     /** Unpaid and past its due date (spec §7.8). */
     public function isOverdue(): bool
     {

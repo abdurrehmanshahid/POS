@@ -91,7 +91,9 @@
                 <button class="btn btn-accent" wire:click="askPay({{ $selected->id }})"><x-icon name="check" :size="16" /> Mark paid</button>
             @endif
             <a class="btn btn-ghost" href="{{ route('challans.pdf', $selected) }}" target="_blank"><x-icon name="download" :size="16" /> Challan PDF</a>
-            @if ($canCancel && $a->status !== 'cancelled')
+            {{-- Same predicate the server enforces in ChallanActions::cancel(), so
+                 the button is never offered for an action that can only fail. --}}
+            @if ($canCancel && $a->status !== 'cancelled' && ! $selected->hasCollections())
                 <button class="btn btn-danger" style="margin-left:auto" wire:click="askCancel({{ $a->id }})">Cancel</button>
             @endif
         </div>
