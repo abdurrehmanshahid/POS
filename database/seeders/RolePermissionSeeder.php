@@ -46,6 +46,10 @@ class RolePermissionSeeder extends Seeder
             'challans.view',
             'challans.pay',
             'students.view',
+            // Taking the register is a daily front-desk job, so officers hold
+            // it out of the box even though they cannot edit the catalog the
+            // register is taken against.
+            'attendance.manage',
             // Note: NOT students.manage, officers enrol students but do not
             // edit an existing student's identity (see Permissions::CATALOG).
         ]);

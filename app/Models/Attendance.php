@@ -15,13 +15,19 @@ class Attendance extends Model
 
     public $timestamps = false;
 
-    protected $fillable = ['course_id', 'student_id', 'session_date', 'status', 'marked_by'];
+    protected $fillable = ['course_id', 'cohort_id', 'student_id', 'session_date', 'status', 'marked_by'];
 
     protected $casts = ['session_date' => 'date'];
 
     public function student(): BelongsTo
     {
         return $this->belongsTo(Student::class);
+    }
+
+    /** The batch the student sat in on the day, if the course runs batches. */
+    public function cohort(): BelongsTo
+    {
+        return $this->belongsTo(Cohort::class);
     }
 
     public function course(): BelongsTo

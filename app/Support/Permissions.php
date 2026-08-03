@@ -9,8 +9,9 @@ namespace App\Support;
  *
  * The spec defines 15 keys; `students.manage` is a 16th, added so that editing
  * an existing student's identity (name, CNIC, phone) is a distinct grant from
- * enrolling one, and `cohorts.manage` a 17th for course batches. Adding keys is
- * safe, renaming them is not.
+ * enrolling one, `cohorts.manage` a 17th for course batches, and
+ * `attendance.manage` an 18th for taking the register. Adding keys is safe,
+ * renaming them is not.
  */
 final class Permissions
 {
@@ -44,6 +45,9 @@ final class Permissions
         // Batches decide which intake a student's enrolment lands in, so opening
         // one moves existing records. Kept distinct from courses.manage.
         'cohorts.manage' => ['Manage course batches',                   'People and Catalog'],
+        // Taking the register is a daily front-desk job, separate from editing
+        // the catalog it happens against.
+        'attendance.manage' => ['Take and review attendance',              'People and Catalog'],
         'staff.view' => ['View staff and roles',                    'People and Catalog'],
         'staff.manage' => ['Manage staff, roles and permissions',     'People and Catalog'],
         'scope.all' => ['See ALL students, not only own-enrolled', 'Data scope'],
