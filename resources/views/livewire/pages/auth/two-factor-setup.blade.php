@@ -153,6 +153,22 @@ new #[Layout('components.layouts.guest')] class extends Component {
 
                     <button type="submit" class="btn btn-accent" style="width:100%;height:48px;font-size:15px">Confirm &amp; enable</button>
                 </form>
+
+                {{-- The way out.
+
+                     EnsureTwoFactorEnrolled deliberately allows `logout` from
+                     this screen, but nothing here reached it, so anyone pinned
+                     to enrolment (every Administrator, since that role requires
+                     a second factor) had no way off it but clearing cookies.
+                     Signing out without enrolling is a legitimate thing to want:
+                     the phone is at home. --}}
+                <form method="POST" action="{{ route($guard === 'superadmin' ? 'superadmin.logout' : 'logout') }}"
+                      style="margin-top:14px;text-align:center">
+                    @csrf
+                    <button type="submit" class="btn btn-ghost btn-sm">
+                        <x-icon name="logout" :size="14" /> Sign out instead
+                    </button>
+                </form>
             @else
                 {{-- One-time display of recovery codes. --}}
                 <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px">

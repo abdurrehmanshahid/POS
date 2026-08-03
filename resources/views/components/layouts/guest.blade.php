@@ -4,7 +4,28 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="csrf-token" content="{{ csrf_token() }}">
-    <title>{{ $title ?? 'Sign in' }} · Big Binary Tech</title>
+    {{-- Every guest screen used to render "Sign in · Big Binary Tech", because
+         the layout fell back to that and no component ever passed a title. So
+         the two-factor setup page announced itself as a sign-in form, and the
+         super admin console carried the staff portal's name. Derived from the
+         route here rather than passed in, so a new guest screen cannot forget. --}}
+    @php
+        $guestRoute = request()->route()?->getName();
+        $guestTitle = $title ?? match ($guestRoute) {
+            'login' => 'Sign in',
+            'password.request' => 'Forgot password',
+            'password.reset' => 'Reset password',
+            'password.set' => 'Set your password',
+            'two-factor.challenge' => 'Two-factor code',
+            'two-factor.setup', 'superadmin.two-factor.setup' => 'Set up two-factor',
+            'superadmin.login' => 'Sign in',
+            default => 'Sign in',
+        };
+        $guestSuffix = str_starts_with((string) $guestRoute, 'superadmin.')
+            ? 'Super Admin'
+            : 'Big Binary Tech';
+    @endphp
+    <title>{{ $guestTitle }} · {{ $guestSuffix }}</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">

@@ -25,7 +25,16 @@ new #[Layout('components.layouts.guest')] class extends Component {
 
     public string $user = '';
     public string $password = '';
-    public bool $remember = true;
+    /**
+     * Off by default.
+     *
+     * This is a staff portal worked from shared counter machines, and a
+     * remember-me cookie outlives the session by design. Opting every user into
+     * that silently sits badly beside the rest of the access model, which treats
+     * a persistent token as consequential enough to clear on removal. One click
+     * for the minority who want it on their own machine.
+     */
+    public bool $remember = false;
     public string $error = '';
 
     /**
