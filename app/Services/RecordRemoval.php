@@ -5,8 +5,10 @@ namespace App\Services;
 use App\Models\Admission;
 use App\Models\Challan;
 use App\Models\Course;
+use App\Models\Payment;
 use App\Models\Student;
 use App\Models\User;
+use App\Support\Format;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\DB;
 use RuntimeException;
@@ -44,12 +46,26 @@ class RecordRemoval
     public function purgeBlocker(Model $record): ?string
     {
         if ($record instanceof Student) {
-            $paid = Challan::whereHas('admission', fn ($q) => $q->where('student_id', $record->id))
-                ->where('status', 'paid')->count();
+            // Any COLLECTION blocks the purge, not merely a settled challan.
+            //
+            // `payments.challan_id` cascades on delete, so purging a student
+            // hard-deletes their challans and takes every collection row with
+            // them. Testing `status = 'paid'` let a student carrying a part
+            // payment through: their challan is still flagged unpaid, so the
+            // blocker stayed silent while the purge destroyed money the
+            // institute had genuinely banked, leaving no trace in any report.
+            //
+            // This is the same reasoning that governs cancellation in
+            // ChallanActions::cancel(); the two must agree or the rule is only
+            // enforced on whichever path the operator happens to take.
+            $collected = (int) Payment::whereHas(
+                'challan.admission',
+                fn ($q) => $q->where('student_id', $record->id)
+            )->sum('amount');
 
-            if ($paid > 0) {
-                return "This student has {$paid} paid challan".($paid === 1 ? '' : 's')
-                    .'. Purging would destroy settled financial records. Remove the student instead, the record is hidden but the money trail survives.';
+            if ($collected > 0) {
+                return 'This student has '.Format::money($collected)
+                    .' of collections recorded against them. Purging would destroy those payment records and erase the money from every report. Remove the student instead, the record is hidden but the money trail survives.';
             }
         }
 

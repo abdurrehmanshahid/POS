@@ -4,11 +4,14 @@ namespace Tests\Feature;
 
 use App\Models\AuditLog;
 use App\Models\Challan;
+use App\Models\Payment;
 use App\Models\Student;
 use App\Models\SuperAdmin;
 use App\Models\User;
 use App\Services\Audit;
+use App\Services\ChallanActions;
 use App\Services\Impersonation;
+use App\Services\RecordRemoval;
 use App\Services\TwoFactor;
 use Database\Seeders\DatabaseSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -177,6 +180,44 @@ class SuperAdminTest extends TestCase
             ->assertSet('dangerOpen', false);   // blocked before the dialog opens
 
         $this->assertNotNull(Student::find($student->id));
+    }
+
+    public function test_a_student_with_only_a_part_payment_cannot_be_purged(): void
+    {
+        $su = $this->su();
+        $admin = User::where('username', 'adminansar')->firstOrFail();
+
+        // An advance against an otherwise unpaid challan. The challan stays
+        // flagged unpaid, which is exactly the state the old blocker waved
+        // through, and `payments.challan_id` cascades, so the purge would have
+        // destroyed the collection along with the challan.
+        $challan = Challan::where('status', '!=', 'paid')->firstOrFail();
+        $student = $challan->admission->student;
+        app(ChallanActions::class)->recordPayment($challan, $admin, 5000, 'Cash');
+
+        $this->assertSame('unpaid', $challan->refresh()->status);
+
+        Livewire::actingAs($su, 'superadmin')
+            ->test('superadmin.students')
+            ->call('askPurge', $student->id)
+            ->assertSet('dangerOpen', false);   // blocked before the dialog opens
+
+        $this->assertNotNull(Student::find($student->id));
+        $this->assertSame(5000, (int) Payment::where('challan_id', $challan->id)->sum('amount'));
+    }
+
+    public function test_the_purge_blocker_names_the_amount_at_risk(): void
+    {
+        $admin = User::where('username', 'adminansar')->firstOrFail();
+        $challan = Challan::where('status', '!=', 'paid')->firstOrFail();
+        $student = $challan->admission->student;
+
+        app(ChallanActions::class)->recordPayment($challan, $admin, 7500, 'Cash');
+
+        $blocker = app(RecordRemoval::class)->purgeBlocker($student->refresh());
+
+        $this->assertNotNull($blocker);
+        $this->assertStringContainsString('Rs 7,500', $blocker);
     }
 
     public function test_a_staff_account_that_signed_admissions_cannot_be_purged(): void
