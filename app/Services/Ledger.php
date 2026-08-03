@@ -37,6 +37,21 @@ class Ledger
     }
 
     /**
+     * Collections against challans visible to the user.
+     *
+     * The single entry point every money figure in the system starts from,
+     * including the whole of {@see Reporting}. Summing the `payments` table
+     * rather than the challans flagged paid is the difference between reporting
+     * what was banked and reporting what was finished, and those two answers
+     * diverge for every student who has paid an advance.
+     */
+    public function scopedPayments(User $user): Builder
+    {
+        return Payment::query()
+            ->whereIn('challan_id', $this->scopedChallans($user)->select('challans.id'));
+    }
+
+    /**
      * Money actually collected: Σ payments, not Σ net of the challans flagged
      * paid. The two agree whenever every challan was settled in one movement,
      * and diverge exactly when a student has paid an advance, which is the case
@@ -44,9 +59,7 @@ class Ledger
      */
     public function received(User $user): int
     {
-        return (int) Payment::query()
-            ->whereIn('challan_id', $this->scopedChallans($user)->select('challans.id'))
-            ->sum('amount');
+        return (int) $this->scopedPayments($user)->sum('amount');
     }
 
     public function outstanding(User $user): int
@@ -122,20 +135,47 @@ class Ledger
     }
 
     /**
-     * Jan–Jun fixed history + current month live received (spec §9.1).
+     * Collections per month over the trailing window, oldest first.
+     *
+     * Every bar is now computed from `payments.received_at`. The first six were
+     * previously read from `config('institute.revenue_history')`, a hardcoded
+     * list of six invented figures, and only the last bar was real. That is the
+     * same fabrication the Reports screen's 92% attendance card was deleted for,
+     * and it was worse here: invented bars sitting directly beside reconciled
+     * totals borrow their credibility.
+     *
+     * The last bar also used to show all-time received rather than the current
+     * month, so the chart's final column silently answered a different question
+     * from every column before it.
+     *
+     * Months with no takings render as a visible zero rather than vanishing, so
+     * the chart cannot imply a quiet month never happened.
      *
      * @return list<array{mon:string,amount:int}>
      */
-    public function revenueTrend(User $user): array
+    public function revenueTrend(User $user, int $months = 7): array
     {
-        $history = config('institute.revenue_history', []);
-        $months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun'];
+        $start = Clock::today()->copy()->startOfMonth()->subMonths($months - 1);
+        $driver = DB::connection()->getDriverName();
+
+        $expr = $driver === 'sqlite'
+            ? "strftime('%Y-%m', payments.received_at)"
+            : "DATE_FORMAT(payments.received_at, '%Y-%m')";
+
+        $totals = $this->scopedPayments($user)
+            ->where('payments.received_at', '>=', $start)
+            ->groupBy(DB::raw($expr))
+            ->select(DB::raw("$expr as ym"), DB::raw('SUM(payments.amount) as total'))
+            ->pluck('total', 'ym');
 
         $out = [];
-        foreach ($history as $i => $amount) {
-            $out[] = ['mon' => $months[$i] ?? '', 'amount' => (int) $amount];
+        for ($i = 0; $i < $months; $i++) {
+            $month = $start->copy()->addMonths($i);
+            $out[] = [
+                'mon' => $month->format('M'),
+                'amount' => (int) ($totals[$month->format('Y-m')] ?? 0),
+            ];
         }
-        $out[] = ['mon' => Clock::today()->format('M'), 'amount' => $this->received($user)];
 
         return $out;
     }

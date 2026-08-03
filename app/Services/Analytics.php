@@ -6,6 +6,7 @@ use App\Models\Admission;
 use App\Models\AuditLog;
 use App\Models\Challan;
 use App\Models\Course;
+use App\Models\Payment;
 use App\Models\Student;
 use App\Models\User;
 use App\Support\Clock;
@@ -39,6 +40,11 @@ class Analytics
      */
     public function staffPerformance(?Carbon $since = null): Collection
     {
+        // Collected in its own pass, keyed by officer. Joining `payments` into
+        // the query below would repeat a challan once per part payment and
+        // double that officer's `billed` total.
+        $collected = $this->collectedByOfficer($since);
+
         $rows = User::query()
             ->withTrashed()
             ->leftJoin('admissions', function ($join) use ($since) {
@@ -59,22 +65,41 @@ class Analytics
                 DB::raw('COUNT(DISTINCT admissions.id) as enrolments'),
                 DB::raw('COUNT(DISTINCT admissions.student_id) as students'),
                 DB::raw('COALESCE(SUM(challans.net_amount), 0) as billed'),
-                DB::raw("COALESCE(SUM(CASE WHEN challans.status = 'paid' THEN challans.net_amount ELSE 0 END), 0) as received"),
                 DB::raw('COALESCE(SUM(challans.discount_amount), 0) as discounts'),
                 DB::raw("COALESCE(SUM(CASE WHEN challans.status != 'paid' AND challans.due_date < ? THEN 1 ELSE 0 END), 0) as overdue"),
             ])
             ->addBinding(Clock::today()->toDateString(), 'select')
-            ->orderByDesc('received')
             ->get();
 
-        return $rows->map(function ($r) {
-            $r->outstanding = (int) $r->billed - (int) $r->received;
+        return $rows->map(function ($r) use ($collected) {
+            $r->billed = (int) $r->billed;
+            $r->received = (int) ($collected[$r->id] ?? 0);
+            $r->outstanding = $r->billed - $r->received;
             $r->collection_rate = $r->billed > 0 ? (int) round($r->received / $r->billed * 100) : null;
             $r->avg_discount = $r->enrolments > 0 ? (int) round($r->discounts / $r->enrolments) : 0;
             $r->is_removed = $r->deleted_at !== null;
 
             return $r;
-        });
+        })->sortByDesc('received')->values();
+    }
+
+    /**
+     * Total collected against each officer's enrolments.
+     *
+     * @return array<int, int> officer id => collected
+     */
+    private function collectedByOfficer(?Carbon $since = null): array
+    {
+        return Payment::query()
+            ->join('challans', 'challans.id', '=', 'payments.challan_id')
+            ->join('admissions', 'admissions.id', '=', 'challans.admission_id')
+            ->where('admissions.status', '!=', 'cancelled')
+            ->when($since, fn ($q) => $q->where('admissions.created_at', '>=', $since))
+            ->groupBy('admissions.enrolled_by')
+            ->select('admissions.enrolled_by', DB::raw('SUM(payments.amount) as total'))
+            ->get()
+            ->mapWithKeys(fn ($r) => [(int) $r->enrolled_by => (int) $r->total])
+            ->all();
     }
 
     /** Institute-wide totals, the numbers no officer is allowed to see. */
@@ -84,19 +109,29 @@ class Analytics
             ->whereHas('admission', fn ($q) => $q->where('status', '!=', 'cancelled'))
             ->selectRaw('COUNT(*) as challans')
             ->selectRaw('COALESCE(SUM(net_amount), 0) as billed')
-            ->selectRaw("COALESCE(SUM(CASE WHEN status = 'paid' THEN net_amount ELSE 0 END), 0) as received")
             ->first();
 
         $billed = (int) $agg->billed;
-        $received = (int) $agg->received;
+
+        // Σ payments, matching the staff dashboard. Reading the paid flag here
+        // made the owner console under-report the institute's own revenue by
+        // every advance it had taken but not yet settled.
+        $received = (int) Payment::query()
+            ->whereIn('challan_id', Challan::query()
+                ->whereHas('admission', fn ($q) => $q->where('status', '!=', 'cancelled'))
+                ->select('challans.id'))
+            ->sum('amount');
 
         return [
             'challans' => (int) $agg->challans,
             'billed' => $billed,
             'received' => $received,
             'outstanding' => $billed - $received,
-            // The reconciliation identity from §7.1, asserted rather than assumed.
-            'reconciles' => $billed === $received + ($billed - $received),
+            // Collections can legitimately exceed nothing here, but they must
+            // never exceed what was billed. Previously this asserted
+            // `$billed === $received + ($billed - $received)`, which is true for
+            // every possible input and therefore checked nothing at all.
+            'reconciles' => $received <= $billed,
         ];
     }
 
@@ -126,6 +161,19 @@ class Analytics
      */
     public function revenueByCourse(int $limit = 8): Collection
     {
+        $collected = Payment::query()
+            ->join('challans', 'challans.id', '=', 'payments.challan_id')
+            ->join('admissions', 'admissions.id', '=', 'challans.admission_id')
+            ->where('admissions.status', '!=', 'cancelled')
+            ->groupBy('admissions.course_id')
+            ->select('admissions.course_id', DB::raw('SUM(payments.amount) as total'))
+            ->get()
+            ->mapWithKeys(fn ($r) => [(int) $r->course_id => (int) $r->total])
+            ->all();
+
+        // Billed and enrolments come from the join; received is merged in from
+        // the payments aggregate above, so the limit is applied AFTER ordering
+        // by the figure the caller actually asked to rank on.
         return Course::query()
             ->leftJoin('admissions', function ($j) {
                 $j->on('admissions.course_id', '=', 'courses.id')
@@ -136,12 +184,18 @@ class Analytics
             ->select([
                 'courses.id', 'courses.code', 'courses.title', 'courses.capacity',
                 DB::raw('COUNT(DISTINCT admissions.id) as enrolments'),
-                DB::raw("COALESCE(SUM(CASE WHEN challans.status = 'paid' THEN challans.net_amount ELSE 0 END), 0) as received"),
                 DB::raw('COALESCE(SUM(challans.net_amount), 0) as billed'),
             ])
-            ->orderByDesc('received')
-            ->limit($limit)
-            ->get();
+            ->get()
+            ->map(function ($c) use ($collected) {
+                $c->billed = (int) $c->billed;
+                $c->received = $collected[(int) $c->id] ?? 0;
+
+                return $c;
+            })
+            ->sortByDesc('received')
+            ->take($limit)
+            ->values();
     }
 
     /**
@@ -183,15 +237,16 @@ class Analytics
         $driver = DB::connection()->getDriverName();
 
         $period = $driver === 'sqlite'
-            ? "strftime('%Y-%m', paid_at)"
-            : "DATE_FORMAT(paid_at, '%Y-%m')";
+            ? "strftime('%Y-%m', payments.received_at)"
+            : "DATE_FORMAT(payments.received_at, '%Y-%m')";
 
-        $paid = Challan::query()
-            ->where('status', 'paid')
-            ->whereNotNull('paid_at')
-            ->where('paid_at', '>=', $since)
+        // Dated by when each handover arrived, so a fee collected across two
+        // months appears in both rather than landing wholly in the month it
+        // happened to finish in.
+        $paid = Payment::query()
+            ->where('payments.received_at', '>=', $since)
             ->groupBy(DB::raw($period))
-            ->select(DB::raw("$period as ym"), DB::raw('SUM(net_amount) as total'))
+            ->select(DB::raw("$period as ym"), DB::raw('SUM(payments.amount) as total'))
             ->pluck('total', 'ym');
 
         // Materialise every month so a quiet month renders as a zero bar rather

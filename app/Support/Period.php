@@ -101,10 +101,20 @@ final class Period
         return Format::date($this->from).' to '.Format::date($this->to);
     }
 
-    /** Whole days covered, used to decide chart granularity. */
+    /**
+     * Whole days covered, used to decide chart granularity.
+     *
+     * Compared start-of-day to start-of-day. `to` is held at 23:59:59 so the
+     * window includes its last day, and Carbon 3 returns a float from
+     * diffInDays(), so the old `diffInDays($this->to) + 1` handed 365.9999 to an
+     * `int` return type. The value happened to truncate correctly, but every
+     * Reports page load emitted "Implicit conversion from float ... loses
+     * precision", which a later PHP promotes from a deprecation to an error.
+     */
     public function days(): int
     {
-        return $this->from->diffInDays($this->to) + 1;
+        return (int) $this->from->copy()->startOfDay()
+            ->diffInDays($this->to->copy()->startOfDay()) + 1;
     }
 
     /**

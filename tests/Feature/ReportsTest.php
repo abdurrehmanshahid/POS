@@ -4,6 +4,7 @@ namespace Tests\Feature;
 
 use App\Models\Challan;
 use App\Models\User;
+use App\Services\ChallanActions;
 use App\Services\Reporting;
 use App\Support\Period;
 use Database\Seeders\DatabaseSeeder;
@@ -90,18 +91,57 @@ class ReportsTest extends TestCase
         $reporting = app(Reporting::class);
         $admin = $this->admin();
 
-        // A challan issued long ago but settled today belongs to today.
+        // A challan issued long ago but collected today belongs to today.
+        //
+        // The collection is recorded through the service rather than by writing
+        // the paid flag by hand: every figure is now Σ payments, so a challan
+        // flagged paid with no payment row behind it is not a settled fee, it is
+        // inconsistent data that the application itself cannot produce.
         $challan = Challan::where('status', '!=', 'paid')->firstOrFail();
-        $challan->forceFill([
-            'created_at' => '2026-01-05 09:00:00',
-            'status' => 'paid',
-            'paid_at' => '2026-07-15 11:00:00',
-            'paid_via' => 'Cash',
-        ])->save();
+        $challan->forceFill(['created_at' => '2026-01-05 09:00:00'])->save();
+
+        app(ChallanActions::class)->markPaid($challan, $admin, 'Cash');
 
         $today = $reporting->summary($admin, Period::resolve('today'));
 
         $this->assertSame((int) $challan->net_amount, $today['collected']);
+    }
+
+    public function test_a_part_payment_is_reported_the_day_it_arrives(): void
+    {
+        $reporting = app(Reporting::class);
+        $admin = $this->admin();
+
+        $challan = Challan::where('status', '!=', 'paid')->firstOrFail();
+        $half = intdiv((int) $challan->net_amount, 2);
+
+        app(ChallanActions::class)->recordPayment($challan, $admin, $half, 'Cash');
+
+        // The advance is money in the drawer today, even though the challan is
+        // still short of settled. Reading the paid flag reported zero here.
+        $this->assertSame($half, $reporting->summary($admin, Period::resolve('today'))['collected']);
+
+        // And it is attributed to the method it was actually taken by.
+        $cash = $reporting->byPaymentMethod($admin, Period::resolve('today'))
+            ->firstWhere('method', 'Cash');
+        $this->assertNotNull($cash);
+        $this->assertSame($half, $cash->total);
+    }
+
+    public function test_dues_ageing_counts_the_balance_not_the_face_value(): void
+    {
+        $reporting = app(Reporting::class);
+        $admin = $this->admin();
+
+        $before = $reporting->duesAgeing($admin)['total'];
+
+        $challan = Challan::where('status', '!=', 'paid')->firstOrFail();
+        $half = intdiv((int) $challan->net_amount, 2);
+
+        app(ChallanActions::class)->recordPayment($challan, $admin, $half, 'Cash');
+
+        // Taking half the fee reduces what is owed by half, not by nothing.
+        $this->assertSame($before - $half, $reporting->duesAgeing($admin)['total']);
     }
 
     public function test_per_day_average_divides_by_the_window_length(): void

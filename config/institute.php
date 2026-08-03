@@ -69,8 +69,19 @@ return [
     'payment_methods' => ['Cash', 'Bank transfer', 'Card', 'Wallet', 'Cheque'],
 
     /*
-    | Seeded historical monthly revenue (Jan–Jun); the current month is live
-    | (spec §9.1). Order matches the dashboard bar chart.
+    |--------------------------------------------------------------------------
+    | Removed: revenue_history
+    |--------------------------------------------------------------------------
+    |
+    | This key held six hardcoded monthly figures that the dashboard rendered as
+    | Jan to Jun on its revenue chart, with only the current month computed from
+    | real data. They were invented, and they sat directly beside the reconciled
+    | billed / received / outstanding totals, which lent them credibility they
+    | had not earned.
+    |
+    | Ledger::revenueTrend() now derives every month from payments.received_at.
+    | The chart is shorter until real history accumulates, which is the correct
+    | thing for it to be.
+    |
     */
-    'revenue_history' => [820000, 540000, 310000, 690000, 910000, 760000],
 ];

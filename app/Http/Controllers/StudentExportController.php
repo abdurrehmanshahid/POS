@@ -22,7 +22,9 @@ class StudentExportController extends Controller
             ->with(['admissions' => function ($q) use ($user) {
                 $q->where('status', '!=', 'cancelled')
                     ->when(! $user->can('scope.all'), fn ($qq) => $qq->where('enrolled_by', $user->id))
-                    ->with(['course', 'enroller', 'challan']);
+                    // `challan.payments` is eager loaded so `balance()` below
+                    // answers from memory instead of firing a query per row.
+                    ->with(['course', 'enroller', 'challan.payments']);
             }])
             ->orderBy('student_code')
             ->get();
@@ -46,9 +48,11 @@ class StudentExportController extends Controller
                     ->unique()->implode('; ');
                 $enroller = optional($adm->sortByDesc('created_at')->first()?->enroller)->name ?? '';
 
-                $billed = $adm->sum(fn ($a) => (int) ($a->challan->net_amount ?? 0));
-                $received = $adm->where('challan.status', 'paid')->sum(fn ($a) => (int) ($a->challan->net_amount ?? 0));
-                $outstanding = $billed - $received;
+                // Σ balance, not "net of the challans flagged paid". A student
+                // who has handed over half their fee owes half; the old
+                // arithmetic exported them as owing all of it, so this file
+                // contradicted the student drawer sitting next to it on screen.
+                $outstanding = $adm->sum(fn ($a) => (int) ($a->challan?->balance() ?? 0));
 
                 $status = $adm->isEmpty() ? 'No enrolment' : ($outstanding <= 0 ? 'Cleared' : 'Owes');
 
