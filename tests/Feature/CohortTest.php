@@ -109,6 +109,43 @@ class CohortTest extends TestCase
         $this->assertSame($cohort->id, $result['admissions'][0]->cohort_id);
     }
 
+    public function test_a_full_batch_stops_taking_students(): void
+    {
+        $course = $this->course('GD-101');   // no seeded batch
+        $cohort = app(Cohorts::class)->create($this->admin(), [
+            'name' => 'Batch # 9',
+            'course_id' => $course->id,
+        ]);
+
+        // Opening a batch adopts the course's existing unbatched enrolments, so
+        // capacity is set afterwards: room for exactly one more student.
+        $cohort->update(['capacity' => $cohort->seatsUsed() + 1]);
+
+        $first = app(RegistrationService::class)->register($this->officer(), [
+            'new_student' => [
+                'type' => 'R', 'name' => 'First In', 'guardian_name' => 'Guardian',
+                'phone' => '+92 300 5551111', 'cnic' => '35201-5551111-1',
+            ],
+            'course_ids' => [$course->id],
+        ]);
+
+        $this->assertSame($cohort->id, $first['admissions'][0]->cohort_id, 'The first student fills the single seat.');
+        $this->assertTrue($cohort->refresh()->isFull());
+
+        $second = app(RegistrationService::class)->register($this->officer(), [
+            'new_student' => [
+                'type' => 'R', 'name' => 'Second In', 'guardian_name' => 'Guardian',
+                'phone' => '+92 300 5552222', 'cnic' => '35201-5552222-2',
+            ],
+            'course_ids' => [$course->id],
+        ]);
+
+        // Still enrolled on the course, just not forced into a batch that has
+        // no room. Previously the batch silently took them anyway.
+        $this->assertNull($second['admissions'][0]->cohort_id);
+        $this->assertSame($cohort->capacity, $cohort->refresh()->seatsUsed());
+    }
+
     public function test_an_enrolment_on_a_course_with_no_batch_simply_has_none(): void
     {
         $result = app(RegistrationService::class)->register($this->officer(), [

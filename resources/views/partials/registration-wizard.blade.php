@@ -102,15 +102,26 @@
             @if ($wizErrors['courses'] ?? false)<div class="field-error" style="margin-bottom:10px">{{ $wizErrors['courses'] }}</div>@endif
             <div class="grid-2" style="margin-bottom:20px">
                 @foreach ($activeCourses as $c)
-                    @php $sel = in_array($c->id, $courseIds); $full = $c->isFull(); $left = $c->seatsLeft(); @endphp
-                    <div wire:click="toggleCourse({{ $c->id }})" style="padding:14px;border:1.5px solid {{ $sel ? 'var(--iris)' : 'var(--border2)' }};background:{{ $sel ? 'var(--iris-bg)' : 'var(--surface)' }};border-radius:12px;cursor:{{ $full ? 'not-allowed' : 'pointer' }};opacity:{{ $full ? '.55' : '1' }}">
+                    @php
+                        $sel = in_array($c->id, $courseIds);
+                        $full = $c->isFull();
+                        $left = $c->seatsLeft();
+                        // Enrolling the same person on the same course twice
+                        // creates two challans for one seat, so the card says so
+                        // rather than letting it happen and failing on submit.
+                        $already = in_array($c->id, $enrolledCourseIds, true);
+                        $blocked = $full || $already;
+                    @endphp
+                    <div wire:click="toggleCourse({{ $c->id }})" style="padding:14px;border:1.5px solid {{ $sel ? 'var(--iris)' : 'var(--border2)' }};background:{{ $sel ? 'var(--iris-bg)' : 'var(--surface)' }};border-radius:12px;cursor:{{ $blocked ? 'not-allowed' : 'pointer' }};opacity:{{ $blocked ? '.55' : '1' }}">
                         <div style="display:flex;justify-content:space-between;align-items:flex-start">
                             <div><div class="tnum" style="font-size:11px;font-weight:700;color:var(--iris)">{{ $c->code }}</div><div style="font-size:13.5px;font-weight:700;color:var(--ink);margin-top:2px">{{ $c->title }}</div></div>
                             @if ($sel)<x-icon name="check-circle" :size="18" style="color:var(--iris)" />@endif
                         </div>
                         <div style="display:flex;justify-content:space-between;margin-top:10px;font-size:11.5px;color:var(--muted)">
                             <span>{{ $c->trainer?->name }}</span>
-                            <span>{{ $full ? 'Course full' : ($left === null ? 'Open' : $left.' seats left') }}</span>
+                            <span @if ($already) style="color:var(--due);font-weight:700" @endif>
+                                {{ $already ? 'Already enrolled' : ($full ? 'Course full' : ($left === null ? 'Open' : $left.' seats left')) }}
+                            </span>
                         </div>
                         <div class="tnum" style="font-size:14px;font-weight:800;color:var(--navy);margin-top:8px">{{ Format::money($c->fee) }}</div>
                     </div>

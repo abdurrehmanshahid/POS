@@ -142,12 +142,39 @@ new class extends Component {
             $this->dispatch('bbt-toast', tone: 'warn', title: 'Course is full', msg: $course?->title);
             return;
         }
+        // Caught here so the officer learns before the review step, not after
+        // pressing Register. The service and a unique index both refuse it too.
+        if (in_array($id, $this->enrolledCourseIds(), true)) {
+            $this->dispatch('bbt-toast', tone: 'warn', title: 'Already enrolled',
+                msg: 'This student is already on '.$course->title.'.');
+            return;
+        }
         $this->courseIds = in_array($id, $this->courseIds)
             ? array_values(array_diff($this->courseIds, [$id]))
             : [...$this->courseIds, $id];
     }
 
     public function back(): void { if ($this->step > 1) { $this->step--; } }
+
+    /**
+     * Courses the selected student already holds a live enrolment on.
+     *
+     * Empty for a brand new student, who by definition is on nothing yet.
+     *
+     * @return list<int>
+     */
+    public function enrolledCourseIds(): array
+    {
+        if ($this->mode !== 'existing' || ! $this->pickedStudentId) {
+            return [];
+        }
+
+        return Admission::where('student_id', $this->pickedStudentId)
+            ->where('status', '!=', 'cancelled')
+            ->pluck('course_id')
+            ->map(fn ($id) => (int) $id)
+            ->all();
+    }
 
     // ---- Live step-1 validation --------------------------------------------
     //
@@ -299,6 +326,10 @@ new class extends Component {
             'course_ids' => $this->courseIds,
             'discount_pct' => $this->discountPct,
             'discount_reason' => $this->discountReason,
+            // Actually honoured now. The review step has always shown this
+            // checkbox; until it was passed through, unticking it still raised
+            // a challan and the label was simply untrue.
+            'generate_challans' => $this->genChallans,
         ];
         if ($this->mode === 'existing') {
             $data['student_id'] = $this->pickedStudentId;
@@ -353,6 +384,7 @@ new class extends Component {
             $seq = \App\Services\Sequences::class;
 
             $wizard = [
+                'enrolledCourseIds' => $this->enrolledCourseIds(),
                 'activeCourses' => $activeCourses,
                 'selectedCourses' => $selectedCourses,
                 'base' => $base, 'disc' => $disc, 'net' => $base - $disc,
@@ -360,14 +392,19 @@ new class extends Component {
                 'admPreview' => $count === 1
                     ? $seq::admissionNo($nextAdm)
                     : $seq::admissionNo($nextAdm).' to '.$seq::admissionNo($nextAdm + $count - 1),
+                // Scoped, like every other student list in the system. Unscoped,
+                // this box let an officer search the whole institute by name or
+                // CNIC and enrol anybody in it, which contradicted both
+                // useExistingStudent() and mount() a few lines up.
                 'matches' => $this->mode === 'existing' && strlen(trim($this->studentSearch)) >= 1
-                    ? Student::where(fn ($w) => $w->where('name', 'like', '%'.$this->studentSearch.'%')
-                        ->orWhere('cnic', 'like', '%'.$this->studentSearch.'%')
-                        ->orWhere('student_code', 'like', '%'.$this->studentSearch.'%'))
+                    ? Student::visibleTo($user)
+                        ->where(fn ($w) => $w->where('name', 'like', '%'.$this->studentSearch.'%')
+                            ->orWhere('cnic', 'like', '%'.$this->studentSearch.'%')
+                            ->orWhere('student_code', 'like', '%'.$this->studentSearch.'%'))
                         ->limit(6)->get()
                     : collect(),
                 'cnicClash' => $this->cnicClashId ? Student::find($this->cnicClashId) : null,
-                'pickedStudent' => $this->pickedStudentId ? Student::find($this->pickedStudentId) : null,
+                'pickedStudent' => $this->pickedStudentId ? Student::visibleTo($user)->find($this->pickedStudentId) : null,
             ];
         }
 

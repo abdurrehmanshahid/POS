@@ -135,10 +135,24 @@ class Cohorts
         return $ids->count();
     }
 
-    /** The cohort a new admission on this course should join, if any. */
+    /**
+     * The cohort a new admission on this course should join, if any.
+     *
+     * A full batch takes nobody. `capacity` is the room the trainer was promised,
+     * and this method used to hand back the open cohort regardless, so a batch
+     * capped at 20 quietly accepted its 21st student and the "Full" badge on the
+     * batches screen was decoration.
+     *
+     * Returning null leaves the admission unbatched rather than refusing the
+     * enrolment. The student is genuinely enrolled on the course; which intake
+     * they sit in is an administrative decision, and the batches screen already
+     * shows and can reassign unbatched enrolments.
+     */
     public function openFor(int $courseId): ?Cohort
     {
-        return Cohort::where('course_id', $courseId)->open()->first();
+        $cohort = Cohort::where('course_id', $courseId)->open()->first();
+
+        return $cohort && ! $cohort->isFull() ? $cohort : null;
     }
 
     /** Move one enrolment between batches, e.g. a student deferring an intake. */

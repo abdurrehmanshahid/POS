@@ -13,6 +13,8 @@ use App\Services\Ledger;
 use App\Services\RegistrationService;
 use App\Services\Sequences;
 use Database\Seeders\DatabaseSeeder;
+use Illuminate\Database\Eloquent\ModelNotFoundException;
+use Illuminate\Database\QueryException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
@@ -418,5 +420,190 @@ class InstituteCoreTest extends TestCase
     {
         // 11 issued + 4 discounts + 6 paid = 21 audit rows.
         $this->assertSame(21, AuditLog::count());
+    }
+
+    // ---- Enrolment invariants -----------------------------------------------
+    //
+    // The wizard guards all of these at selection time, but selection and
+    // submission are separate requests. These assert the service refuses on its
+    // own, which is what protects every caller that is not the wizard.
+
+    public function test_a_full_course_refuses_further_enrolments(): void
+    {
+        $course = Course::where('code', 'SHOP-101')->firstOrFail();
+        // Pin capacity to exactly what is already taken.
+        $course->update(['capacity' => $course->seatsUsed()]);
+
+        $this->expectException(InvalidArgumentException::class);
+        $this->expectExceptionMessage('is full');
+
+        app(RegistrationService::class)->register($this->admin(), [
+            'new_student' => [
+                'type' => 'R', 'name' => 'Overflow Candidate', 'guardian_name' => 'Guardian',
+                'phone' => '+92 300 1112223', 'cnic' => '35201-9998887-1',
+            ],
+            'course_ids' => [$course->id],
+        ]);
+    }
+
+    public function test_an_inactive_course_refuses_enrolments(): void
+    {
+        $course = Course::where('code', 'SHOP-101')->firstOrFail();
+        $course->update(['is_active' => false]);
+
+        $this->expectException(InvalidArgumentException::class);
+        $this->expectExceptionMessage('no longer taking enrolments');
+
+        app(RegistrationService::class)->register($this->admin(), [
+            'new_student' => [
+                'type' => 'R', 'name' => 'Late Arrival', 'guardian_name' => 'Guardian',
+                'phone' => '+92 300 1112224', 'cnic' => '35201-9998887-2',
+            ],
+            'course_ids' => [$course->id],
+        ]);
+    }
+
+    public function test_a_stale_course_id_aborts_instead_of_half_registering(): void
+    {
+        $students = Student::count();
+
+        try {
+            app(RegistrationService::class)->register($this->admin(), [
+                'new_student' => [
+                    'type' => 'R', 'name' => 'Ghost Student', 'guardian_name' => 'Guardian',
+                    'phone' => '+92 300 1112225', 'cnic' => '35201-9998887-3',
+                ],
+                'course_ids' => [999999],
+            ]);
+            $this->fail('A vanished course must abort the registration.');
+        } catch (InvalidArgumentException $e) {
+            $this->assertStringContainsString('no longer exists', $e->getMessage());
+        }
+
+        // The whole point: no orphan person left behind by a failed enrolment.
+        $this->assertSame($students, Student::count());
+        $this->assertNull(Student::where('name', 'Ghost Student')->first());
+    }
+
+    public function test_unticking_generate_challans_enrols_without_billing(): void
+    {
+        $course = Course::where('code', 'SHOP-101')->firstOrFail();
+
+        $result = app(RegistrationService::class)->register($this->admin(), [
+            'new_student' => [
+                'type' => 'R', 'name' => 'Unbilled Student', 'guardian_name' => 'Guardian',
+                'phone' => '+92 300 1112226', 'cnic' => '35201-9998887-4',
+            ],
+            'course_ids' => [$course->id],
+            'generate_challans' => false,
+        ]);
+
+        $this->assertCount(1, $result['admissions']);
+        $this->assertCount(0, $result['challans'], 'The checkbox must actually suppress billing.');
+        $this->assertNull($result['admissions'][0]->challan()->first());
+    }
+
+    // ---- One live enrolment per student per course ---------------------------
+
+    public function test_a_student_cannot_be_enrolled_on_the_same_course_twice(): void
+    {
+        $course = Course::where('code', 'SHOP-101')->firstOrFail();
+        $student = Student::firstOrFail();
+        $service = app(RegistrationService::class);
+
+        $service->register($this->admin(), ['student_id' => $student->id, 'course_ids' => [$course->id]]);
+
+        $live = fn () => Admission::where('student_id', $student->id)
+            ->where('course_id', $course->id)->where('status', '!=', 'cancelled')->count();
+
+        $this->assertSame(1, $live());
+
+        try {
+            $service->register($this->admin(), ['student_id' => $student->id, 'course_ids' => [$course->id]]);
+            $this->fail('A second live enrolment on the same course must be refused.');
+        } catch (InvalidArgumentException $e) {
+            $this->assertStringContainsString('already enrolled', $e->getMessage());
+        }
+
+        // The point of the guard: one seat, one challan, one fee.
+        $this->assertSame(1, $live());
+    }
+
+    public function test_the_database_refuses_a_duplicate_live_enrolment(): void
+    {
+        $course = Course::where('code', 'SHOP-101')->firstOrFail();
+        $student = Student::firstOrFail();
+
+        app(RegistrationService::class)->register($this->admin(), [
+            'student_id' => $student->id, 'course_ids' => [$course->id],
+        ]);
+
+        // The service guard is for the message; the index is what holds under
+        // two officers submitting the same registration at the same moment.
+        $this->expectException(QueryException::class);
+
+        Admission::create([
+            'reg_no' => 'BBT-ADM-9999', 'student_id' => $student->id, 'course_id' => $course->id,
+            'enrolled_by' => $this->admin()->id, 'status' => 'validated',
+        ]);
+    }
+
+    public function test_a_cancelled_enrolment_frees_the_student_to_take_the_course_again(): void
+    {
+        $course = Course::where('code', 'SHOP-101')->firstOrFail();
+        $student = Student::firstOrFail();
+        $service = app(RegistrationService::class);
+
+        $first = $service->register($this->admin(), [
+            'student_id' => $student->id, 'course_ids' => [$course->id],
+        ]);
+
+        $first['admissions'][0]->update(['status' => 'cancelled', 'rejection_reason' => 'Changed their mind']);
+
+        // Re-taking a course is legitimate. The constraint is on holding two
+        // live enrolments at once, not on the pair ever occurring twice.
+        $again = $service->register($this->admin(), [
+            'student_id' => $student->id, 'course_ids' => [$course->id],
+        ]);
+
+        $this->assertNotNull($again['admissions'][0]);
+        $this->assertSame(2, Admission::where('student_id', $student->id)->where('course_id', $course->id)->count());
+    }
+
+    public function test_the_wizard_marks_courses_the_student_already_holds(): void
+    {
+        $student = Student::firstOrFail();
+        $enrolled = $student->admissions()->where('status', '!=', 'cancelled')->first();
+
+        $this->assertNotNull($enrolled, 'The seed student must already hold an enrolment.');
+
+        Livewire::actingAs($this->admin())
+            ->test('pages.registrations')
+            ->call('openWizard')
+            ->set('mode', 'existing')
+            ->set('pickedStudentId', $student->id)
+            ->assertSet('courseIds', [])
+            ->call('toggleCourse', $enrolled->course_id)
+            // Refused, so nothing was selected.
+            ->assertSet('courseIds', []);
+    }
+
+    public function test_an_officer_cannot_enrol_a_student_outside_their_scope(): void
+    {
+        $officer = $this->officer();
+
+        // A student nobody in this officer's scope enrolled.
+        $stranger = Student::create([
+            'student_code' => 'BBT-R26-9999', 'type' => 'R', 'name' => 'Not Yours',
+            'guardian_name' => 'Guardian', 'cnic' => '35201-7776665-4',
+            'phone' => '+92 300 7776665', 'created_by' => $this->admin()->id,
+        ]);
+
+        $this->expectException(ModelNotFoundException::class);
+
+        app(RegistrationService::class)->register($officer, [
+            'student_id' => $stranger->id,
+            'course_ids' => [Course::where('code', 'SHOP-101')->firstOrFail()->id],
+        ]);
     }
 }
