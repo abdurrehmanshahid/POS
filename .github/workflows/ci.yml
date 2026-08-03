@@ -14,49 +14,189 @@ concurrency:
 permissions:
   contents: read
 
+# ---------------------------------------------------------------------------
+# Why this file is shaped the way it is
+#
+# The single required status check on `main` is the job named exactly "CI".
+# That name is configured in branch protection, which lives in GitHub settings
+# rather than in this repository, so renaming or removing that job silently
+# stops protecting the branch.
+#
+# Everything real therefore runs in matrix jobs, and "CI" is a thin gate that
+# passes only when all of them passed. Adding a PHP version, a database or a
+# whole new job means editing the matrix and the `needs` list here; branch
+# protection never has to be touched again.
+#
+# The previous version of this file detected "a stack" generically and ran
+# `npm test --if-present` and `pytest -q || true`. Neither could fail: there is
+# no npm test script and no Python in this repository, so CI went green in 18
+# seconds having verified nothing, including on the commit that rewrote the
+# money layer. A check that cannot fail is worse than no check, because it is
+# trusted. Every step below either asserts something or is not here.
+# ---------------------------------------------------------------------------
+
 jobs:
-  CI:
-    name: CI
+  tests:
+    name: PHP ${{ matrix.php }} · ${{ matrix.db }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
+
+    strategy:
+      # Report every broken combination in one run rather than stopping at the
+      # first. "php and mysql both fail" is a different diagnosis from
+      # "php fails".
+      fail-fast: false
+      matrix:
+        # The floor composer.json supports, and what the project is developed
+        # on. Testing only the floor lets a deprecation land unnoticed; testing
+        # only the newest lets in syntax the floor cannot parse.
+        #
+        # 8.3 was in this list on the first run and failed: composer.json said
+        # "^8.3" while the lock pinned sixteen Symfony packages needing 8.4.1,
+        # so the project could not install on the version it advertised. The
+        # constraint now tells the truth and `config.platform.php` keeps a
+        # future `composer update` on a newer machine from raising the floor
+        # again without anyone noticing.
+        php: ['8.4', '8.5']
+        db: [sqlite]
+        include:
+          # Production runs MySQL and the suite runs SQLite, which would be
+          # unremarkable except that this codebase hand-writes driver-specific
+          # SQL in four services (Ledger, Reporting, Analytics, DatabaseBackup)
+          # and in the identifier-prefix migration. Those branches are exactly
+          # the code no amount of SQLite testing can reach.
+          - php: '8.4'
+            db: mysql
+
+    services:
+      # Declared for every leg because GitHub Actions cannot start a service
+      # conditionally on a matrix value. The SQLite legs ignore it; a few
+      # seconds of container start is cheaper than maintaining a second
+      # near-identical job that drifts out of step with this one.
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: institute_testing
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -proot"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
+
     steps:
       - name: Checkout
         uses: actions/checkout@v7
 
-      - name: Detect stack
-        id: detect
+      - name: Setup PHP ${{ matrix.php }}
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php }}
+          # Listed explicitly rather than trusting the runner image's defaults,
+          # so a change to that image cannot quietly remove one. pdo_mysql for
+          # the mysql leg, gd and zip for dompdf and phpspreadsheet, sodium for
+          # the encrypted two-factor casts.
+          extensions: mbstring, xml, curl, zip, bcmath, intl, gd, sodium, fileinfo, pdo_sqlite, pdo_mysql
+          coverage: none
+          tools: none
+
+      - name: Cache Composer packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/composer/files
+          key: composer-${{ matrix.php }}-${{ hashFiles('composer.lock') }}
+          restore-keys: composer-${{ matrix.php }}-
+
+      - name: Validate composer.json against composer.lock
+        # Catches a manifest edited without re-locking, which otherwise surfaces
+        # as a mystery dependency difference between a laptop and the server.
+        run: composer validate --strict --no-check-publish
+
+      - name: Install dependencies
+        run: composer install --prefer-dist --no-interaction --no-progress --no-ansi
+
+      - name: Prepare environment
+        # phpunit.xml supplies the test database and drivers. This step exists
+        # for APP_KEY, which the encrypted two-factor casts genuinely require
+        # and which .env.example deliberately ships blank.
         run: |
-          if [ -f package.json ]; then echo "node=true" >> "$GITHUB_OUTPUT"; fi
-          if [ -f pyproject.toml ] || [ -f requirements.txt ]; then echo "python=true" >> "$GITHUB_OUTPUT"; fi
+          cp .env.example .env
+          php artisan key:generate
+
+      - name: Check code style
+        # Its own step so a style failure is never mistaken for broken
+        # behaviour, or the other way round.
+        run: vendor/bin/pint --test
+
+      - name: Wait for MySQL
+        if: matrix.db == 'mysql'
+        run: |
+          for i in $(seq 1 30); do
+            if mysqladmin ping -h 127.0.0.1 -P 3306 -uroot -proot --silent; then
+              echo "MySQL is up"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "MySQL did not become ready within 60s"
+          exit 1
+
+      - name: Run the test suite
+        # DB_* is set here rather than in phpunit.xml because PHPUnit's <env>
+        # entries do not overwrite a variable that already exists in the
+        # environment. That is what lets one suite run against both drivers
+        # without a second config file to keep in step with the first.
+        env:
+          DB_CONNECTION: ${{ matrix.db == 'mysql' && 'mysql' || 'sqlite' }}
+          DB_HOST: 127.0.0.1
+          DB_PORT: 3306
+          DB_DATABASE: ${{ matrix.db == 'mysql' && 'institute_testing' || ':memory:' }}
+          DB_USERNAME: root
+          DB_PASSWORD: root
+        run: php artisan test
+
+  assets:
+    name: Frontend build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
 
       - name: Setup Node
-        if: steps.detect.outputs.node == 'true'
         uses: actions/setup-node@v7
         with:
           node-version: 20
+          cache: npm
 
-      - name: Node install / lint / test
-        if: steps.detect.outputs.node == 'true'
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        # A real gate: the production bundle has to compile. There is no npm
+        # test script in this project, so none is pretended at here.
+        run: npm run build
+
+  CI:
+    # The required status check. Keep this name.
+    name: CI
+    runs-on: ubuntu-latest
+    needs: [tests, assets]
+    # `always()` so the gate still runs when something upstream failed, which is
+    # precisely when its verdict matters. Without it the job is skipped on
+    # failure, and a skipped required check can read as "not failing".
+    if: always()
+
+    steps:
+      - name: Verify every check passed
         run: |
-          if [ -f package-lock.json ]; then npm ci; else npm install; fi
-          npm run lint --if-present
-          npm run build --if-present
-          npm test --if-present
-
-      - name: Setup Python
-        if: steps.detect.outputs.python == 'true'
-        uses: actions/setup-python@v6
-        with:
-          python-version: "3.12"
-
-      - name: Python install / test
-        if: steps.detect.outputs.python == 'true'
-        run: |
-          python -m pip install --upgrade pip
-          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
-          if [ -f pyproject.toml ]; then pip install -e . || true; fi
-          if command -v pytest >/dev/null 2>&1; then pytest -q || true; fi
-
-      - name: No stack detected
-        if: steps.detect.outputs.node != 'true' && steps.detect.outputs.python != 'true'
-        run: echo "No package manifest yet — CI scaffold is green. Wire up real checks when the stack lands."
+          echo "tests:  ${{ needs.tests.result }}"
+          echo "assets: ${{ needs.assets.result }}"
+          if [ "${{ needs.tests.result }}" != "success" ] || [ "${{ needs.assets.result }}" != "success" ]; then
+            echo "::error::One or more required checks did not pass."
+            exit 1
+          fi
+          echo "All checks passed."

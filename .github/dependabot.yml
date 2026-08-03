@@ -8,11 +8,35 @@ updates:
     commit-message:
       prefix: "chore(ci)"
 
-  # Enable once a package manifest exists (uncomment the matching ecosystem):
-  # - package-ecosystem: "npm"
-  #   directory: "/"
-  #   schedule:
-  #     interval: "weekly"
-  #   open-pull-requests-limit: 10
-  #   commit-message:
-  #     prefix: "chore(deps)"
+  # Both manifests exist now, so the placeholders that used to sit here are
+  # switched on. Until this point Dependabot watched the CI actions and nothing
+  # the application actually ships, which is the wrong way round: a stale action
+  # is an inconvenience, a stale dependency is the vulnerability report.
+  - package-ecosystem: "composer"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 10
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      # Patch and minor bumps arrive as one reviewable pull request per week
+      # rather than ten. Majors stay separate, because those are the ones that
+      # need reading.
+      php-minor-and-patch:
+        update-types:
+          - "minor"
+          - "patch"
+
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 10
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      js-minor-and-patch:
+        update-types:
+          - "minor"
+          - "patch"

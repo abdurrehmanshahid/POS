@@ -142,11 +142,18 @@ class DemoDataSeeder extends Seeder
         foreach ($rows as [$regNo, $sIdx, $code, $at, $chNo, $base, $disc, $reason, $due, $status, $paidAt, $by, $via]) {
             $atDate = Carbon::parse($at);
 
+            // `$by` is a 1-based index into $users, not a primary key. Writing
+            // it straight into the foreign key worked only while the seeded
+            // users happened to receive ids 1, 2, 3, which is true of a fresh
+            // database and of nothing else. Resolving the row first makes the
+            // seeder independent of whatever ids the engine hands out.
+            $enroller = $users[$by - 1];
+
             $admission = Admission::create([
                 'reg_no' => $prefix.$regNo,
                 'student_id' => $students[$sIdx]->id,
                 'course_id' => $courses[$code]->id,
-                'enrolled_by' => $by,
+                'enrolled_by' => $enroller->id,
                 'status' => 'validated',
             ]);
             $this->backdate('admissions', $admission->id, $at);
@@ -168,7 +175,6 @@ class DemoDataSeeder extends Seeder
             $this->backdate('challans', $challan->id, $at);
 
             // Immutable audit trail (§2.10): issued, discount (if any), paid (if paid).
-            $enroller = $users[$by - 1];
             Audit::issued($challan, $enroller, $atDate);
             if ($disc > 0) {
                 Audit::discountApplied($challan, $admin, $atDate);

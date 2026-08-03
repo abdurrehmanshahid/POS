@@ -13,7 +13,7 @@ alternatives below lose mostly on *cost of complexity*, not raw capability.
 
 | Layer          | Choice                                | Cost            |
 | -------------- | ------------------------------------- | --------------- |
-| Backend        | Laravel (PHP 8.3+)                     | $0 open source  |
+| Backend        | Laravel (PHP 8.4+)                     | $0 open source  |
 | Frontend       | Blade + Livewire + Alpine + Tailwind  | $0 in-repo      |
 | Database       | PostgreSQL (SQLite for local/tests)   | $0 on VPS       |
 | Auth           | Fortify + Breeze (session)            | $0 open source  |
@@ -32,7 +32,7 @@ alternatives below lose mostly on *cost of complexity*, not raw capability.
 
 Each decision records the pick and why the alternatives lost.
 
-### 01 · Backend. Laravel (PHP 8.3+)
+### 01 · Backend. Laravel (PHP 8.4+)
 
 The feature set is CRUD + business rules; Laravel ships ORM, validation, queues,
 scheduler, and PDF handling built in, and is the cheapest local talent pool.

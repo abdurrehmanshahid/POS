@@ -1,6 +1,6 @@
 # Deploying to cPanel shared hosting
 
-Target: MySQL 8 / MariaDB 10.6+, PHP 8.3+, no shell access, no Redis, no daemons.
+Target: MySQL 8 / MariaDB 10.6+, PHP 8.4+, no shell access, no Redis, no daemons.
 Everything below works within those limits, nothing here needs root, `exec()`,
 or a background worker.
 
