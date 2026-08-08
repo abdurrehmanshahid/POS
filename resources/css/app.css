@@ -37,11 +37,44 @@
   --orange-bg:#3a2a12; --orange-br:#5f4816;
 }
 
+/* ---- Type scale --------------------------------------------------------
+   Every size in the app was a hardcoded px value tuned on a laptop, so on a
+   27" display the whole UI read as a postage stamp: 13px labels in a 900px
+   column adrift in 3400px of screen.
+
+   Each step is fluid between a 400px and a 1920px viewport. The floor of each
+   step is the SMALLEST value it replaces, so nothing anywhere gets smaller on
+   a phone than it is today; the ceiling is ~25-30% larger, which is what makes
+   a large monitor feel deliberate rather than zoomed.
+
+   The middle term is rem-based, not pure vw, so a reader who raises their
+   browser's default font size still moves the whole scale with it. A pure vw
+   scale silently ignores that preference, which is an accessibility failure
+   (WCAG 1.4.4) dressed up as responsive design.
+
+   Steps are deliberately coarse. The old code used 27 distinct sizes, several
+   separated by half a pixel that no one could see; collapsing them to 11 is
+   the point of having a scale at all. */
+:root {
+  --fs-3xs:  clamp(9.5px, 0.553rem + 0.16vw, 12px);
+  --fs-2xs:  clamp(11px,  0.638rem + 0.20vw, 14px);
+  --fs-xs:   clamp(12px,  0.701rem + 0.20vw, 15px);
+  --fs-sm:   clamp(13px,  0.755rem + 0.23vw, 16.5px);
+  --fs-base: clamp(14px,  0.809rem + 0.26vw, 18px);
+  --fs-md:   clamp(15px,  0.864rem + 0.30vw, 19.5px);
+  --fs-lg:   clamp(17px,  0.980rem + 0.33vw, 22px);
+  --fs-xl:   clamp(20px,  1.151rem + 0.39vw, 26px);
+  --fs-2xl:  clamp(24px,  1.385rem + 0.46vw, 31px);
+  --fs-3xl:  clamp(30px,  1.727rem + 0.59vw, 39px);
+  --fs-4xl:  clamp(38px,  2.178rem + 0.79vw, 50px);
+}
+
 * { box-sizing: border-box; }
 html, body { margin: 0; padding: 0; }
 body {
   font-family: 'Inter', system-ui, -apple-system, sans-serif;
   -webkit-font-smoothing: antialiased;
+  font-size: var(--fs-base);
   color: var(--ink);
   background: var(--bg);
 }
@@ -52,6 +85,14 @@ a:hover { color: var(--orange2); }
    makes a column of money impossible to scan. Table cells only, so inline
    .tnum spans inside flowing prose can still wrap normally. */
 td.tnum, th.tnum { white-space: nowrap; }
+/* The same rule for a record identifier sitting BESIDE something rather than
+   alone in a cell, which td.tnum cannot reach. BBT-R26-0008 is one token, not
+   three: under the challans table's narrow Student column it was breaking as
+   "BBT-R26-" above "0008", which reads as a different, shorter ID. Holding it
+   whole also gives the column a sane minimum width, so the name next to it
+   stops wrapping mid-person. Not applied to every nested .tnum, because the
+   activity log's value columns are prose that legitimately wraps. */
+.rec-id { white-space: nowrap; }
 [x-cloak] { display: none !important; }
 
 ::-webkit-scrollbar { width: 11px; height: 11px; }
@@ -67,9 +108,14 @@ td.tnum, th.tnum { white-space: nowrap; }
 .anim-fade { animation: bbtFade .3s; }
 
 /* ---- Buttons ---------------------------------------------------------- */
-.btn { display:inline-flex; align-items:center; justify-content:center; gap:8px;
-  height:42px; padding:0 18px; border-radius:11px; border:1px solid transparent;
-  font-size:13.5px; font-weight:700; cursor:pointer; white-space:nowrap; transition:background .12s,border-color .12s; }
+/* Heights and horizontal padding are in em, not px, so a control grows with
+   the text inside it. Left in px they would keep their laptop dimensions while
+   the label scaled up, and every button on a large screen would read as
+   cramped text jammed into a box that no longer fits it. 3.23em of a 13px
+   floor is the same 42px this has always been. */
+.btn { display:inline-flex; align-items:center; justify-content:center; gap:.6em;
+  height:3.23em; padding:0 1.35em; border-radius:11px; border:1px solid transparent;
+  font-size:var(--fs-sm); font-weight:700; cursor:pointer; white-space:nowrap; transition:background .12s,border-color .12s; }
 .btn:disabled { opacity:.5; cursor:not-allowed; }
 .btn-primary { background:var(--navy); color:#fff; }
 .btn-primary:hover { background:var(--navy-ink); color:#fff; }
@@ -78,7 +124,7 @@ td.tnum, th.tnum { white-space: nowrap; }
 .btn-ghost { background:var(--surface); border-color:var(--border2); color:var(--ink2); }
 .btn-ghost:hover { background:var(--surface2); }
 .btn-danger { background:var(--over-bg); border-color:var(--over-br); color:var(--over); }
-.btn-sm { height:34px; padding:0 12px; font-size:12.5px; border-radius:9px; }
+.btn-sm { height:2.84em; padding:0 1em; font-size:var(--fs-xs); border-radius:9px; }
 .btn:focus-visible, .btn-icon:focus-visible { outline:2px solid var(--iris); outline-offset:2px; }
 .btn:active:not(:disabled) { transform:translateY(1px); }
 
@@ -87,7 +133,7 @@ td.tnum, th.tnum { white-space: nowrap; }
    read as unfinished next to the 42px text buttons. Now 36px so they sit
    visually lighter than a labelled action, with a softer border, a colour
    shift on hover and a real pressed state. */
-.btn-icon { width:36px; height:36px; padding:0; flex:0 0 auto;
+.btn-icon { width:2.57em; height:2.57em; font-size:var(--fs-base); padding:0; flex:0 0 auto;
   display:inline-flex; align-items:center; justify-content:center;
   border:1px solid var(--border); background:var(--surface); border-radius:10px;
   color:var(--muted); cursor:pointer;
@@ -103,8 +149,8 @@ td.tnum, th.tnum { white-space: nowrap; }
    choices reads as a single control and lines up with the buttons beside it. */
 .segmented { display:inline-flex; align-items:center; gap:2px; padding:3px;
   background:var(--surface3); border:1px solid var(--border); border-radius:11px; }
-.segmented button { height:32px; padding:0 13px; border:none; border-radius:8px;
-  background:transparent; color:var(--muted); font-size:12.5px; font-weight:600;
+.segmented button { height:2.67em; padding:0 1.1em; border:none; border-radius:8px;
+  background:transparent; color:var(--muted); font-size:var(--fs-xs); font-weight:600;
   cursor:pointer; white-space:nowrap; transition:background .12s, color .12s; }
 .segmented button:hover { color:var(--ink); }
 .segmented button.on { background:var(--surface); color:var(--ink); font-weight:700; box-shadow:var(--sh1); }
@@ -114,16 +160,16 @@ td.tnum, th.tnum { white-space: nowrap; }
    segmented control, inputs and buttons share one baseline. */
 .toolbar { display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:18px; }
 .toolbar-grow { flex:1 1 auto; min-width:0; }
-.toolbar .segmented { height:42px; }
+.toolbar .segmented { height:3em; font-size:var(--fs-base); }
 
 /* ---- Cards / panels --------------------------------------------------- */
 .card { background:var(--surface); border:1px solid var(--border); border-radius:16px; box-shadow:var(--sh1); }
 .panel { background:var(--surface); border:1px solid var(--border); border-radius:16px; box-shadow:var(--sh1); overflow:hidden; }
 .panel-head { padding:18px 22px; border-bottom:1px solid var(--border); display:flex; align-items:center; gap:10px; }
-.panel-title { font-size:15px; font-weight:700; color:var(--ink); margin:0; }
+.panel-title { font-size:var(--fs-md); font-weight:700; color:var(--ink); margin:0; }
 
 /* ---- Pills ------------------------------------------------------------ */
-.pill { display:inline-flex; align-items:center; gap:6px; padding:3px 10px; border-radius:999px; font-size:11.5px; font-weight:700; border:1px solid transparent; }
+.pill { display:inline-flex; align-items:center; gap:6px; padding:3px 10px; border-radius:999px; font-size:var(--fs-2xs); font-weight:700; border:1px solid transparent; }
 .pill .dot { width:7px; height:7px; border-radius:50%; }
 .pill-paid { background:var(--paid-bg); color:var(--paid); border-color:var(--paid-br); }
 .pill-paid .dot { background:var(--paid); }
@@ -138,28 +184,72 @@ td.tnum, th.tnum { white-space: nowrap; }
 .pill-iris { background:var(--iris-bg); color:var(--iris); }
 
 /* ---- Inputs ----------------------------------------------------------- */
-.label { display:block; font-size:13px; font-weight:600; color:var(--ink2); margin-bottom:7px; }
+.label { display:block; font-size:var(--fs-sm); font-weight:600; color:var(--ink2); margin-bottom:7px; }
 .input, .select, .textarea {
-  width:100%; height:44px; padding:0 14px; border:1.5px solid var(--border2); border-radius:11px;
-  font-size:14px; background:var(--surface); color:var(--ink); outline:none; font-family:inherit; }
+  width:100%; height:3.15em; padding:0 1em; border:1.5px solid var(--border2); border-radius:11px;
+  font-size:var(--fs-base); background:var(--surface); color:var(--ink); outline:none; font-family:inherit; }
 .textarea { height:auto; padding:11px 14px; min-height:84px; resize:vertical; }
 .input:focus, .select:focus, .textarea:focus { border-color:var(--iris); box-shadow:0 0 0 4px rgba(42,38,104,.12); }
 .input.is-error, .select.is-error, .textarea.is-error { border-color:var(--over); }
-.field-error { font-size:11.5px; color:var(--over); font-weight:600; margin-top:5px; display:block; }
+.field-error { font-size:var(--fs-2xs); color:var(--over); font-weight:600; margin-top:5px; display:block; }
+/* A quiet note under a field. Distinct from .field-error on colour and weight,
+   because "this is worth having" and "this is wrong" must never look alike. */
+.field-hint { font-size:var(--fs-2xs); color:var(--faint); font-weight:500; margin-top:5px; display:block; }
+/* Says what is optional rather than starring what is required: the shorter list
+   is the one worth marking, and an unmarked field then reads as "needed". */
+.label-opt { font-size:var(--fs-3xs); font-weight:600; color:var(--faint); text-transform:uppercase;
+  letter-spacing:.04em; margin-left:6px; }
+
+/* ---- Inline suggestions ------------------------------------------------ */
+.field-suggest { position:relative; }
+.suggest { position:absolute; z-index:30; left:0; right:0; top:100%; margin-top:6px;
+  background:var(--surface); border:1px solid var(--border2); border-radius:12px;
+  box-shadow:var(--sh2); overflow:hidden; }
+.suggest-item { display:flex; align-items:center; gap:9px; width:100%; padding:.65em 1em;
+  border:none; background:transparent; cursor:pointer; text-align:left;
+  font-family:inherit; font-size:var(--fs-xs); color:var(--ink); }
+/* .is-active is the keyboard highlight. Same treatment as hover, because they
+   mean the same thing — "this is the one Enter will take" — and giving the
+   keyboard a weaker affordance than the mouse is how a list ends up feeling
+   mouse-only even after it is not. */
+.suggest-item:hover, .suggest-item:focus-visible, .suggest-item.is-active { background:var(--iris-bg); outline:none; }
+.suggest-name { font-weight:650; flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.suggest-meta { color:var(--muted); font-size:var(--fs-3xs); flex:none; }
 .search { position:relative; }
 .search svg { position:absolute; left:12px; top:50%; transform:translateY(-50%); color:var(--faint); }
-.search input { height:42px; padding-left:36px; }
+.search input { height:3em; padding-left:36px; }
 
 /* ---- Tables ----------------------------------------------------------- */
 .table { width:100%; border-collapse:collapse; }
 .table thead tr { background:var(--surface2); }
-.table th { text-align:left; font-size:11px; font-weight:700; letter-spacing:.05em; text-transform:uppercase; color:var(--faint); padding:12px 16px; }
+.table th { text-align:left; font-size:var(--fs-2xs); font-weight:700; letter-spacing:.05em; text-transform:uppercase; color:var(--faint); padding:12px 16px; }
 .table th.right, .table td.right { text-align:right; }
-.table td { padding:13px 16px; border-top:1px solid var(--surface3); font-size:13.5px; color:var(--ink); }
+.table td { padding:13px 16px; border-top:1px solid var(--surface3); font-size:var(--fs-sm); color:var(--ink); }
+/* An actions column should take what its buttons need and no more.
+   Under `table-layout:auto` the challans actions cell was claiming 180px of a
+   1119px table while usually holding a single 16px icon — "Mark paid" renders
+   only for unpaid rows — and it took that width from Student and Course, which
+   is what pushed names and student codes onto two lines. `width:1%` is the
+   standard way to ask a table cell to shrink to its content. */
+.table th.actions-col, .table td.actions-col { width:1%; white-space:nowrap; }
+/* The student cell holds the row's most variable content — a person's name —
+   and under auto-layout it lost the width fight to columns whose content is a
+   fixed-length code. A floor stops "Hafiz M Ayaan Asif" breaking mid-person
+   while a 140px challan number sits in 193px of column. */
+.table td[data-label="Student"] { min-width:210px; }
+/* Two lines, then ellipsis. Widening Student pushed the longest course titles
+   to three lines, and a row whose height depends on its course title makes a
+   list impossible to scan by eye. Two lines carries every seeded title but the
+   longest, the title attribute carries the rest on hover, and the drawer shows
+   it in full — a table row is an index, not the record.
+   Applied to an inner span, never to the `td`: `display:-webkit-box` on a table
+   cell drops it out of the table formatting context, and the clamped third line
+   then renders outside the cell and over the row below it. */
+.clamp-2 { display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
 .table tbody tr.clickable { cursor:pointer; }
 .table tbody tr.clickable:hover { background:var(--surface2); }
 .row-cancelled { opacity:.5; }
-.empty-state { padding:34px 22px; text-align:center; font-size:13px; color:var(--faint); }
+.empty-state { padding:34px 22px; text-align:center; font-size:var(--fs-sm); color:var(--faint); }
 
 /* ---- Avatar ----------------------------------------------------------- */
 .avatar { flex:0 0 auto; border-radius:8px; background:var(--surface3); color:var(--iris);
@@ -169,8 +259,8 @@ td.tnum, th.tnum { white-space: nowrap; }
 
 /* ---- KPI -------------------------------------------------------------- */
 .kpi { background:var(--surface); border:1px solid var(--border); border-radius:14px; padding:16px 18px; box-shadow:var(--sh1); }
-.kpi-num { font-size:24px; font-weight:800; color:var(--ink); letter-spacing:-.01em; }
-.kpi-label { font-size:12px; color:var(--muted); }
+.kpi-num { font-size:var(--fs-2xl); font-weight:800; color:var(--ink); letter-spacing:-.01em; }
+.kpi-label { font-size:var(--fs-xs); color:var(--muted); }
 
 /* ---- Drawer ----------------------------------------------------------- */
 .drawer-backdrop { position:fixed; inset:0; background:rgba(12,12,30,.5); z-index:60; animation:bbtFade .2s; }
@@ -187,8 +277,8 @@ td.tnum, th.tnum { white-space: nowrap; }
   display:flex; align-items:center; justify-content:center;
   background:var(--iris-bg); color:var(--iris); }
 .drawer-head-text { flex:1; min-width:0; }
-.drawer-head-title { font-size:15.5px; font-weight:800; color:var(--ink); letter-spacing:-.01em; }
-.drawer-head-sub { font-size:12.5px; color:var(--muted); margin-top:2px; line-height:1.45; }
+.drawer-head-title { font-size:var(--fs-md); font-weight:800; color:var(--ink); letter-spacing:-.01em; }
+.drawer-head-sub { font-size:var(--fs-xs); color:var(--muted); margin-top:2px; line-height:1.45; }
 .drawer-body { flex:1; overflow-y:auto; padding:22px 24px; }
 .drawer-foot { flex:0 0 auto; padding:16px 24px; border-top:1px solid var(--border); display:flex; gap:10px; }
 
@@ -202,7 +292,7 @@ td.tnum, th.tnum { white-space: nowrap; }
 .toast { min-width:280px; max-width:400px; display:flex; align-items:flex-start; gap:11px; padding:13px 15px;
   background:var(--surface); border:1px solid var(--border); border-left:4px solid var(--muted);
   border-radius:12px; box-shadow:var(--sh3); animation:bbtToastIn .2s ease-out; }
-.toast .ico { width:20px; height:20px; flex:0 0 auto; border-radius:6px; display:flex; align-items:center; justify-content:center; color:#fff; font-size:12px; font-weight:800; }
+.toast .ico { width:20px; height:20px; flex:0 0 auto; border-radius:6px; display:flex; align-items:center; justify-content:center; color:#fff; font-size:var(--fs-xs); font-weight:800; }
 .toast-ok { border-left-color:var(--paid); } .toast-ok .ico { background:var(--paid); }
 .toast-info { border-left-color:var(--info); } .toast-info .ico { background:var(--info); }
 .toast-warn { border-left-color:var(--due); } .toast-warn .ico { background:var(--due); }
@@ -219,8 +309,8 @@ td.tnum, th.tnum { white-space: nowrap; }
 .sidebar.collapsed { width:76px; }
 .sidebar-logo { height:70px; flex:0 0 auto; display:flex; align-items:center; gap:12px; padding:0 18px; border-bottom:1px solid rgba(255,255,255,.08); }
 .nav { flex:1; overflow-y:auto; padding:16px 12px; display:flex; flex-direction:column; gap:3px; }
-.nav-section { font-size:10.5px; font-weight:700; letter-spacing:.08em; text-transform:uppercase; color:#7f83b0; padding:14px 12px 6px; }
-.nav-link { display:flex; align-items:center; gap:12px; padding:10px 12px; border-radius:10px; color:#c7cae8; font-size:13.5px; font-weight:600; cursor:pointer; border-left:3px solid transparent; }
+.nav-section { font-size:var(--fs-3xs); font-weight:700; letter-spacing:.08em; text-transform:uppercase; color:#7f83b0; padding:14px 12px 6px; }
+.nav-link { display:flex; align-items:center; gap:12px; padding:10px 12px; border-radius:10px; color:#c7cae8; font-size:var(--fs-sm); font-weight:600; cursor:pointer; border-left:3px solid transparent; }
 .nav-link:hover { background:rgba(255,255,255,.06); color:#fff; }
 .nav-link.active { background:rgba(247,148,30,.14); color:#fff; border-left-color:var(--orange); }
 .sidebar.collapsed .nav-label, .sidebar.collapsed .nav-section { display:none; }
@@ -253,8 +343,89 @@ td.tnum, th.tnum { white-space: nowrap; }
   .drawer { width:100%; max-width:100%; }
   .main { padding:14px 11px 56px; }
   .card-foot { align-items:flex-start; }
-  .kpi-num { font-size:21px; }
+  .kpi-num { font-size:var(--fs-xl); }
   .search { width:100% !important; }
+}
+
+/* ---- Tables as cards on a phone ---------------------------------------- */
+/* A counter is exactly where a phone gets used, and a six-column table at 390px
+   was a horizontal scroll: to read a student's status you swiped away the name
+   that told you whose status it was. Below the breakpoint each row becomes a
+   card and each cell a labelled line, so nothing is off-screen and the columns
+   announce themselves — the header row that named them is gone.
+   Opt-in per table via .table-cards, because the wide reference tables (the
+   activity log, the access matrix) genuinely are grids and read better scrolled
+   than as thirty stacked labels. */
+@media (max-width:640px) {
+  /* Beats the .main .panel .table min-width that forces the scroll. */
+  .main .panel .table.table-cards { min-width:0; }
+  .table-cards thead { display:none; }
+  .table-cards, .table-cards tbody, .table-cards tr, .table-cards td { display:block; width:100%; }
+  .table-cards tr { border:1px solid var(--border); border-radius:14px; background:var(--surface);
+                    margin:0 0 12px; padding:4px 0; }
+  .table-cards tr:last-child { margin-bottom:0; }
+  .table-cards td { border:0; padding:7px 15px; display:flex; align-items:center; gap:14px;
+                    justify-content:space-between; text-align:right; }
+  /* The column name, from the cell's own data-label. */
+  .table-cards td::before { content:attr(data-label); flex:0 0 auto; text-align:left;
+                            font-size:var(--fs-2xs); font-weight:700; letter-spacing:.05em;
+                            text-transform:uppercase; color:var(--faint); }
+  /* An empty actions cell would otherwise render as a stray label. */
+  .table-cards td:empty { display:none; }
+  /* The desktop `width:1%` that shrinks the actions column to its buttons has
+     to be given back here, or the cell collapses and the buttons bunch up
+     against their own label instead of sitting at the card's edge. */
+  .table-cards td.actions-col { width:100%; white-space:normal; }
+  /* No clamping in a card: there is a full row's width to spell it out. */
+  .table-cards .clamp-2 { display:block; -webkit-line-clamp:none; overflow:visible; }
+  /* The identity cell leads the card: no label, full width, larger. The desktop
+     min-width that keeps names off two lines is dropped, since a card is not
+     competing for column space. */
+  .table-cards td[data-label="Student"] { min-width:0; justify-content:flex-start; text-align:left;
+                                          padding-top:12px; padding-bottom:10px; }
+  .table-cards td[data-label="Student"]::before { content:none; }
+  .table-cards .empty-state { text-align:center; }
+}
+
+/* ---- Quick actions ----------------------------------------------------- */
+/* The dashboard is the first screen after sign-in, and for a role without
+   revenue.view it was three tiles above half a screen of nothing. These start
+   the job from where the operator already is. */
+.quick-action { display:flex; align-items:center; gap:13px; padding:15px 17px; background:var(--surface);
+                border:1px solid var(--border); border-radius:14px; text-decoration:none;
+                transition:border-color .15s, transform .15s, box-shadow .15s; }
+.quick-action:hover { border-color:var(--iris); transform:translateY(-1px); box-shadow:var(--sh2); }
+.quick-action:focus-visible { outline:2px solid var(--iris); outline-offset:2px; }
+.quick-action-icon { width:40px; height:40px; flex:0 0 auto; border-radius:11px; background:var(--iris-bg);
+                     color:var(--iris); display:flex; align-items:center; justify-content:center; }
+
+/* ---- Sign-in screen ---------------------------------------------------- */
+/* Two columns on a laptop, one on a phone.
+   The pitch panel held its 1.05fr share at every width, so on a 390px screen it
+   became an 8px column: the headline rendered a letter or two per line, the body
+   copy ran one word per line, and the form was squeezed against the edge. This
+   was inline on the element, where no media query could reach it, which is why
+   it survived — the signed-in shell has collapsed correctly since it was built.
+   Staff sign in from phones, so this was the first screen they saw.
+   Below the breakpoint the panel keeps the logo and drops the sales copy: the
+   job on a phone is to sign in, and a headline and three stat blocks are just
+   distance between the operator and the password field.
+   dvh rather than vh: on mobile Safari and Chrome, 100vh is the viewport with
+   the toolbar RETRACTED, so the panel is taller than what is actually on screen
+   and the sign-in button can sit under the address bar until you scroll. On the
+   one screen this fix exists for, that is the wrong end to lose. */
+.login-split { min-height:100dvh; display:grid; grid-template-columns:1.05fr .95fr; background:var(--navy-deep); }
+.login-hero { position:relative; overflow:hidden; display:flex; flex-direction:column; justify-content:space-between; padding:48px 56px;
+              background:radial-gradient(1200px 600px at 15% -10%,#3a357f 0%,transparent 55%),
+                         radial-gradient(900px 500px at 110% 120%,rgba(247,148,30,.22) 0%,transparent 50%),var(--navy); }
+@media (max-width:900px) {
+  .login-split { grid-template-columns:1fr; grid-template-rows:auto 1fr; }
+  .login-hero { padding:18px 22px; }
+  /* Hide by default and let the brand opt OUT, rather than naming each thing to
+     hide. The original bug was an element nobody remembered to think about at
+     small widths; a rule that has to be applied per child would reproduce it the
+     first time a support link or language switcher is added to this panel. */
+  .login-hero > :not(.login-brand) { display:none; }
 }
 
 /* ---- Grids ------------------------------------------------------------ */
@@ -263,6 +434,12 @@ td.tnum, th.tnum { white-space: nowrap; }
    keeps a single card from overflowing a phone, where 260px + padding > 100vw. */
 .grid-3 { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(260px,100%),1fr)); gap:16px; }
 .grid-2 { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(300px,100%),1fr)); gap:16px; }
+/* Exactly two columns, unlike .grid-2's auto-fit, which reflows to three the
+   moment its container is wide enough. Used where the pairing carries meaning
+   and must survive: the registration fields read as a required row above an
+   optional row, which auto-fit turns into 3 + 1 and an orphan. */
+.grid-pair { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:16px; align-items:start; }
+@media (max-width:700px) { .grid-pair { grid-template-columns:1fr; } }
 .split { display:grid; grid-template-columns:1.5fr 1fr; gap:16px; }
 @media (max-width:1024px) { .split { grid-template-columns:1fr; } }
 
@@ -313,8 +490,8 @@ body.is-impersonating .shell { height:calc(100vh - 44px); }
 
 /* Destructive surfaces, used by the purge/reset dialogs. */
 .danger-zone { border:1px solid var(--over-br); background:var(--over-bg); border-radius:14px; padding:16px 18px; }
-.danger-zone h4 { margin:0 0 4px; font-size:13.5px; font-weight:800; color:var(--over); }
-.danger-zone p { margin:0; font-size:12.5px; color:var(--ink2); line-height:1.55; }
+.danger-zone h4 { margin:0 0 4px; font-size:var(--fs-sm); font-weight:800; color:var(--over); }
+.danger-zone p { margin:0; font-size:var(--fs-xs); color:var(--ink2); line-height:1.55; }
 
 /* ---- Print (A4 challan, spec §12) ------------------------------------- */
 @media print {

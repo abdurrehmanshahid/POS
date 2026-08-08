@@ -29,14 +29,14 @@
      worse than not being able to see someone's screen is forgetting that what
      you are looking at is not your own. --}}
 @if ($impersonating->isImpersonating())
-    <div class="impersonation-bar" style="display:flex;align-items:center;gap:12px;padding:0 18px;background:var(--due);color:#1b1300;font-size:13px;font-weight:700">
+    <div class="impersonation-bar" style="display:flex;align-items:center;gap:12px;padding:0 18px;background:var(--due);color:#1b1300;font-size:var(--fs-sm);font-weight:700">
         <x-icon name="eye" :size="16" style="flex:none" />
         <span style="flex:1;min-width:0">
             Viewing as <strong>{{ $user->name }}</strong> ({{ $user->roleLabel() }}), signed in as {{ $impersonating->impersonatorName() }}. Actions are recorded against you.
         </span>
         <form method="POST" action="{{ route('superadmin.impersonate.stop') }}" style="flex:none">
             @csrf
-            <button type="submit" style="height:30px;padding:0 13px;border:none;border-radius:8px;background:#1b1300;color:#fff;font-size:12px;font-weight:700;cursor:pointer">
+            <button type="submit" style="height:30px;padding:0 13px;border:none;border-radius:8px;background:#1b1300;color:#fff;font-size:var(--fs-xs);font-weight:700;cursor:pointer">
                 Stop viewing
             </button>
         </form>
@@ -59,7 +59,7 @@
             <img src="{{ asset('assets/bbt-logo-white.png') }}" alt="BBT"
                  style="height:26px;display:block;width:auto"
                  :style="collapsed ? 'height:20px;width:auto' : 'height:26px;width:auto'"
-                 onerror="this.style.display='none';this.insertAdjacentHTML('afterend','<span style=&quot;color:#fff;font-weight:800;font-size:15px&quot;>Big Binary Tech</span>')">
+                 onerror="this.style.display='none';this.insertAdjacentHTML('afterend','<span style=&quot;color:#fff;font-weight:800;font-size:var(--fs-md)&quot;>Big Binary Tech</span>')">
         </div>
         <nav class="nav">
             @foreach ($sections as $section => $items)
@@ -82,19 +82,19 @@
             <div x-show="avatar" x-cloak @click.outside="avatar = false" class="menu"
                  style="left:12px;right:auto;min-width:220px;max-width:calc(100vw - 24px);bottom:calc(100% - 4px)">
                 <div style="padding:13px 15px;border-bottom:1px solid var(--surface3)">
-                    <div style="font-size:13.5px;font-weight:700;color:var(--ink)">{{ $user->name }}</div>
-                    <div style="font-size:11.5px;color:var(--muted)">{{ $user->email }}</div>
+                    <div style="font-size:var(--fs-sm);font-weight:700;color:var(--ink)">{{ $user->name }}</div>
+                    <div style="font-size:var(--fs-2xs);color:var(--muted)">{{ $user->email }}</div>
                     <x-ui.pill :tone="$user->role?->tone === 'orange' ? 'orange' : 'navy'" style="margin-top:7px">{{ $user->roleLabel() }}</x-ui.pill>
                 </div>
                 <button @click="$store.theme.toggle()" class="menu-item"
-                        style="display:flex;align-items:center;gap:10px;width:100%;padding:11px 15px;border:none;background:transparent;color:var(--ink2);font-size:13px;font-weight:600;cursor:pointer;text-align:left">
+                        style="display:flex;align-items:center;gap:10px;width:100%;padding:11px 15px;border:none;background:transparent;color:var(--ink2);font-size:var(--fs-sm);font-weight:600;cursor:pointer;text-align:left">
                     <span style="width:18px;text-align:center" x-text="$store.theme.v === 'dark' ? '☀' : '☾'"></span>
                     <span x-text="$store.theme.v === 'dark' ? 'Light mode' : 'Dark mode'"></span>
                 </button>
                 <form method="POST" action="{{ route('logout') }}">
                     @csrf
                     <button type="submit"
-                            style="display:flex;align-items:center;gap:10px;width:100%;padding:11px 15px;border:none;border-top:1px solid var(--surface3);background:transparent;color:var(--over);font-size:13px;font-weight:700;cursor:pointer;text-align:left">
+                            style="display:flex;align-items:center;gap:10px;width:100%;padding:11px 15px;border:none;border-top:1px solid var(--surface3);background:transparent;color:var(--over);font-size:var(--fs-sm);font-weight:700;cursor:pointer;text-align:left">
                         <x-icon name="logout" :size="16" /> Sign out
                     </button>
                 </form>
@@ -102,8 +102,8 @@
             <button @click="avatar = !avatar" class="acct-btn">
                 <x-ui.avatar :name="$user->name" variant="orange" :size="36" />
                 <div class="nav-label" style="min-width:0;flex:1">
-                    <div style="font-size:13.5px;font-weight:700;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ $user->name }}</div>
-                    <div style="font-size:11.5px;color:#9599c4">{{ $user->roleLabel() }}</div>
+                    <div style="font-size:var(--fs-sm);font-weight:700;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ $user->name }}</div>
+                    <div style="font-size:var(--fs-2xs);color:#9599c4">{{ $user->roleLabel() }}</div>
                 </div>
                 <x-icon name="chevron-up" :size="16" class="nav-label" style="color:#9599c4" />
             </button>
@@ -118,10 +118,10 @@
                 <x-icon name="menu" :size="18" />
             </button>
             <div style="flex:1">
-                <h1 style="font-size:19px;font-weight:800;color:var(--ink);margin:0;letter-spacing:-.01em">{{ $pageTitle }}</h1>
-                <div style="font-size:12.5px;color:var(--muted);margin-top:1px">{{ $pageSubtitle }}</div>
+                <h1 style="font-size:var(--fs-lg);font-weight:800;color:var(--ink);margin:0;letter-spacing:-.01em">{{ $pageTitle }}</h1>
+                <div style="font-size:var(--fs-xs);color:var(--muted);margin-top:1px">{{ $pageSubtitle }}</div>
             </div>
-            <button class="btn-icon" title="Toggle theme" @click="$store.theme.toggle()" style="font-size:16px">
+            <button class="btn-icon" title="Toggle theme" @click="$store.theme.toggle()" style="font-size:var(--fs-md)">
                 <span x-text="$store.theme.v === 'dark' ? '☀' : '☾'"></span>
             </button>
             <livewire:notifications-bell />
@@ -138,8 +138,8 @@
             <div class="toast" :class="'toast-' + t.tone">
                 <div class="ico" x-text="t.icon"></div>
                 <div style="flex:1">
-                    <div style="font-size:13px;font-weight:700;color:var(--ink)" x-text="t.title"></div>
-                    <template x-if="t.msg"><div style="font-size:12px;color:var(--muted);margin-top:1px" x-text="t.msg"></div></template>
+                    <div style="font-size:var(--fs-sm);font-weight:700;color:var(--ink)" x-text="t.title"></div>
+                    <template x-if="t.msg"><div style="font-size:var(--fs-xs);color:var(--muted);margin-top:1px" x-text="t.msg"></div></template>
                 </div>
             </div>
         </template>

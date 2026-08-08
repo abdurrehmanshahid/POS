@@ -5,10 +5,11 @@ still open. Built by reading every service, model, migration and screen in the
 repository, running the suite, querying the live SQLite database, and driving the
 running app in a browser.
 
-- Branch: `fix/cancel-guard-and-login-scope`, audited from `59c116c`
-- Date: 2026-08-03
-- Suite: **158 passed, 478 assertions, 0 failed** (131 before this session)
+- Branch: `feat/registration-ux-and-fluid-type`, audited from `ba24f42`
+- Date: 2026-08-08 (previous audit 2026-08-03 from `59c116c`)
+- Suite: **183 passed, 552 assertions, 0 failed** (158 at the previous audit)
 - Style: `vendor/bin/pint` clean
+- Build: `npm run build` clean
 - Companion document: [STATUS-REPORT.md](STATUS-REPORT.md) for the narrative
 - Delivery history: `docs/backlog.md` on the `docs/delivery-backlog` branch
 
@@ -32,15 +33,19 @@ Every bug carries an ID. Use it in commits and branches, for example
 
 ## Status at a glance
 
-| | Count |
-| --- | --- |
-| Defects found | 17 |
-| Defects fixed this session | 17 |
-| Defects still open | 0 |
-| Feature gaps found | 3 |
-| Feature gaps closed | 2 |
-| Feature gaps open (needs your decision) | 1 (GAP-03) |
-| Tests added | 24 |
+| | Cumulative | 2026-08-08 round |
+| --- | --- | --- |
+| Defects found | 26 | 9 |
+| Defects fixed | 26 | 9 |
+| Defects still open | 0 | 0 |
+| Feature gaps found | 4 | 1 |
+| Feature gaps closed | 2 | 0 |
+| Feature gaps open | 2 (GAP-03, GAP-04) | — |
+| Tests added | 31 | 7 |
+
+Of the 9 defects in this round, 4 came from driving the app in a browser and 5
+from the review pass over the diff. **None of the 9 was caught by the suite**,
+which was green at 180 before the round started and is green at 186 now.
 
 ---
 
@@ -119,7 +124,10 @@ Every bug carries an ID. Use it in commits and branches, for example
 | Challan list filters and row actions | FE | `pages/challans.blade.php` | SHIPPED |
 | Three copy voucher PDF | FE+BE | `challans/pdf.blade.php`, `ChallanController.php` | SHIPPED |
 | Concurrency safety on collection | BE | `Services/ChallanActions.php` | SHIPPED (was BUG-08) |
-| Split / installment plan | DB | `create_installments_table` | SCHEMA-ONLY (GAP-03, open) |
+| One invoice billing several enrolments | DB+BE | `let_one_challan_bill_several_enrolments`, `Models/Challan.php` | SHIPPED |
+| Per-course apportionment of one invoice | BE | `Support/RevenueShare.php`, `Admission::netShare()` | SHIPPED |
+| Installment schedule: model and reconcile | BE | `Services/Installments.php` | SHIPPED |
+| Installment schedule: creating one | FE | — | **MISSING (GAP-03, open)** |
 
 ### 1.5 Reporting, analytics and exports
 
@@ -167,7 +175,7 @@ Every bug carries an ID. Use it in commits and branches, for example
 
 ### 1.8 Database
 
-22 migrations. Verified against the live SQLite file.
+25 migrations. Verified against the live SQLite file.
 
 | Table | Notes | Stage |
 | --- | --- | --- |
@@ -181,7 +189,7 @@ Every bug carries an ID. Use it in commits and branches, for example
 | `admissions` | unique `reg_no`; **unique live enrolment per (student, course)** | SHIPPED |
 | `challans` | unique `admission_id` enforces one per admission | SHIPPED |
 | `payments` | `cascadeOnDelete` on `challan_id`, backfilled from the paid flag | SHIPPED |
-| `installments` | no writer | SCHEMA-ONLY (GAP-03) |
+| `installments` | written by `Services/Installments.php`, but nothing calls `schedule()` outside tests, so the table is empty in practice | PARTIAL (GAP-03) |
 | `attendances` | **unique `(course_id, student_id, session_date)`**, nullable `cohort_id` | SHIPPED |
 | `audit_logs` | deliberately no FKs, polymorphic actor and subject | SHIPPED |
 | `settings` | holds `next_challan_serial` under a row lock | SHIPPED |
@@ -192,7 +200,80 @@ Every bug carries an ID. Use it in commits and branches, for example
 
 ## Part 2: Bug register
 
-All 17 reproduced before fixing and verified after. Ordered by severity.
+All reproduced before fixing and verified after. Ordered by severity within each
+round. BUG-18 to BUG-21 are the 2026-08-08 round; BUG-01 to BUG-17 are the
+2026-08-03 round and are kept for the reasoning, not because they are open.
+
+### BUG-18 The PDF icon threw a JS error and opened the drawer anyway
+
+- **Layer:** FE **Severity:** High **Status:** FIXED (2026-08-08)
+- **Where:** `resources/views/livewire/pages/challans.blade.php`, the challan
+  PDF link in the row actions
+- **What:** The link carried `wire:click.stop` with **no expression**. Livewire
+  compiles a valueless `wire:` directive into an empty `$wire.` call, so every
+  click threw `Alpine Expression Error: Unexpected token '}'` into the console
+  — and because the handler died before the modifier was applied, `.stop` never
+  ran. The row's `wire:click="select(...)"` fired regardless, so opening a
+  voucher also opened the drawer behind it.
+- **Reproduced:** in the browser, as the officer, on `BBT-CH-2026-1084`. One
+  console error per click plus an unwanted drawer, every time.
+- **Why the suite never caught it:** the expression is evaluated by Alpine in a
+  real browser. `Livewire::test()` renders the markup and never executes it, so
+  a broken client-side directive is invisible to the whole test suite.
+- **Fixed by:** `@click.stop`. Stopping propagation is a browser concern with no
+  server round trip, so it belongs to Alpine, not Livewire.
+- **Swept:** this was the only valueless `wire:` directive in the codebase.
+
+### BUG-19 The attendance register leaked guardian details across officer scope
+
+- **Layer:** FE + BE **Severity:** Medium **Status:** FIXED (2026-08-08)
+- **Where:** `App\Services\Attendances::roster()` is unscoped, and
+  `pages/attendance.blade.php` rendered `guardian_name` for every row it returned
+- **What:** Officer `aliraza` sees 6 students on the Students screen, but the
+  AI-201 register listed `BBT-R26-0004 Mohsin Iqbal` — enrolled by someone else
+  — together with his guardian's name. Same hole as BUG-10 in the wizard search,
+  in a screen that was built after that fix landed.
+- **Deliberately NOT fixed by scoping the roster.** A course taught to students
+  enrolled by three officers has one register, and a register showing a third of
+  the class is not a register. This is the one list in the app that is correctly
+  unscoped, and it is now pinned by a test saying so.
+- **Fixed by:** scoping the *contact line* instead of the roster. The whole class
+  is listed and markable; the guardian name renders only for students the viewer
+  could open on the Students screen. `scope.all` sees every one.
+- **Tests:** `AttendanceTest::test_the_register_lists_students_the_officer_cannot_otherwise_see`,
+  `::test_the_register_hides_the_guardian_of_a_student_outside_the_officers_scope`,
+  `::test_an_admin_sees_every_guardian_on_the_register`
+
+### BUG-20 The sign-in screen was unusable on a phone
+
+- **Layer:** FE **Severity:** Medium **Status:** FIXED (2026-08-08)
+- **Where:** `pages/auth/login.blade.php`, the outer two-column grid
+- **What:** `grid-template-columns:1.05fr .95fr` was written **inline**, where no
+  media query can reach it. At 390px the pitch panel computed to an **8px**
+  column: the headline rendered a letter or two per line, the body copy ran one
+  word per line, and the form was squeezed against the edge of the screen.
+- **Not a regression from the fluid type scale**, which was the obvious suspect.
+  Verified: the h1 computes to 38px at 390px, byte-identical to the hardcoded
+  38px it replaced. The bug is as old as the screen.
+- **Scope:** `login` only. Every other guest screen is a centred flex column and
+  was already correct.
+- **Fixed by:** moving the layout into `.login-split` / `.login-hero` in
+  `app.css` and collapsing to one column below 900px, where the panel keeps the
+  logo and drops the sales copy. The signed-in shell needed no change; it has
+  collapsed correctly since it was built.
+
+### BUG-21 Student codes wrapped mid-token in the challans table
+
+- **Layer:** FE **Severity:** Low **Status:** FIXED (2026-08-08)
+- **What:** `BBT-R26-0008` rendered as `BBT-R26-` above `0008`, which reads as a
+  different and shorter ID. The existing `td.tnum { white-space: nowrap }` rule
+  had exactly the right reasoning but could not reach an identifier nested
+  *beside* a name rather than alone in a cell.
+- **Fixed by:** a `.rec-id` class, applied to the code line in the challans and
+  registrations tables. Deliberately not applied to every nested `.tnum`: the
+  activity log's value columns are prose that legitimately wraps. Holding the
+  code whole also gives the column a sane minimum width, so the name beside it
+  stopped wrapping mid-person (Student column 168px → 185px).
 
 ### BUG-01 Reports and the xlsx export ignored the payments ledger
 
@@ -300,6 +381,71 @@ All 17 reproduced before fixing and verified after. Ordered by severity.
   `::test_the_database_refuses_a_duplicate_live_enrolment`,
   `::test_a_cancelled_enrolment_frees_the_student_to_take_the_course_again`,
   `::test_the_wizard_marks_courses_the_student_already_holds`
+
+### BUG-22 A student without a guardian could be created and then never edited
+
+- **Layer:** FE **Severity:** High **Status:** FIXED (2026-08-08)
+- **Where:** `resources/views/livewire/pages/students.blade.php::editStudent()`
+- **What:** `ba24f42` made guardian and CNIC optional in the wizard. The Students
+  screen assigns both into `public string` properties, so opening such a student
+  for editing threw `Cannot assign null to property …::$fGuardian of type
+  string` **before the form rendered**. The one screen whose job is correcting a
+  record was a 500 for exactly the records most likely to need correcting.
+- **Fixed by:** coalescing to `''` on load, and turning blank back into NULL on
+  save.
+- **Test:** `StudentManagementTest::test_a_student_registered_without_a_guardian_can_still_be_edited`
+
+### BUG-23 The two doors that create a student disagreed about what a student is
+
+- **Layer:** BE **Severity:** High **Status:** FIXED (2026-08-08)
+- **Where:** `app/Services/StudentService.php::validate()`
+- **What:** The same commit relaxed the wizard but not this validator, which
+  still required a guardian and a well-formed CNIC. So even with BUG-22 fixed, a
+  wizard-created student could be opened and never saved: the form demanded two
+  fields the record was legitimately allowed to omit.
+- **Fixed by:** making both optional here too — optional but still *checked*, so
+  a half-typed CNIC is refused rather than stored — and routing both writers
+  through `Contact::optional()` so blank reaches the column as NULL, never `''`.
+  That rule now has one implementation instead of a closure in one service and
+  nothing in the other.
+- **Tests:** `::test_a_student_without_a_guardian_can_be_saved_from_the_students_form`,
+  `::test_the_students_form_can_create_two_students_without_a_cnic`
+
+### BUG-24 The phone field nagged while the number was still being typed
+
+- **Layer:** FE **Severity:** Low **Status:** FIXED (2026-08-08)
+- **Where:** `pages/registrations.blade.php::checkPhone()`
+- **What:** The "complete attempt" threshold counted **characters**, at `>= 12`.
+  The input is masked, so `+92 300 1234` is twelve characters carrying only nine
+  of the ten digits: the error appeared with three digits still to type. That is
+  precisely the nagging the rest of the method was written to avoid, so the
+  guard defeated its own stated purpose.
+- **Fixed by:** counting digits, at `>= 10`. `3001234567`, `03001234567` and
+  `+92 300 1234567` are one number written three ways and now behave alike.
+- **Test:** folded into `::test_step_one_reports_wrongness_at_once_but_emptiness_only_on_leaving`
+
+### BUG-25 The guardian suggestion list had no way out
+
+- **Layer:** FE **Severity:** Low **Status:** FIXED (2026-08-08)
+- **Where:** `partials/registration-wizard.blade.php`
+- **What:** The list closed only when the typed name became an exact match.
+  Otherwise it sat open over the Cancel button and the CNIC-clash card, where a
+  click picked a guardian instead of doing what was aimed at.
+- **Fixed by:** Escape and click-outside dismiss it; typing brings it back.
+  Dismissal is local browser state, so it is Alpine's. The list stays
+  server-rendered rather than moving into a `<template>`, which races the
+  Livewire morph — the mistake recorded in the build notes.
+
+### BUG-26 The guardian lookup was unbounded and ran on every step
+
+- **Layer:** BE **Severity:** Low **Status:** FIXED (2026-08-08)
+- **What:** `guardianMatches()` had no SQL `LIMIT` — `take(5)` ran in PHP after
+  hydrating every LIKE hit, so two characters against a full roll would load
+  every match to display five. It also re-ran on steps 2 and 3, where the
+  guardian field is not on screen and the result is discarded.
+- **Fixed by:** a step-1 guard and `LIMIT 50`. Not `LIMIT 5`: de-duplication is
+  per distinct guardian and happens in PHP, so five rows can collapse to one
+  sibling's parent and the query has to leave the list something to work with.
 
 ### BUG-05 Registration ignored course capacity and active state
 
@@ -485,21 +631,50 @@ All 17 reproduced before fixing and verified after. Ordered by severity.
   comment explaining why. The chart is shorter until real history accumulates,
   which is the correct thing for it to be.
 
-### GAP-03 Split / installment plan: OPEN, needs your decision
+### GAP-03 Split / installment plan: HALF CLOSED, still OPEN
 
-- **Layer:** DB **Size:** Small **Status:** OPEN
-- `challans.plan` has a `split` value and `installments` is modelled, but nothing
-  creates installment rows and no UI offers the choice. Every challan is `full`.
-  The settle path (`installments()->update(...)`) was tested and does work, so
-  the gap is purely creation and UI.
-- **Left open on purpose, because it may be redundant.** `installments` predates
-  the `payments` ledger. Part payments already let a student pay a fee in stages,
-  with a running balance and a row per handover, which is strictly more flexible
-  than two fixed installments. The open question is whether the institute needs
-  *scheduled* installments with their own due dates (a genuine feature payments
-  do not cover) or whether `installments` is superseded and should be deleted.
-  That is a product call, not a defect, so it is yours rather than something to
-  silently build or silently drop.
+- **Layer:** FE **Size:** Small **Status:** OPEN (updated 2026-08-08)
+- **The product question is settled.** The previous audit left this open asking
+  whether a schedule was redundant beside the payments ledger. It is not, and
+  the institute's own exported roll is the proof: it carries an *Advance
+  Payment* and a *Second Installment* against a *Pending Payment Due Date*.
+  `payments` is a ledger of what happened; `installments` is a schedule of what
+  is supposed to happen. A challan's single `due_date` cannot express a second
+  deadline, so without a schedule there is no way to answer "who owes me money
+  *today*", only "who owes me money".
+- **What was built** (in `896339e`, after the previous audit was written):
+  `App\Services\Installments` with `schedule()`, `reconcile()` and
+  `defaultPlan()`. Status is *derived* from the payments ledger rather than
+  maintained beside it, so the two cannot disagree. `ChallanActions` reconciles
+  on every collection, and the challan drawer and list read the schedule.
+  13 tests in `tests/Feature/InstallmentTest.php`.
+- **What is still missing:** anything that calls `schedule()`. There is no UI
+  offering the choice, no caller outside the tests, and `installments` has 0
+  rows. Every challan is still `full`.
+- **Why it matters now:** this is the shape the real roll arrives in, so the
+  import (GAP-04) needs it. Building the creation path is the remaining work.
+
+### GAP-04 No importer for the institute's existing roll: OPEN
+
+- **Layer:** BE **Size:** Medium **Status:** OPEN (found 2026-08-08)
+- **What:** The database holds only the 12 demo-seeded students. The institute's
+  real roll sits in two spreadsheets at the repository root:
+  `student_details_report (45).xlsx` (**478 students**) and
+  `student_details_report-121.xlsx` (17 rows), carrying ID, Name, Course,
+  Status, CSR, Phone, Email, Batch, Registration Date, Pending Payment Due Date,
+  Original Price, Discounted Price, Advance Payment, Second Installment,
+  Balance.
+- **There is no importer anywhere in the codebase** — no command, no controller,
+  no UI, no route.
+- **The schema was already prepared for it and the loader was never built.**
+  Migration `2026_08_08_000001_allow_imported_students_without_cnic` exists
+  specifically so an imported roll can carry "name, course, batch, phone and
+  money, nothing else", and `Installments` was written against these exact
+  columns. Both halves anticipate an import that does not exist.
+- **Open decisions:** how to resolve `CSR` to a `users` row, `Course` to a
+  `courses` row and `Batch` to a `cohorts` row when the spreadsheet gives free
+  text; what to do with a row whose money does not reconcile; and whether the
+  import runs as an artisan command with `--dry-run` or as a screen.
 
 ---
 

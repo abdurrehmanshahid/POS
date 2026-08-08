@@ -32,9 +32,9 @@
                 <x-icon name="lock" :size="24" style="color:var(--over)" />
             </div>
 
-            <h1 style="font-size:20px;font-weight:800;color:var(--ink);margin:0 0 8px">You do not have access to this screen</h1>
+            <h1 style="font-size:var(--fs-xl);font-weight:800;color:var(--ink);margin:0 0 8px">You do not have access to this screen</h1>
 
-            <p style="font-size:13.5px;color:var(--muted);line-height:1.6;margin:0 0 22px">
+            <p style="font-size:var(--fs-sm);color:var(--muted);line-height:1.6;margin:0 0 22px">
                 Your role does not grant the permission this page needs. If you
                 believe it should, ask an administrator to review your role on
                 the Staff &amp; Roles screen.
@@ -49,7 +49,7 @@
             @endif
 
             @if ($user)
-                <div style="margin-top:16px;font-size:12px;color:var(--faint)">
+                <div style="margin-top:16px;font-size:var(--fs-xs);color:var(--faint)">
                     Signed in as {{ $user->name }} · {{ $user->roleLabel() }}
                 </div>
             @endif

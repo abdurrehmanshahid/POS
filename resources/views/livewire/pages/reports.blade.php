@@ -88,13 +88,13 @@ new class extends Component {
 
         @if ($selectedKey === 'custom')
             <input type="date" wire:model.live="from" class="input" style="width:156px;height:42px">
-            <span style="font-size:12.5px;color:var(--muted)">to</span>
+            <span style="font-size:var(--fs-xs);color:var(--muted)">to</span>
             <input type="date" wire:model.live="to" class="input" style="width:156px;height:42px">
         @endif
 
         <div class="toolbar-grow"></div>
 
-        <span class="tnum" style="font-size:12.5px;color:var(--muted);white-space:nowrap">{{ $period->rangeLabel() }}</span>
+        <span class="tnum" style="font-size:var(--fs-xs);color:var(--muted);white-space:nowrap">{{ $period->rangeLabel() }}</span>
 
         <a href="{{ route('reports.export', array_filter(['period' => $selectedKey, 'from' => $from, 'to' => $to])) }}"
            class="btn btn-ghost">
@@ -111,9 +111,9 @@ new class extends Component {
                 ['Collected today', $summary['today'], Format::date($today), 'var(--iris)'],
             ] as [$label, $value, $sub, $colour])
                 <div class="card" style="padding:18px 20px">
-                    <div style="font-size:11.5px;font-weight:700;color:var(--faint);letter-spacing:.06em;text-transform:uppercase">{{ $label }}</div>
-                    <div class="tnum" style="font-size:26px;font-weight:800;color:{{ $colour }};margin:7px 0 3px;letter-spacing:-.02em">{{ Format::money($value) }}</div>
-                    <div class="tnum" style="font-size:12px;color:var(--muted)">{{ $sub }}</div>
+                    <div style="font-size:var(--fs-2xs);font-weight:700;color:var(--faint);letter-spacing:.06em;text-transform:uppercase">{{ $label }}</div>
+                    <div class="tnum" style="font-size:var(--fs-2xl);font-weight:800;color:{{ $colour }};margin:7px 0 3px;letter-spacing:-.02em">{{ Format::money($value) }}</div>
+                    <div class="tnum" style="font-size:var(--fs-xs);color:var(--muted)">{{ $sub }}</div>
                 </div>
             @endforeach
         </div>
@@ -124,7 +124,7 @@ new class extends Component {
                 <div class="panel-head">
                     <x-icon name="reports" :size="18" style="color:var(--navy2)" />
                     <h3 class="panel-title">Collections by {{ $period->granularity() }}</h3>
-                    <span class="tnum" style="margin-left:auto;font-size:12px;color:var(--muted)">{{ Format::money($summary['collected']) }} total</span>
+                    <span class="tnum" style="margin-left:auto;font-size:var(--fs-xs);color:var(--muted)">{{ Format::money($summary['collected']) }} total</span>
                 </div>
                 <div style="padding:20px">
                     @if ($series->sum('total') > 0)
@@ -133,11 +133,11 @@ new class extends Component {
                                 <div style="flex:1;min-width:0;display:flex;flex-direction:column;align-items:center;gap:6px;height:100%;justify-content:flex-end"
                                      title="{{ $b->label }} {{ $b->sub }}: {{ Format::money($b->total) }}">
                                     @if ($b->total > 0)
-                                        <div class="tnum" style="font-size:9.5px;color:var(--faint);font-weight:700;white-space:nowrap">{{ round($b->total / 1000) }}k</div>
+                                        <div class="tnum" style="font-size:var(--fs-3xs);color:var(--faint);font-weight:700;white-space:nowrap">{{ round($b->total / 1000) }}k</div>
                                     @endif
                                     <div style="width:100%;border-radius:4px 4px 0 0;min-height:3px;background:{{ $b->total > 0 ? 'var(--navy2)' : 'var(--surface3)' }};height:{{ max(2, round($b->total / $seriesPeak * 100)) }}%"></div>
                                     @if ($series->count() <= 31)
-                                        <div class="tnum" style="font-size:9.5px;color:var(--muted);font-weight:600">{{ $b->label }}</div>
+                                        <div class="tnum" style="font-size:var(--fs-3xs);color:var(--muted);font-weight:600">{{ $b->label }}</div>
                                     @endif
                                 </div>
                             @endforeach
@@ -158,10 +158,10 @@ new class extends Component {
                     @forelse ($methods as $m)
                         <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 0;border-bottom:1px solid var(--border)">
                             <div style="min-width:0">
-                                <div style="font-size:13.5px;font-weight:600;color:var(--ink)">{{ $m->method }}</div>
-                                <div class="tnum" style="font-size:11.5px;color:var(--muted)">{{ $m->count }} payment{{ $m->count === 1 ? '' : 's' }}</div>
+                                <div style="font-size:var(--fs-sm);font-weight:600;color:var(--ink)">{{ $m->method }}</div>
+                                <div class="tnum" style="font-size:var(--fs-2xs);color:var(--muted)">{{ $m->count }} payment{{ $m->count === 1 ? '' : 's' }}</div>
                             </div>
-                            <span class="tnum" style="font-size:14px;font-weight:800;color:var(--ink)">{{ Format::money($m->total) }}</span>
+                            <span class="tnum" style="font-size:var(--fs-base);font-weight:800;color:var(--ink)">{{ Format::money($m->total) }}</span>
                         </div>
                     @empty
                         <div class="empty-state">Nothing collected in this period.</div>
@@ -180,11 +180,11 @@ new class extends Component {
                 @forelse ($courses as $c)
                     <div style="margin-bottom:15px">
                         <div style="display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin-bottom:6px">
-                            <span style="font-size:13px;font-weight:600;color:var(--ink);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
+                            <span style="font-size:var(--fs-sm);font-weight:600;color:var(--ink);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
                                 {{ $c->title }}
                                 <span class="tnum" style="color:var(--muted);font-weight:500">· {{ $c->code }} · {{ $c->enrolments }} paid</span>
                             </span>
-                            <span class="tnum" style="font-size:13px;font-weight:800;color:var(--ink);flex:none">{{ Format::money($c->total) }}</span>
+                            <span class="tnum" style="font-size:var(--fs-sm);font-weight:800;color:var(--ink);flex:none">{{ Format::money($c->total) }}</span>
                         </div>
                         <div style="height:9px;border-radius:5px;background:var(--surface3);overflow:hidden">
                             <div style="height:100%;border-radius:5px;background:var(--navy2);width:{{ max(1, round($c->total / $coursePeak * 100)) }}%"></div>
@@ -203,7 +203,7 @@ new class extends Component {
             <div class="panel-head">
                 <x-icon name="trending-up" :size="18" style="color:var(--navy2)" />
                 <h3 class="panel-title">Officer performance</h3>
-                <span style="margin-left:auto;font-size:12px;color:var(--muted)">{{ $period->label() }}</span>
+                <span style="margin-left:auto;font-size:var(--fs-xs);color:var(--muted)">{{ $period->label() }}</span>
             </div>
             <div class="scroll-x">
                 <table class="table">
@@ -223,7 +223,7 @@ new class extends Component {
                                         <x-ui.avatar :name="$o->name" :variant="$o->role_id === 'admin' ? 'navy' : 'orange'" :size="32" />
                                         <div style="min-width:0">
                                             <div style="font-weight:600;color:var(--ink)">{{ $o->name }}</div>
-                                            <div class="tnum" style="font-size:12px;color:var(--muted)">{{ $o->username }}</div>
+                                            <div class="tnum" style="font-size:var(--fs-xs);color:var(--muted)">{{ $o->username }}</div>
                                         </div>
                                     </div>
                                 </td>
@@ -232,13 +232,13 @@ new class extends Component {
                                 <td class="tnum" style="font-weight:700;color:var(--paid)">{{ Format::money($o->received) }}</td>
                                 <td>
                                     @if ($rate === null)
-                                        <span style="font-size:12.5px;color:var(--faint)">no billing</span>
+                                        <span style="font-size:var(--fs-xs);color:var(--faint)">no billing</span>
                                     @else
                                         <div style="display:flex;align-items:center;gap:9px;min-width:120px">
                                             <div style="flex:1;height:6px;border-radius:3px;background:var(--surface3);overflow:hidden">
                                                 <div style="height:100%;border-radius:3px;width:{{ $rate }}%;background:{{ $rateColour }}"></div>
                                             </div>
-                                            <span class="tnum" style="font-size:12.5px;font-weight:800;color:{{ $rateColour }}">{{ $rate }}%</span>
+                                            <span class="tnum" style="font-size:var(--fs-xs);font-weight:800;color:{{ $rateColour }}">{{ $rate }}%</span>
                                         </div>
                                     @endif
                                 </td>
@@ -256,7 +256,7 @@ new class extends Component {
         <div class="panel-head">
             <x-icon name="alert" :size="18" style="color:var(--due)" />
             <h3 class="panel-title">Outstanding dues</h3>
-            <span class="tnum" style="margin-left:auto;font-size:12px;color:var(--muted)">
+            <span class="tnum" style="margin-left:auto;font-size:var(--fs-xs);color:var(--muted)">
                 {{ Format::money($dues['total']) }} owed in total
             </span>
         </div>
@@ -267,11 +267,11 @@ new class extends Component {
         <div class="ageing-row">
             @foreach ($dues['buckets'] as $b)
                 <div style="background:var(--surface);padding:14px 16px">
-                    <div style="font-size:11px;font-weight:700;color:var(--faint);letter-spacing:.05em;text-transform:uppercase">{{ $b['label'] }}</div>
-                    <div class="tnum" style="font-size:18px;font-weight:800;margin-top:5px;color:{{ $b['total'] > 0 ? ($b['tone'] === 'overdue' ? 'var(--over)' : ($b['tone'] === 'unpaid' ? 'var(--due)' : 'var(--ink)')) : 'var(--faint)' }}">
+                    <div style="font-size:var(--fs-2xs);font-weight:700;color:var(--faint);letter-spacing:.05em;text-transform:uppercase">{{ $b['label'] }}</div>
+                    <div class="tnum" style="font-size:var(--fs-lg);font-weight:800;margin-top:5px;color:{{ $b['total'] > 0 ? ($b['tone'] === 'overdue' ? 'var(--over)' : ($b['tone'] === 'unpaid' ? 'var(--due)' : 'var(--ink)')) : 'var(--faint)' }}">
                         {{ Format::money($b['total']) }}
                     </div>
-                    <div class="tnum" style="font-size:11.5px;color:var(--muted);margin-top:2px">{{ $b['count'] }} challan{{ $b['count'] === 1 ? '' : 's' }}</div>
+                    <div class="tnum" style="font-size:var(--fs-2xs);color:var(--muted);margin-top:2px">{{ $b['count'] }} challan{{ $b['count'] === 1 ? '' : 's' }}</div>
                 </div>
             @endforeach
         </div>
@@ -289,18 +289,18 @@ new class extends Component {
                                     <x-ui.avatar :name="$s->name" variant="orange" :size="30" />
                                     <div style="min-width:0">
                                         <div style="font-weight:600;color:var(--ink)">{{ $s->name }}</div>
-                                        <div class="tnum" style="font-size:12px;color:var(--iris);font-weight:700">{{ $s->code }}</div>
+                                        <div class="tnum" style="font-size:var(--fs-xs);color:var(--iris);font-weight:700">{{ $s->code }}</div>
                                     </div>
                                 </div>
                             </td>
-                            <td style="color:var(--muted);font-size:12.5px">{{ $s->courses }}</td>
+                            <td style="color:var(--muted);font-size:var(--fs-xs)">{{ $s->courses }}</td>
                             <td>
                                 @if ($s->days_late > 0)
                                     <x-ui.pill :tone="$s->days_late > 60 ? 'overdue' : 'unpaid'" :dot="true">
                                         {{ $s->days_late }} day{{ $s->days_late === 1 ? '' : 's' }}
                                     </x-ui.pill>
                                 @else
-                                    <span style="font-size:12.5px;color:var(--muted)">not yet due</span>
+                                    <span style="font-size:var(--fs-xs);color:var(--muted)">not yet due</span>
                                 @endif
                             </td>
                             <td class="right tnum" style="font-weight:800;color:var(--ink);white-space:nowrap">{{ Format::money($s->amount) }}</td>

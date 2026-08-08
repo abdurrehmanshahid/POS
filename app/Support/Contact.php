@@ -30,4 +30,22 @@ final class Contact
     {
         return (bool) preg_match('/^\d{5}-\d{7}-\d$/', $cnic);
     }
+
+    /**
+     * A blank optional detail is "not known", which is NULL, never ''.
+     *
+     * This matters most for the CNIC. The column is UNIQUE, and MySQL and SQLite
+     * both exclude NULLs from uniqueness while treating '' as an ordinary value,
+     * so storing the empty string lets the FIRST student without a CNIC save and
+     * makes the SECOND one collide with them — which reads at the counter as
+     * "this person is already registered" about two unrelated strangers.
+     *
+     * Lives here rather than in either caller because both doors that write a
+     * student (the registration wizard and the Students form) have to agree, and
+     * they have already disagreed once about exactly this.
+     */
+    public static function optional(?string $value): ?string
+    {
+        return ($value = trim((string) $value)) === '' ? null : $value;
+    }
 }

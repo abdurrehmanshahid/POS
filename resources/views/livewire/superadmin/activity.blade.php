@@ -104,14 +104,14 @@ new #[Layout('components.layouts.super')] class extends Component {
                             </td>
                             <td style="font-weight:600;color:{{ $destructive ? 'var(--over)' : 'var(--ink)' }}">{{ $row->action }}</td>
                             <td class="tnum" style="color:var(--ink2)">{{ $row->subject_label ?: '' }}</td>
-                            <td style="font-size:12.5px;color:var(--muted)">
+                            <td style="font-size:var(--fs-xs);color:var(--muted)">
                                 @if ($row->old_value !== null || $row->new_value !== null)
                                     <span class="tnum">{{ $row->old_value ?: '' }}</span>
                                     <span style="color:var(--faint)"> → </span>
                                     <span class="tnum" style="color:var(--ink2);font-weight:600">{{ $row->new_value ?: '' }}</span>
                                 @else, @endif
                             </td>
-                            <td class="tnum" style="color:var(--faint);font-size:12px">{{ $row->ip_address ?: 'n/a' }}</td>
+                            <td class="tnum" style="color:var(--faint);font-size:var(--fs-xs)">{{ $row->ip_address ?: 'n/a' }}</td>
                         </tr>
                     @empty
                         <tr><td colspan="6" class="empty-state">No events match.</td></tr>

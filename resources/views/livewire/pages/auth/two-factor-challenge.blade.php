@@ -126,8 +126,8 @@ new #[Layout('components.layouts.guest')] class extends Component {
                 <x-icon name="shield" :size="21" style="color:var(--iris)" />
             </div>
 
-            <h2 style="font-size:21px;font-weight:800;color:var(--ink);margin:0 0 6px;letter-spacing:-.01em">Two-factor required</h2>
-            <p style="font-size:14px;color:var(--muted);margin:0 0 22px;line-height:1.6">
+            <h2 style="font-size:var(--fs-xl);font-weight:800;color:var(--ink);margin:0 0 6px;letter-spacing:-.01em">Two-factor required</h2>
+            <p style="font-size:var(--fs-base);color:var(--muted);margin:0 0 22px;line-height:1.6">
                 @if ($useRecovery)
                     Enter one of the recovery codes you saved when you set up two-factor.
                 @else
@@ -139,30 +139,30 @@ new #[Layout('components.layouts.guest')] class extends Component {
                 @if ($useRecovery)
                     <label class="label">Recovery code</label>
                     <input wire:model="code" type="text" placeholder="XXXXX-XXXXX" class="input tnum"
-                           style="margin-bottom:12px;font-size:16px;letter-spacing:.1em;text-align:center;font-weight:700" autofocus>
+                           style="margin-bottom:12px;font-size:var(--fs-md);letter-spacing:.1em;text-align:center;font-weight:700" autofocus>
                 @else
                     <label class="label">Authenticator code</label>
                     <input wire:model="code" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="6"
                            placeholder="000000" class="input tnum"
-                           style="margin-bottom:12px;font-size:22px;letter-spacing:.35em;text-align:center;font-weight:700" autofocus>
+                           style="margin-bottom:12px;font-size:var(--fs-xl);letter-spacing:.35em;text-align:center;font-weight:700" autofocus>
                 @endif
 
                 @if ($error)
-                    <div style="display:flex;align-items:center;gap:7px;font-size:12px;color:var(--over);margin-bottom:14px">
+                    <div style="display:flex;align-items:center;gap:7px;font-size:var(--fs-xs);color:var(--over);margin-bottom:14px">
                         <x-icon name="alert-circle" :size="14" /> {{ $error }}
                     </div>
                 @endif
 
-                <button type="submit" class="btn btn-accent" style="width:100%;height:48px;font-size:15px;margin-bottom:14px">Verify &amp; sign in</button>
+                <button type="submit" class="btn btn-accent" style="width:100%;height:48px;font-size:var(--fs-md);margin-bottom:14px">Verify &amp; sign in</button>
             </form>
 
-            <div style="display:flex;align-items:center;justify-content:space-between;font-size:12.5px">
+            <div style="display:flex;align-items:center;justify-content:space-between;font-size:var(--fs-xs)">
                 <button wire:click="$toggle('useRecovery')" type="button"
-                        style="border:none;background:none;padding:0;cursor:pointer;color:var(--iris);font-weight:600;font-size:12.5px">
+                        style="border:none;background:none;padding:0;cursor:pointer;color:var(--iris);font-weight:600;font-size:var(--fs-xs)">
                     {{ $useRecovery ? 'Use authenticator code' : 'Lost your phone?' }}
                 </button>
                 <button wire:click="cancel" type="button"
-                        style="border:none;background:none;padding:0;cursor:pointer;color:var(--muted);font-weight:600;font-size:12.5px">
+                        style="border:none;background:none;padding:0;cursor:pointer;color:var(--muted);font-weight:600;font-size:var(--fs-xs)">
                     Cancel
                 </button>
             </div>

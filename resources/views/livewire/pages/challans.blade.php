@@ -181,7 +181,7 @@ new class extends Component {
     @endif
 
     <div style="display:flex;align-items:center;gap:14px;margin-bottom:16px;flex-wrap:wrap">
-        <div style="flex:1;min-width:150px"><span style="font-size:15px;font-weight:700;color:var(--ink)">Fee challans</span> <span style="font-size:12.5px;color:var(--muted)">{{ $rows->count() }} shown</span></div>
+        <div style="flex:1;min-width:150px"><span style="font-size:var(--fs-md);font-weight:700;color:var(--ink)">Fee challans</span> <span style="font-size:var(--fs-xs);color:var(--muted)">{{ $rows->count() }} shown</span></div>
         <div class="search" style="width:300px"><x-icon name="search" :size="15" /><input wire:model.live.debounce.200ms="q" class="input" placeholder="Search challan #, student, course, status…"></div>
     </div>
 
@@ -198,26 +198,26 @@ new class extends Component {
     </div>
 
     <div class="panel scroll-x">
-        <table class="table">
+        <table class="table table-cards">
             <thead><tr>
-                <th>Challan #</th><th>Student</th><th>Course</th><th>Due / Paid via</th><th class="right">Net</th><th>Status</th><th></th>
+                <th>Challan #</th><th>Student</th><th>Course</th><th>Due / Paid via</th><th class="right">Net</th><th>Status</th><th class="actions-col"></th>
             </tr></thead>
             <tbody>
                 @forelse ($rows as $c)
                     @php [$tone, $label] = $pill($c->paymentState()); @endphp
                     <tr class="clickable" wire:click="select({{ $c->id }})" wire:key="ch-{{ $c->id }}">
-                        <td class="tnum" style="font-weight:700;color:var(--iris)">{{ $c->challan_no }}</td>
-                        <td>
+                        <td class="tnum rec-id" data-label="Challan #" style="font-weight:700;color:var(--iris)">{{ $c->challan_no }}</td>
+                        <td data-label="Student">
                             <div style="display:flex;align-items:center;gap:10px">
                                 <x-ui.avatar :name="$c->admission->student->name" :size="30" />
-                                <div><div style="font-size:13.5px;font-weight:600;color:var(--ink)">{{ $c->admission->student->name }}</div><div class="tnum" style="font-size:11px;font-weight:700;color:var(--iris)">{{ $c->admission->student->student_code }}</div></div>
+                                <div><div style="font-size:var(--fs-sm);font-weight:600;color:var(--ink)">{{ $c->admission->student->name }}</div><div class="tnum rec-id" style="font-size:var(--fs-2xs);font-weight:700;color:var(--iris)">{{ $c->admission->student->student_code }}</div></div>
                             </div>
                         </td>
-                        <td>{{ $c->admission->course->title }}</td>
-                        <td class="tnum" style="color:var(--muted)">{{ $c->isPaid() ? 'via '.$c->paid_via : 'due '.Format::date($c->due_date) }}</td>
-                        <td class="right tnum" style="font-weight:700">{{ Format::money($c->net_amount) }}</td>
-                        <td><x-ui.pill :tone="$tone" :dot="true">{{ $label }}</x-ui.pill></td>
-                        <td class="right">
+                        <td data-label="Course"><span class="clamp-2" title="{{ $c->admission->course->title }}">{{ $c->admission->course->title }}</span></td>
+                        <td class="tnum" data-label="Due / paid via" style="color:var(--muted)">{{ $c->isPaid() ? 'via '.$c->paid_via : 'due '.Format::date($c->due_date) }}</td>
+                        <td class="right tnum" data-label="Net" style="font-weight:700">{{ Format::money($c->net_amount) }}</td>
+                        <td data-label="Status"><x-ui.pill :tone="$tone" :dot="true">{{ $label }}</x-ui.pill></td>
+                        <td class="right actions-col" data-label="Actions">
                             <div style="display:flex;gap:6px;justify-content:flex-end;align-items:center">
                                 @if ($canPay && ! $c->isPaid())
                                     <button class="btn btn-ghost btn-sm" wire:click.stop="askPay({{ $c->id }})">Mark paid</button>
@@ -225,8 +225,15 @@ new class extends Component {
                                 {{-- The PDF used to be reachable only after opening the
                                      drawer, so the commonest action on the screen was
                                      also the least visible one. --}}
+                                {{-- @click.stop, not wire:click.stop. A wire: directive with no
+                                     expression compiles to an empty `$wire.` call, which throws
+                                     `SyntaxError: Unexpected token '}'` before the modifier is
+                                     ever applied — so the row's select() fired anyway and the
+                                     drawer opened behind the PDF. Stopping propagation is a
+                                     browser concern with no server round trip, so it is Alpine's
+                                     job, not Livewire's. --}}
                                 <a class="btn-icon btn-icon-plain" href="{{ route('challans.pdf', $c) }}" target="_blank"
-                                   wire:click.stop title="View challan PDF" aria-label="View challan PDF">
+                                   @click.stop title="View challan PDF" aria-label="View challan PDF">
                                     <x-icon name="eye" :size="16" />
                                 </a>
                             </div>

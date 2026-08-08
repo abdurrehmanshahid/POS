@@ -66,13 +66,13 @@ new class extends Component {
 
 <div class="container-app anim-fade">
     <div style="margin-bottom:18px">
-        <h2 style="font-size:21px;font-weight:800;color:var(--ink);letter-spacing:-.02em;margin:0">Data model</h2>
-        <p style="font-size:13px;color:var(--muted);margin:5px 0 0">The eleven tables behind every screen · one source of truth</p>
+        <h2 style="font-size:var(--fs-xl);font-weight:800;color:var(--ink);letter-spacing:-.02em;margin:0">Data model</h2>
+        <p style="font-size:var(--fs-sm);color:var(--muted);margin:5px 0 0">The eleven tables behind every screen · one source of truth</p>
     </div>
 
     {{-- Intro banner --}}
     <div style="background:linear-gradient(135deg,var(--navy),var(--navy2));border-radius:16px;padding:18px 22px;color:#fff;box-shadow:var(--sh2);margin-bottom:22px">
-        <p style="margin:0;font-size:13.5px;line-height:1.7;color:#dfe1f5">
+        <p style="margin:0;font-size:var(--fs-sm);line-height:1.7;color:#dfe1f5">
             <strong style="color:#fff;font-weight:700">users → roles → role_permissions</strong> drive who can see and do what.
             A <strong style="color:#fff;font-weight:700">student</strong> is created once and reused across enrolments; each
             <strong style="color:#fff;font-weight:700">admission</strong> stores <strong style="color:#fff;font-weight:700">enrolled_by</strong>, the source
@@ -87,16 +87,16 @@ new class extends Component {
         @foreach ($tables as $table => $fields)
             <div class="card" style="padding:0;overflow:hidden;align-self:start">
                 <div style="padding:12px 18px;border-bottom:1px solid var(--border);background:var(--surface2)">
-                    <span style="font-family:ui-monospace,'SF Mono',Menlo,monospace;font-size:13.5px;font-weight:800;color:var(--navy);letter-spacing:.01em">{{ $table }}</span>
+                    <span style="font-family:ui-monospace,'SF Mono',Menlo,monospace;font-size:var(--fs-sm);font-weight:800;color:var(--navy);letter-spacing:.01em">{{ $table }}</span>
                 </div>
                 <div style="padding:4px 18px 10px">
                     @foreach ($fields as [$field, $keys, $type])
                         <div style="display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid var(--surface3)">
-                            <span style="font-family:ui-monospace,'SF Mono',Menlo,monospace;font-size:12.5px;font-weight:600;color:var(--ink2)">{{ $field }}</span>
+                            <span style="font-family:ui-monospace,'SF Mono',Menlo,monospace;font-size:var(--fs-xs);font-weight:600;color:var(--ink2)">{{ $field }}</span>
                             @foreach ($keys as $k)
-                                <x-ui.pill tone="{{ $toneOf[$k] }}" style="font-size:9.5px;padding:1px 6px;font-weight:800">{{ $k }}</x-ui.pill>
+                                <x-ui.pill tone="{{ $toneOf[$k] }}" style="font-size:var(--fs-3xs);padding:1px 6px;font-weight:800">{{ $k }}</x-ui.pill>
                             @endforeach
-                            <span style="margin-left:auto;font-family:ui-monospace,'SF Mono',Menlo,monospace;font-size:11.5px;color:var(--muted)">{{ $type }}</span>
+                            <span style="margin-left:auto;font-family:ui-monospace,'SF Mono',Menlo,monospace;font-size:var(--fs-2xs);color:var(--muted)">{{ $type }}</span>
                         </div>
                     @endforeach
                 </div>

@@ -23,9 +23,9 @@
                 <x-icon name="search" :size="24" style="color:var(--muted)" />
             </div>
 
-            <h1 style="font-size:20px;font-weight:800;color:var(--ink);margin:0 0 8px">That page does not exist</h1>
+            <h1 style="font-size:var(--fs-xl);font-weight:800;color:var(--ink);margin:0 0 8px">That page does not exist</h1>
 
-            <p style="font-size:13.5px;color:var(--muted);line-height:1.6;margin:0 0 22px">
+            <p style="font-size:var(--fs-sm);color:var(--muted);line-height:1.6;margin:0 0 22px">
                 The link may be out of date, or the record it pointed at may have
                 been removed.
             </p>

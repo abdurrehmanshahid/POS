@@ -162,15 +162,15 @@ new class extends Component {
     {{-- Header --}}
     <div style="display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:18px">
         <div>
-            <h1 style="font-size:20px;font-weight:800;color:var(--ink);margin:0;letter-spacing:-.01em">Course batches</h1>
-            <div class="tnum" style="font-size:13px;color:var(--muted);margin-top:3px">{{ $total }} total</div>
+            <h1 style="font-size:var(--fs-xl);font-weight:800;color:var(--ink);margin:0;letter-spacing:-.01em">Course batches</h1>
+            <div class="tnum" style="font-size:var(--fs-sm);color:var(--muted);margin-top:3px">{{ $total }} total</div>
         </div>
         <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
             <div class="search" style="width:300px;max-width:100%">
                 <x-icon name="search" :size="15" />
                 <input wire:model.live.debounce.200ms="q" placeholder="Search batch or course…" class="input">
             </div>
-            <label style="display:flex;align-items:center;gap:7px;font-size:12.5px;color:var(--ink2);cursor:pointer;white-space:nowrap">
+            <label style="display:flex;align-items:center;gap:7px;font-size:var(--fs-xs);color:var(--ink2);cursor:pointer;white-space:nowrap">
                 <input type="checkbox" wire:model.live="showClosed" style="width:15px;height:15px;accent-color:var(--iris)">
                 Show closed
             </label>
@@ -180,7 +180,7 @@ new class extends Component {
 
     <div style="display:flex;gap:11px;padding:13px 16px;background:var(--info-bg);border:1px solid var(--border);border-radius:13px;margin-bottom:20px">
         <x-icon name="alert-circle" :size="16" style="color:var(--info);flex:none;margin-top:2px" />
-        <div style="font-size:12.5px;color:var(--ink2);line-height:1.6">
+        <div style="font-size:var(--fs-xs);color:var(--ink2);line-height:1.6">
             One batch per course is <strong>open</strong> at a time. New enrolments on that course join it automatically,
             and opening a batch pulls in every existing student on the course who has no batch yet.
         </div>
@@ -189,9 +189,9 @@ new class extends Component {
     @forelse ($byCourse as $code => $group)
         <div style="margin-bottom:24px">
             <div style="display:flex;align-items:baseline;gap:9px;margin-bottom:11px">
-                <span class="tnum" style="font-size:12px;font-weight:800;color:var(--iris);letter-spacing:.03em">{{ $code }}</span>
-                <span style="font-size:14px;font-weight:700;color:var(--ink)">{{ $group->first()->course?->title }}</span>
-                <span class="tnum" style="font-size:12px;color:var(--muted)">{{ $group->count() }} batch{{ $group->count() === 1 ? '' : 'es' }}</span>
+                <span class="tnum" style="font-size:var(--fs-xs);font-weight:800;color:var(--iris);letter-spacing:.03em">{{ $code }}</span>
+                <span style="font-size:var(--fs-base);font-weight:700;color:var(--ink)">{{ $group->first()->course?->title }}</span>
+                <span class="tnum" style="font-size:var(--fs-xs);color:var(--muted)">{{ $group->count() }} batch{{ $group->count() === 1 ? '' : 'es' }}</span>
             </div>
 
             <div class="grid-3">
@@ -200,8 +200,8 @@ new class extends Component {
                     <div class="card" style="padding:16px 18px;display:flex;flex-direction:column;gap:12px">
                         <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px">
                             <div style="min-width:0">
-                                <div style="font-size:15px;font-weight:700;color:var(--ink)">{{ $c->name }}</div>
-                                <div class="tnum" style="font-size:11.5px;color:var(--muted);margin-top:2px">
+                                <div style="font-size:var(--fs-md);font-weight:700;color:var(--ink)">{{ $c->name }}</div>
+                                <div class="tnum" style="font-size:var(--fs-2xs);color:var(--muted);margin-top:2px">
                                     @if ($c->starts_on)
                                         {{ Format::date($c->starts_on) }}{{ $c->ends_on ? ' → '.Format::date($c->ends_on) : '' }}
                                     @else
@@ -216,7 +216,7 @@ new class extends Component {
                             @endif
                         </div>
 
-                        <div style="display:flex;align-items:center;justify-content:space-between;font-size:12.5px">
+                        <div style="display:flex;align-items:center;justify-content:space-between;font-size:var(--fs-xs)">
                             <span class="tnum" style="color:var(--ink2);font-weight:600">
                                 {{ $used }} student{{ $used === 1 ? '' : 's' }}
                             </span>
@@ -264,7 +264,7 @@ new class extends Component {
 
                     <div class="drawer-body">
                         @if ($formError)
-                            <div style="padding:11px 14px;background:var(--over-bg);border:1px solid var(--over-br);border-radius:11px;font-size:12.5px;color:var(--over);font-weight:600;margin-bottom:16px">
+                            <div style="padding:11px 14px;background:var(--over-bg);border:1px solid var(--over-br);border-radius:11px;font-size:var(--fs-xs);color:var(--over);font-weight:600;margin-bottom:16px">
                                 {{ $formError }}
                             </div>
                         @endif
@@ -276,7 +276,7 @@ new class extends Component {
                             @endforeach
                         </select>
                         @if ($editingId)
-                            <div style="font-size:11.5px;color:var(--faint);margin:-10px 0 14px">
+                            <div style="font-size:var(--fs-2xs);color:var(--faint);margin:-10px 0 14px">
                                 A batch cannot change course: its students enrolled on this one.
                             </div>
                         @endif
@@ -298,11 +298,11 @@ new class extends Component {
                         <label class="label">Capacity</label>
                         <input type="number" min="1" wire:model="fCapacity" class="input tnum" placeholder="Leave blank for no cap" style="margin-bottom:14px">
 
-                        <label style="display:flex;align-items:center;gap:9px;font-size:13px;color:var(--ink2);cursor:pointer">
+                        <label style="display:flex;align-items:center;gap:9px;font-size:var(--fs-sm);color:var(--ink2);cursor:pointer">
                             <input type="checkbox" wire:model="fOpen" style="width:16px;height:16px;accent-color:var(--iris)">
                             Take new enrolments into this batch
                         </label>
-                        <div style="font-size:11.5px;color:var(--faint);margin-top:6px;line-height:1.55">
+                        <div style="font-size:var(--fs-2xs);color:var(--faint);margin-top:6px;line-height:1.55">
                             Opening this batch closes whichever one is currently open for the course, and adopts every
                             student on the course who has no batch yet.
                         </div>

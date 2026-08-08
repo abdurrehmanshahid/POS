@@ -102,13 +102,13 @@ new #[Layout('components.layouts.guest')] class extends Component {
         <div class="card" style="padding:30px 28px">
 
             @if ($this->enabled())
-                <h2 style="font-size:22px;font-weight:800;color:var(--ink);margin:0 0 6px;letter-spacing:-.01em">Reset your password</h2>
-                <p style="font-size:14px;color:var(--muted);margin:0 0 22px">We'll email you a secure link to choose a new password.</p>
+                <h2 style="font-size:var(--fs-xl);font-weight:800;color:var(--ink);margin:0 0 6px;letter-spacing:-.01em">Reset your password</h2>
+                <p style="font-size:var(--fs-base);color:var(--muted);margin:0 0 22px">We'll email you a secure link to choose a new password.</p>
 
                 @if ($sent)
                     <div style="display:flex;gap:9px;padding:12px 13px;background:var(--paid-bg);border:1px solid var(--paid-br);border-radius:11px;margin-bottom:18px">
                         <x-icon name="check" :size="16" style="color:var(--paid);flex:none;margin-top:1px" />
-                        <span style="font-size:12.5px;color:var(--paid);font-weight:600;line-height:1.55">{{ $sent }}</span>
+                        <span style="font-size:var(--fs-xs);color:var(--paid);font-weight:600;line-height:1.55">{{ $sent }}</span>
                     </div>
                 @else
                     <form wire:submit="submit">
@@ -116,12 +116,12 @@ new #[Layout('components.layouts.guest')] class extends Component {
                         <input wire:model="user" type="text" placeholder="you@bbt.edu.pk" class="input" style="margin-bottom:14px" autofocus>
 
                         @if ($error)
-                            <div style="display:flex;align-items:center;gap:7px;font-size:12px;color:var(--over);margin-bottom:14px">
+                            <div style="display:flex;align-items:center;gap:7px;font-size:var(--fs-xs);color:var(--over);margin-bottom:14px">
                                 <x-icon name="alert-circle" :size="14" /> {{ $error }}
                             </div>
                         @endif
 
-                        <button type="submit" class="btn btn-accent" style="width:100%;height:48px;font-size:15px">Send reset link</button>
+                        <button type="submit" class="btn btn-accent" style="width:100%;height:48px;font-size:var(--fs-md)">Send reset link</button>
                     </form>
                 @endif
             @else
@@ -129,19 +129,19 @@ new #[Layout('components.layouts.guest')] class extends Component {
                 <div style="display:flex;align-items:center;justify-content:center;width:44px;height:44px;border-radius:12px;background:var(--iris-bg);margin-bottom:16px">
                     <x-icon name="lock" :size="20" style="color:var(--iris)" />
                 </div>
-                <h2 style="font-size:22px;font-weight:800;color:var(--ink);margin:0 0 6px;letter-spacing:-.01em">Password help</h2>
-                <p style="font-size:14px;color:var(--muted);margin:0 0 20px;line-height:1.65">
+                <h2 style="font-size:var(--fs-xl);font-weight:800;color:var(--ink);margin:0 0 6px;letter-spacing:-.01em">Password help</h2>
+                <p style="font-size:var(--fs-base);color:var(--muted);margin:0 0 20px;line-height:1.65">
                     Staff passwords are reset by an administrator, never from this page. Ask your administrator to issue a temporary password, you'll be asked to choose a new one the moment you sign in.
                 </p>
                 <div style="padding:13px 15px;border:1px dashed var(--border2);border-radius:12px;background:var(--surface2);margin-bottom:18px">
-                    <div style="font-size:11.5px;font-weight:700;color:var(--faint);letter-spacing:.06em;text-transform:uppercase;margin-bottom:7px">Accounts office</div>
-                    <div class="tnum" style="font-size:13px;color:var(--ink2);line-height:1.7">
+                    <div style="font-size:var(--fs-2xs);font-weight:700;color:var(--faint);letter-spacing:.06em;text-transform:uppercase;margin-bottom:7px">Accounts office</div>
+                    <div class="tnum" style="font-size:var(--fs-sm);color:var(--ink2);line-height:1.7">
                         accounts@bbt.edu.pk<br>+92 42 000 0000
                     </div>
                 </div>
             @endif
 
-            <a href="{{ route('login') }}" wire:navigate style="display:flex;align-items:center;justify-content:center;gap:7px;font-size:13px;font-weight:600;margin-top:6px">
+            <a href="{{ route('login') }}" wire:navigate style="display:flex;align-items:center;justify-content:center;gap:7px;font-size:var(--fs-sm);font-weight:600;margin-top:6px">
                 <x-icon name="arrow-left" :size="14" /> Back to sign in
             </a>
         </div>

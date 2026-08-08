@@ -5,6 +5,7 @@ namespace Tests\Feature;
 use App\Models\Attendance;
 use App\Models\AuditLog;
 use App\Models\Course;
+use App\Models\Student;
 use App\Models\User;
 use App\Services\Attendances;
 use Database\Seeders\DatabaseSeeder;
@@ -259,6 +260,72 @@ class AttendanceTest extends TestCase
         foreach ($component->get('marks') as $status) {
             $this->assertSame('present', $status);
         }
+    }
+
+    /**
+     * One of the officer's own students on this roster, and one that is not.
+     *
+     * Both scope tests below turn on that pair existing, so it is asserted here
+     * once: if the seed data stops putting a second officer's student on
+     * AI-201, these tests silently stop proving anything, and a named failure
+     * beats a vacuous pass.
+     *
+     * @return array{0: Student, 1: Student} outsider, own
+     */
+    private function outsiderAndOwnOn(Course $course, User $officer): array
+    {
+        $visible = Student::visibleTo($officer)->pluck('id');
+        $roster = app(Attendances::class)->roster($course);
+
+        $outsider = $roster->first(fn ($s) => ! $visible->contains($s->id));
+        $own = $roster->first(fn ($s) => $visible->contains($s->id));
+
+        $this->assertNotNull($outsider, "No student outside the officer's scope on {$course->code}.");
+        $this->assertNotNull($own, "None of the officer's own students on {$course->code}.");
+        $this->assertNotNull($outsider->guardian_name, 'The outsider needs a guardian to prove a redaction.');
+
+        return [$outsider, $own];
+    }
+
+    /**
+     * The register lists the whole class on purpose — it is the one deliberately
+     * unscoped list in the app, because a register showing a third of the class
+     * is not a register. Pinned so it is not "fixed" into scoping later.
+     */
+    public function test_the_register_lists_students_the_officer_cannot_otherwise_see(): void
+    {
+        [$outsider] = $this->outsiderAndOwnOn($course = $this->course(), $officer = $this->officer());
+
+        Livewire::actingAs($officer)
+            ->test('pages.attendance')
+            ->set('courseId', $course->id)
+            ->assertSee($outsider->name);
+    }
+
+    /** ...but the guardian's name is not the officer's to read. */
+    public function test_the_register_hides_the_guardian_of_a_student_outside_the_officers_scope(): void
+    {
+        [$outsider, $own] = $this->outsiderAndOwnOn($course = $this->course(), $officer = $this->officer());
+
+        Livewire::actingAs($officer)
+            ->test('pages.attendance')
+            ->set('courseId', $course->id)
+            ->assertDontSee($outsider->guardian_name)
+            // The officer's own keep theirs: two students called Muhammad Ali on
+            // one register are told apart by the guardian line.
+            ->assertSee($own->guardian_name);
+    }
+
+    public function test_an_admin_sees_every_guardian_on_the_register(): void
+    {
+        [$outsider] = $this->outsiderAndOwnOn($course = $this->course(), $this->officer());
+
+        // scope.all means the student redacted for the officer is not redacted
+        // here. Asserted against that same student so the two tests meet.
+        Livewire::actingAs($this->admin())
+            ->test('pages.attendance')
+            ->set('courseId', $course->id)
+            ->assertSee($outsider->guardian_name);
     }
 
     public function test_a_user_without_the_permission_cannot_reach_the_screen(): void

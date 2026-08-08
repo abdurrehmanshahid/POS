@@ -94,13 +94,13 @@ new #[Layout('components.layouts.super')] class extends Component {
                 <x-icon name="database" :size="22" style="color:var(--iris)" />
             </div>
             <div style="flex:1;min-width:220px">
-                <h3 style="font-size:16px;font-weight:800;color:var(--ink);margin:0 0 5px;letter-spacing:-.01em">Full database backup</h3>
-                <p style="font-size:13px;color:var(--ink2);margin:0 0 6px;line-height:1.6">
+                <h3 style="font-size:var(--fs-md);font-weight:800;color:var(--ink);margin:0 0 5px;letter-spacing:-.01em">Full database backup</h3>
+                <p style="font-size:var(--fs-sm);color:var(--ink2);margin:0 0 6px;line-height:1.6">
                     A complete <strong>.sql</strong> file containing every table's structure and rows.
                     Generated in PHP and streamed, no shell access or <span class="tnum">mysqldump</span> binary required, which is
                     what makes it work on shared hosting.
                 </p>
-                <p class="tnum" style="font-size:12px;color:var(--muted);margin:0">
+                <p class="tnum" style="font-size:var(--fs-xs);color:var(--muted);margin:0">
                     {{ count($summary) }} tables · {{ number_format($totalRows) }} rows · {{ $driver }} · {{ $database }}
                 </p>
             </div>
@@ -113,7 +113,7 @@ new #[Layout('components.layouts.super')] class extends Component {
     {{-- Restore instructions ------------------------------------------------ --}}
     <div style="display:flex;gap:11px;padding:15px 18px;background:var(--info-bg);border:1px solid var(--border);border-radius:13px;margin-bottom:22px">
         <x-icon name="alert-circle" :size="17" style="color:var(--info);flex:none;margin-top:2px" />
-        <div style="font-size:12.5px;color:var(--ink2);line-height:1.65">
+        <div style="font-size:var(--fs-xs);color:var(--ink2);line-height:1.65">
             <strong style="color:var(--ink)">To restore:</strong> open <strong>phpMyAdmin</strong> in cPanel, select this database,
             go to <strong>Import</strong>, choose the .sql file and press Go. The file drops and recreates each table, so importing
             it replaces current data entirely, take a fresh backup first if the live data still matters.
@@ -143,7 +143,7 @@ new #[Layout('components.layouts.super')] class extends Component {
                                         <x-icon name="download" :size="14" /> CSV
                                     </button>
                                 @else
-                                    <span style="font-size:12.5px;color:var(--faint)">empty</span>
+                                    <span style="font-size:var(--fs-xs);color:var(--faint)">empty</span>
                                 @endif
                             </td>
                         </tr>

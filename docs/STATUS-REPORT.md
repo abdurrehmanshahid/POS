@@ -6,6 +6,13 @@
 **Companion:** [PROJECT-TRACKER.md](PROJECT-TRACKER.md) for the trackable map and
 the per-bug register
 
+> **Superseded in part — see [§9, the 2026-08-08 round](#9-update-2026-08-08),
+> at the end of this document.** Sections 1 to 8 are left as written, because
+> the reasoning behind each fix is still the record of why the code looks the
+> way it does. Three claims below have since changed: GAP-03 is no longer purely
+> a product question, the suite is 183 tests rather than 158, and the servers in
+> §8 are long stopped.
+
 ---
 
 ## 1. Summary
@@ -311,7 +318,7 @@ Everything below was run after the changes.
 | Browser, duplicate enrolment | cards read "Already enrolled", selection refused |
 | Browser, attendance | marks save, reload, and correct on re-save |
 
-One test was **changed rather than kept**, and it is worth explaining. 
+One test was **changed rather than kept**, and it is worth explaining.
 `ReportsTest::test_collections_are_dated_by_payment_not_by_issue` set up its
 scenario by writing `status = 'paid'` and `paid_at` directly onto a challan with
 `forceFill()`, with no payment row behind it. Under a payments-derived ledger that
@@ -371,3 +378,109 @@ Left running for your QA:
 The fastest way to see the main fix: open any unpaid challan, record a part
 payment, then compare the Dashboard total against the Reports page. Before today
 those two numbers disagreed.
+
+---
+
+## 9. Update: 2026-08-08
+
+**Branch:** `feat/registration-ux-and-fluid-type` · **Audited from:** `ba24f42`
+**Suite:** 183 passed, 552 assertions, 0 failed · `pint` clean · `npm run build`
+clean
+
+A full pass over frontend, backend and database. **9 defects found, all 9 fixed.
+1 feature gap found. 7 tests added.** Four came from driving the app in a
+browser and five from the review pass; **none was caught by the suite**, which
+was green at 180 before the round and is green at 186 after it.
+
+### 9.1 The database is healthy, and nearly empty
+
+Every integrity check passed: no orphans across five join paths, no overpaid
+challan, every challan's status agreeing with its payments ledger, and the demo
+figures still reconciling at 214,000 = 119,000 + 95,000.
+
+But the honest headline is that **the system holds 12 demo students and the
+institute has 478**. Two exported spreadsheets sit at the repository root and
+nothing can read them, because no importer exists. This is now GAP-04.
+
+What makes it worth flagging rather than filing: two pieces of the codebase were
+built *for* that import and are waiting on it. Migration
+`2026_08_08_000001_allow_imported_students_without_cnic` exists so an imported
+row can arrive without a CNIC, and `App\Services\Installments` was written
+against the spreadsheet's own *Advance Payment / Second Installment / Pending
+Payment Due Date* columns. The schema anticipated the roll; the loader was never
+written.
+
+### 9.2 The suite cannot see the client side, and that is where the bug was
+
+The worst defect this round (BUG-18) was a `wire:click.stop` written with no
+expression. Livewire compiles that into an empty `$wire.` call, so every click on
+a challan's PDF icon threw a syntax error into the console — and because the
+handler died before the modifier applied, the click also fell through to the row
+and opened the drawer.
+
+183 tests had nothing to say about it. `Livewire::test()` renders markup and
+never executes it, so a broken Alpine directive is invisible to the entire suite
+by construction. This is the same lesson as the `<template x-if>` race recorded
+in the build notes: **the client-side layer has to be opened in a browser, and
+a green suite is not evidence about it.**
+
+### 9.3 A screen built after a fix repeated the bug the fix was for
+
+BUG-10 scoped the wizard's student search because an officer could reach
+students who were not theirs. The attendance register, built afterwards, listed
+the full class with each student's guardian name — including students the same
+officer could not open on the Students screen.
+
+The fix is not the obvious one. Scoping the roster would have been consistent
+and wrong: a course taught by three officers has one register, and a register
+showing a third of the class is useless. So **the roster stays whole and the
+contact line is scoped**. Marking somebody present needs their name, not their
+next of kin. A test now pins the unscoped roster as deliberate so it is not
+"fixed" later by someone applying the rule mechanically.
+
+### 9.4 Relaxing a rule in one place left the other place enforcing it
+
+`ba24f42` made the guardian and the CNIC optional in the registration wizard,
+which was right — the schema had already stopped requiring them so an imported
+roll could arrive with "name, course, batch, phone and money, nothing else".
+
+The Students screen was not brought along, and it broke in two layers at once.
+Its form properties are typed `string`, so opening a guardianless student for
+editing threw a TypeError **before the form rendered**: a 500 on the one screen
+whose purpose is fixing a record, for exactly the records most likely to need
+fixing. Behind that, `StudentService::validate()` still demanded both fields, so
+even with the crash fixed the record could be opened and never saved.
+
+This is the same shape as the part-payments drift in §2.1: a concept changed
+meaning and not every caller was told. The fix that matters most is not either
+patch but that both writers now go through one `Contact::optional()`, so "blank
+means NULL, never `''`" has a single implementation rather than a closure in one
+service and nothing in the other.
+
+### 9.5 The fluid type scale was accused and acquitted
+
+The sign-in screen is unusable on a 390px phone: the pitch panel computes to an
+8px column, the headline breaks to a letter or two per line, and the form is
+squeezed off the edge. The obvious suspect was the type scale from `ba24f42`.
+
+It was not that. The h1 computes to 38px at 390px, byte-identical to the
+hardcoded 38px it replaced — the commit's claim that every floor is the smallest
+value it replaced holds. The real cause is a two-column grid written **inline**,
+where no media query can reach it, and it is as old as the screen. Worth
+recording because the plausible explanation and the true one pointed at
+different commits.
+
+### 9.6 Still open
+
+- **GAP-03** is half closed. The installment *service* exists and is tested; the
+  UI that would create a schedule does not, so `installments` has 0 rows. The
+  product question the previous report asked is now answered — the schedule is
+  not redundant, the exported roll proves it — and only the creation path is
+  left.
+- **GAP-04**, the import, is untouched by choice.
+- **The superadmin console carries no visual pass this round.** The staff side
+  is covered: Dashboard, Registrations, Fee Challans, Attendance, Students,
+  Courses, Batches, Staff & Roles, Reports, Data Model and Settings were all
+  driven in a browser as both the officer and the Administrator, at 1440px and
+  390px, with zero console errors and the ledger banner reconciling on screen
+  (Rs 214,000 = Rs 119,000 + Rs 95,000). `/superadmin` was not opened.

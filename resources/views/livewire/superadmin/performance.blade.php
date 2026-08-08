@@ -42,7 +42,7 @@ new #[Layout('components.layouts.super')] class extends Component {
 
     {{-- Period --}}
     <div style="display:flex;align-items:center;gap:10px;margin-bottom:18px;flex-wrap:wrap">
-        <span style="font-size:12.5px;color:var(--muted);font-weight:600">Period</span>
+        <span style="font-size:var(--fs-xs);color:var(--muted);font-weight:600">Period</span>
         <div style="display:inline-flex;background:var(--surface3);border-radius:11px;padding:4px;gap:2px">
             @foreach (['all' => 'All time', 'year' => 'This year', 'quarter' => 'This quarter', 'month' => 'This month'] as $key => $label)
                 <button wire:click="$set('period','{{ $key }}')"
@@ -80,7 +80,7 @@ new #[Layout('components.layouts.super')] class extends Component {
                                     <x-ui.avatar :name="$s->name" :variant="$s->role_id === 'admin' ? 'navy' : 'orange'" :size="32" />
                                     <div style="min-width:0">
                                         <div style="font-weight:600;color:var(--ink)">{{ $s->name }}</div>
-                                        <div class="tnum" style="font-size:12px;color:var(--muted)">
+                                        <div class="tnum" style="font-size:var(--fs-xs);color:var(--muted)">
                                             {{ $s->username }}{{ $s->is_removed ? ' · removed' : '' }}
                                         </div>
                                     </div>
@@ -92,13 +92,13 @@ new #[Layout('components.layouts.super')] class extends Component {
                             <td class="tnum" style="font-weight:700;color:var(--paid)">{{ Format::money($s->received) }}</td>
                             <td>
                                 @if ($rate === null)
-                                    <span style="font-size:12.5px;color:var(--faint)">-</span>
+                                    <span style="font-size:var(--fs-xs);color:var(--faint)">-</span>
                                 @else
                                     <div style="display:flex;align-items:center;gap:9px;min-width:120px">
                                         <div style="flex:1;height:6px;border-radius:3px;background:var(--surface3);overflow:hidden">
                                             <div style="height:100%;border-radius:3px;width:{{ $rate }}%;background:{{ $rateColour }}"></div>
                                         </div>
-                                        <span class="tnum" style="font-size:12.5px;font-weight:800;color:{{ $rateColour }}">{{ $rate }}%</span>
+                                        <span class="tnum" style="font-size:var(--fs-xs);font-weight:800;color:{{ $rateColour }}">{{ $rate }}%</span>
                                     </div>
                                 @endif
                             </td>
@@ -126,11 +126,11 @@ new #[Layout('components.layouts.super')] class extends Component {
             @forelse ($courses as $c)
                 <div style="margin-bottom:15px">
                     <div style="display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin-bottom:6px">
-                        <span style="font-size:13px;font-weight:600;color:var(--ink);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
+                        <span style="font-size:var(--fs-sm);font-weight:600;color:var(--ink);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
                             {{ $c->title }}
                             <span class="tnum" style="color:var(--muted);font-weight:500">· {{ $c->code }} · {{ $c->enrolments }} enrolled</span>
                         </span>
-                        <span class="tnum" style="font-size:13px;font-weight:800;color:var(--ink);flex:none">{{ Format::money($c->received) }}</span>
+                        <span class="tnum" style="font-size:var(--fs-sm);font-weight:800;color:var(--ink);flex:none">{{ Format::money($c->received) }}</span>
                     </div>
                     <div style="height:9px;border-radius:5px;background:var(--surface3);overflow:hidden">
                         <div style="height:100%;border-radius:5px;background:var(--navy2);width:{{ max(1, round($c->received / $peak * 100)) }}%"></div>

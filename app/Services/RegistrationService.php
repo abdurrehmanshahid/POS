@@ -9,6 +9,7 @@ use App\Models\Course;
 use App\Models\Student;
 use App\Models\User;
 use App\Support\Clock;
+use App\Support\Contact;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use InvalidArgumentException;
@@ -256,12 +257,16 @@ class RegistrationService
 
         $type = $new['type'] === 'T' ? 'T' : 'R';
 
+        // Blank means "not known", which is NULL, not '' — see Contact::optional
+        // for why the CNIC column makes that distinction load-bearing. Shared
+        // with StudentService so the two doors that create a student cannot
+        // disagree about it, which they already have once.
         return Student::create([
             'student_code' => $this->sequences->nextStudentCode($type),
             'type' => $type,
             'name' => $new['name'],
-            'guardian_name' => $new['guardian_name'],
-            'cnic' => $new['cnic'],
+            'guardian_name' => Contact::optional($new['guardian_name'] ?? null),
+            'cnic' => Contact::optional($new['cnic'] ?? null),
             'phone' => $new['phone'],
             'created_by' => $actor->id,
         ]);

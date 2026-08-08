@@ -240,8 +240,8 @@ new class extends Component {
     {{-- Header --}}
     <div style="display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:22px">
         <div>
-            <h1 style="font-size:22px;font-weight:800;letter-spacing:-.02em;color:var(--ink);margin:0">Staff &amp; roles</h1>
-            <p style="font-size:13px;color:var(--muted);margin:4px 0 0">Accounts, roles and the permissions each one grants.</p>
+            <h1 style="font-size:var(--fs-xl);font-weight:800;letter-spacing:-.02em;color:var(--ink);margin:0">Staff &amp; roles</h1>
+            <p style="font-size:var(--fs-sm);color:var(--muted);margin:4px 0 0">Accounts, roles and the permissions each one grants.</p>
         </div>
         @if ($canManage)
             <div style="display:flex;gap:10px;flex:0 0 auto">
@@ -272,7 +272,7 @@ new class extends Component {
                                     <x-ui.avatar :name="$u->name" :variant="$u->role && $u->role->tone === 'orange' ? 'orange' : 'navy'" :size="34" />
                                     <div>
                                         <div style="font-weight:600;color:var(--ink)">{{ $u->name }}</div>
-                                        <div style="font-size:12px;color:var(--muted)">{{ $u->email }}</div>
+                                        <div style="font-size:var(--fs-xs);color:var(--muted)">{{ $u->email }}</div>
                                     </div>
                                 </div>
                             </td>
@@ -300,7 +300,7 @@ new class extends Component {
         @foreach ($roles as $role)
             <div style="display:flex;align-items:center;gap:14px;padding:14px 22px;{{ $loop->first ? '' : 'border-top:1px solid var(--surface3)' }}">
                 <x-ui.pill :tone="$role->tone">{{ $role->name }}</x-ui.pill>
-                <div style="flex:1;font-size:12.5px;color:var(--muted)">
+                <div style="flex:1;font-size:var(--fs-xs);color:var(--muted)">
                     <span class="tnum">{{ $role->permissions->count() }}</span> of <span class="tnum">{{ $totalPerms }}</span> permissions ·
                     <span class="tnum">{{ $role->users->count() }}</span> user(s)
                     @if ($role->is_system)<span style="color:var(--faint)"> · system</span>@endif
@@ -326,7 +326,7 @@ new class extends Component {
                 <tbody>
                     @foreach ($grouped as $group => $items)
                         <tr>
-                            <td colspan="{{ count($roles) + 1 }}" style="background:var(--surface2);font-size:11px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:var(--faint)">{{ $group }}</td>
+                            <td colspan="{{ count($roles) + 1 }}" style="background:var(--surface2);font-size:var(--fs-2xs);font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:var(--faint)">{{ $group }}</td>
                         </tr>
                         @foreach ($items as $perm)
                             <tr>
@@ -346,7 +346,7 @@ new class extends Component {
                 </tbody>
             </table>
         </div>
-        <div style="display:flex;align-items:center;gap:6px;padding:12px 22px;border-top:1px solid var(--border);font-size:12px;color:var(--muted)">
+        <div style="display:flex;align-items:center;gap:6px;padding:12px 22px;border-top:1px solid var(--border);font-size:var(--fs-xs);color:var(--muted)">
             <x-icon name="check" :size="13" style="color:var(--paid)" /> granted
             <span style="color:var(--border2)">|</span>
             <x-icon name="minus-circle" :size="13" style="color:var(--faint)" /> hidden
@@ -379,7 +379,7 @@ new class extends Component {
 
                             <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
                                 <span class="label" style="margin:0">Permissions</span>
-                                <span class="tnum" style="font-size:12px;font-weight:700;color:var(--muted)">{{ count($perms) }} of {{ $totalPerms }} selected</span>
+                                <span class="tnum" style="font-size:var(--fs-xs);font-weight:700;color:var(--muted)">{{ count($perms) }} of {{ $totalPerms }} selected</span>
                             </div>
                             @error('perms')<span class="field-error" style="margin-bottom:8px">{{ $message }}</span>@enderror
 
@@ -387,12 +387,12 @@ new class extends Component {
                                 @php $gcount = count(array_intersect(array_column($items, 'key'), $perms)); @endphp
                                 <div style="border:1px solid var(--border);border-radius:12px;margin-bottom:12px;overflow:hidden">
                                     <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 14px;background:var(--surface2)">
-                                        <span style="font-size:11.5px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--ink2)">{{ $group }}</span>
-                                        <span class="tnum" style="font-size:11.5px;font-weight:700;color:var(--muted)">{{ $gcount }}/{{ count($items) }}</span>
+                                        <span style="font-size:var(--fs-2xs);font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--ink2)">{{ $group }}</span>
+                                        <span class="tnum" style="font-size:var(--fs-2xs);font-weight:700;color:var(--muted)">{{ $gcount }}/{{ count($items) }}</span>
                                     </div>
                                     <div style="padding:4px 14px">
                                         @foreach ($items as $perm)
-                                            <label style="display:flex;align-items:center;gap:10px;padding:9px 0;cursor:pointer;font-size:13.5px;color:var(--ink)">
+                                            <label style="display:flex;align-items:center;gap:10px;padding:9px 0;cursor:pointer;font-size:var(--fs-sm);color:var(--ink)">
                                                 <input type="checkbox" wire:model.live="perms" value="{{ $perm['key'] }}">
                                                 <span>{{ $perm['label'] }}</span>
                                             </label>
@@ -451,7 +451,7 @@ new class extends Component {
                                 <input type="password" class="input @error('tempPassword') is-error @enderror" wire:model="tempPassword" autocomplete="new-password"
                                        placeholder="{{ $userId ? 'Leave blank to keep current' : 'Min 6 characters' }}">
                                 @error('tempPassword')<span class="field-error">{{ $message }}</span>@enderror
-                                <p style="font-size:11.5px;color:var(--muted);margin:5px 0 0">
+                                <p style="font-size:var(--fs-2xs);color:var(--muted);margin:5px 0 0">
                                     {{ $userId ? 'Leave blank to keep the existing password.' : 'The user must reset this on first login.' }}
                                 </p>
                             </div>
@@ -463,7 +463,7 @@ new class extends Component {
                                         <input type="radio" wire:model="roleChoice" value="{{ $role->id }}">
                                         <x-ui.pill :tone="$role->tone">{{ $role->name }}</x-ui.pill>
                                         <span style="flex:1"></span>
-                                        <span class="tnum" style="font-size:12px;font-weight:700;color:var(--muted)">{{ $role->permissions->count() }} permissions</span>
+                                        <span class="tnum" style="font-size:var(--fs-xs);font-weight:700;color:var(--muted)">{{ $role->permissions->count() }} permissions</span>
                                     </label>
                                 @endforeach
                             </div>

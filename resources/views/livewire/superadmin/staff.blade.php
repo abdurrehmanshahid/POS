@@ -289,11 +289,11 @@ new #[Layout('components.layouts.super')] class extends Component {
             <div style="display:flex;align-items:flex-start;gap:13px">
                 <x-icon name="key" :size="20" style="color:var(--due);flex:none;margin-top:2px" />
                 <div style="flex:1;min-width:0">
-                    <div style="font-size:14.5px;font-weight:800;color:var(--ink)">Temporary password for {{ $issuedFor }}</div>
-                    <div style="font-size:12.5px;color:var(--ink2);margin:4px 0 12px;line-height:1.55">
+                    <div style="font-size:var(--fs-base);font-weight:800;color:var(--ink)">Temporary password for {{ $issuedFor }}</div>
+                    <div style="font-size:var(--fs-xs);color:var(--ink2);margin:4px 0 12px;line-height:1.55">
                         Shown once and never stored in readable form. Give it to them directly, they must change it at next sign-in.
                     </div>
-                    <div class="tnum" style="display:inline-block;padding:11px 16px;background:var(--surface);border:1px solid var(--border2);border-radius:10px;font-size:17px;font-weight:800;letter-spacing:.08em;color:var(--ink);user-select:all">{{ $issuedPassword }}</div>
+                    <div class="tnum" style="display:inline-block;padding:11px 16px;background:var(--surface);border:1px solid var(--border2);border-radius:10px;font-size:var(--fs-lg);font-weight:800;letter-spacing:.08em;color:var(--ink);user-select:all">{{ $issuedPassword }}</div>
                 </div>
                 <button class="btn-icon" wire:click="dismissIssued" title="Dismiss"><x-icon name="x" :size="17" /></button>
             </div>
@@ -306,7 +306,7 @@ new #[Layout('components.layouts.super')] class extends Component {
             <x-icon name="search" :size="15" />
             <input wire:model.live.debounce.200ms="q" placeholder="Search name, username or email…" class="input">
         </div>
-        <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--ink2);cursor:pointer">
+        <label style="display:flex;align-items:center;gap:8px;font-size:var(--fs-sm);color:var(--ink2);cursor:pointer">
             <input type="checkbox" wire:model.live="showRemoved" style="width:16px;height:16px;accent-color:var(--iris)">
             Show removed accounts
         </label>
@@ -330,7 +330,7 @@ new #[Layout('components.layouts.super')] class extends Component {
                                     <x-ui.avatar :name="$u->name" :variant="$u->role?->tone === 'orange' ? 'orange' : 'navy'" :size="34" />
                                     <div style="min-width:0">
                                         <div style="font-weight:600;color:var(--ink)">{{ $u->name }}</div>
-                                        <div class="tnum" style="font-size:12px;color:var(--muted)">{{ $u->username }} · {{ $u->email }}</div>
+                                        <div class="tnum" style="font-size:var(--fs-xs);color:var(--muted)">{{ $u->username }} · {{ $u->email }}</div>
                                     </div>
                                 </div>
                             </td>
@@ -341,7 +341,7 @@ new #[Layout('components.layouts.super')] class extends Component {
                                 @elseif ($u->requiresTwoFactor())
                                     <x-ui.pill tone="unpaid" :dot="true">Required</x-ui.pill>
                                 @else
-                                    <span style="font-size:12.5px;color:var(--faint)">Not required</span>
+                                    <span style="font-size:var(--fs-xs);color:var(--faint)">Not required</span>
                                 @endif
                             </td>
                             <td class="tnum" style="color:var(--muted);white-space:nowrap">

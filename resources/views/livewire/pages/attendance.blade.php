@@ -2,8 +2,10 @@
 
 use App\Models\Cohort;
 use App\Models\Course;
+use App\Models\Student;
 use App\Services\Attendances;
 use App\Support\Clock;
+use Illuminate\Support\Collection;
 use Livewire\Volt\Component;
 
 /**
@@ -149,16 +151,50 @@ new class extends Component {
         return $cohort && $cohort->course_id === $this->courseId ? $cohort : null;
     }
 
+    /**
+     * Whose guardian name this viewer is allowed to read, as an id => true set.
+     *
+     * The roster itself is deliberately NOT scoped, and that is the one place
+     * in the app where an unscoped list is right: a course taught to students
+     * enrolled by three officers has one register, and a register showing a
+     * third of the class is not a register. Every other list stays scoped.
+     *
+     * But marking somebody present needs their name, not their guardian's, and
+     * an officer who cannot open a student's record on the Students screen has
+     * no business reading that student's contact details from the register
+     * instead. So the roster stays whole and the contact line is scoped, which
+     * closes the leak without breaking the screen's reason to exist.
+     *
+     * @param  Collection<int, Student>  $roster
+     * @return Collection<int, int>
+     */
+    private function contactVisible(Collection $roster): Collection
+    {
+        $viewer = auth()->user();
+
+        // scope.all can see everybody, so the query would hand back exactly the
+        // ids it was given. Worth skipping rather than tidy-looking: this runs
+        // on every render, and marking a class of thirty is thirty renders.
+        if ($viewer->hasPermission('scope.all')) {
+            return $roster->pluck('id');
+        }
+
+        return Student::visibleTo($viewer)->whereIn('id', $roster->pluck('id'))->pluck('id');
+    }
+
     public function with(): array
     {
         $course = $this->course();
 
         $counts = array_count_values($this->marks);
 
+        $roster = $course ? $this->service()->roster($course, $this->cohort()) : collect();
+
         return [
             'courses' => Course::where('is_active', true)->orderBy('code')->get(),
             'batches' => $course ? Cohort::where('course_id', $course->id)->orderByDesc('is_open')->orderBy('name')->get() : collect(),
-            'roster' => $course ? $this->service()->roster($course, $this->cohort()) : collect(),
+            'roster' => $roster,
+            'contactVisible' => $this->contactVisible($roster),
             'selectedCourse' => $course,
             'present' => $counts['present'] ?? 0,
             'absent' => $counts['absent'] ?? 0,
@@ -177,7 +213,12 @@ new class extends Component {
         <div class="grid-3" style="gap:14px">
             <div>
                 <label class="label">Course</label>
-                <select class="input" wire:model.live="courseId">
+                {{-- Code first and title second, so the part that identifies the
+                     course survives when the control is too narrow for both.
+                     "AI-201 · Artificial Intelligence (Level-1 Pa…" told you
+                     which course; the reverse order would not have. --}}
+                <select class="input" wire:model.live="courseId"
+                        title="{{ $selectedCourse?->code }} · {{ $selectedCourse?->title }}">
                     @foreach ($courses as $c)
                         <option value="{{ $c->id }}">{{ $c->code }} · {{ $c->title }}</option>
                     @endforeach
@@ -200,11 +241,11 @@ new class extends Component {
         </div>
 
         @if ($isFuture)
-            <div style="margin-top:12px;padding:10px 14px;background:var(--due-bg);border-radius:10px;font-size:12.5px;color:var(--due);font-weight:600">
+            <div style="margin-top:12px;padding:10px 14px;background:var(--due-bg);border-radius:10px;font-size:var(--fs-xs);color:var(--due);font-weight:600">
                 That date has not happened yet. A register can only record a class that has already run.
             </div>
         @elseif ($alreadyTaken)
-            <div style="margin-top:12px;padding:10px 14px;background:var(--info-bg);border-radius:10px;font-size:12.5px;color:var(--info);font-weight:600">
+            <div style="margin-top:12px;padding:10px 14px;background:var(--info-bg);border-radius:10px;font-size:var(--fs-xs);color:var(--info);font-weight:600">
                 This register was already taken. Saving again corrects it and records the change in the activity log.
             </div>
         @endif
@@ -215,8 +256,8 @@ new class extends Component {
         <div class="grid-3" style="gap:14px;margin-bottom:18px">
             @foreach ([['Present', $present, 'var(--paid)'], ['Absent', $absent, 'var(--over)'], ['On leave', $onLeave, 'var(--due)']] as [$label, $n, $tone])
                 <div class="card" style="padding:14px 16px">
-                    <div style="font-size:11px;color:var(--faint);text-transform:uppercase;letter-spacing:.04em">{{ $label }}</div>
-                    <div class="tnum" style="font-size:22px;font-weight:800;color:{{ $tone }};margin-top:2px">{{ $n }}</div>
+                    <div style="font-size:var(--fs-2xs);color:var(--faint);text-transform:uppercase;letter-spacing:.04em">{{ $label }}</div>
+                    <div class="tnum" style="font-size:var(--fs-xl);font-weight:800;color:{{ $tone }};margin-top:2px">{{ $n }}</div>
                 </div>
             @endforeach
         </div>
@@ -265,7 +306,9 @@ new class extends Component {
                                         <x-ui.avatar :name="$s->name" variant="orange" :size="30" />
                                         <div style="min-width:0">
                                             <div style="font-weight:600;color:var(--ink)">{{ $s->name }}</div>
-                                            <div style="font-size:12px;color:var(--muted)">{{ $s->guardian_name }}</div>
+                                            @if ($contactVisible->contains($s->id))
+                                                <div style="font-size:var(--fs-xs);color:var(--muted)">{{ $s->guardian_name }}</div>
+                                            @endif
                                         </div>
                                     </div>
                                 </td>
@@ -274,7 +317,7 @@ new class extends Component {
                                         @foreach ([['present', 'Present', 'var(--paid)'], ['absent', 'Absent', 'var(--over)'], ['leave', 'Leave', 'var(--due)']] as [$key, $label, $tone])
                                             <button wire:click="mark({{ $s->id }}, '{{ $key }}')"
                                                     @disabled($isFuture)
-                                                    style="padding:5px 12px;border:0;border-radius:8px;font-size:12px;font-weight:700;cursor:{{ $isFuture ? 'not-allowed' : 'pointer' }};
+                                                    style="padding:5px 12px;border:0;border-radius:8px;font-size:var(--fs-xs);font-weight:700;cursor:{{ $isFuture ? 'not-allowed' : 'pointer' }};
                                                            background:{{ $current === $key ? $tone : 'transparent' }};
                                                            color:{{ $current === $key ? '#fff' : 'var(--ink2)' }}">{{ $label }}</button>
                                         @endforeach
@@ -290,7 +333,7 @@ new class extends Component {
                 @if ($error)
                     <span class="field-error" style="flex:1">{{ $error }}</span>
                 @else
-                    <span style="flex:1;font-size:12.5px;color:var(--muted)">
+                    <span style="flex:1;font-size:var(--fs-xs);color:var(--muted)">
                         {{ $roster->count() }} student{{ $roster->count() === 1 ? '' : 's' }} on this register.
                     </span>
                 @endif

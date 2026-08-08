@@ -156,7 +156,7 @@ new #[Layout('components.layouts.super')] class extends Component {
             <x-icon name="search" :size="15" />
             <input wire:model.live.debounce.200ms="q" placeholder="Search ID, name, CNIC or phone…" class="input">
         </div>
-        <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--ink2);cursor:pointer">
+        <label style="display:flex;align-items:center;gap:8px;font-size:var(--fs-sm);color:var(--ink2);cursor:pointer">
             <input type="checkbox" wire:model.live="showRemoved" style="width:16px;height:16px;accent-color:var(--iris)">
             Show removed students
         </label>
@@ -181,7 +181,7 @@ new #[Layout('components.layouts.super')] class extends Component {
                                     <x-ui.avatar :name="$s->name" variant="orange" :size="30" />
                                     <div style="min-width:0">
                                         <div style="font-weight:600;color:var(--ink)">{{ $s->name }}</div>
-                                        <div style="font-size:12px;color:var(--muted)">{{ $s->guardian_name }} · {{ $s->typeLabel() }}</div>
+                                        <div style="font-size:var(--fs-xs);color:var(--muted)">{{ $s->guardian_name }} · {{ $s->typeLabel() }}</div>
                                     </div>
                                 </div>
                             </td>

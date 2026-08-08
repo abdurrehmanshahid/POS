@@ -216,7 +216,7 @@ new class extends Component {
 <div class="container-app anim-fade">
     {{-- Header row --}}
     <div style="display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:18px">
-        <div style="font-size:14px;color:var(--muted);font-weight:500">
+        <div style="font-size:var(--fs-base);color:var(--muted);font-weight:500">
             <span class="tnum" style="color:var(--ink);font-weight:700">{{ $courses->count() }}</span>
             courses · click a card to view roster
         </div>
@@ -245,8 +245,8 @@ new class extends Component {
                      wire:click="viewCourse({{ $c->id }})">
                     <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px">
                         <div style="min-width:0">
-                            <div class="tnum" style="font-size:12px;font-weight:800;letter-spacing:.03em;color:var(--iris)">{{ $c->code }}</div>
-                            <div style="font-size:15px;font-weight:700;color:var(--ink);margin-top:3px;line-height:1.3">{{ $c->title }}</div>
+                            <div class="tnum" style="font-size:var(--fs-xs);font-weight:800;letter-spacing:.03em;color:var(--iris)">{{ $c->code }}</div>
+                            <div style="font-size:var(--fs-md);font-weight:700;color:var(--ink);margin-top:3px;line-height:1.3">{{ $c->title }}</div>
                         </div>
                         @if ($c->is_active)
                             <x-ui.pill tone="validated">Active</x-ui.pill>
@@ -255,20 +255,20 @@ new class extends Component {
                         @endif
                     </div>
 
-                    <div style="display:flex;align-items:center;gap:7px;font-size:12.5px;color:var(--muted)">
+                    <div style="display:flex;align-items:center;gap:7px;font-size:var(--fs-xs);color:var(--muted)">
                         <x-icon name="users" :size="15" style="color:var(--faint)" />
                         {{ $c->trainer?->name ?? 'No trainer assigned' }}
                     </div>
 
                     {{-- Capacity --}}
                     @if ($cap === null)
-                        <div style="display:flex;align-items:center;justify-content:space-between;font-size:12px;font-weight:600">
+                        <div style="display:flex;align-items:center;justify-content:space-between;font-size:var(--fs-xs);font-weight:600">
                             <span style="color:var(--muted)">No cap</span>
                             <span style="color:var(--paid)">Open</span>
                         </div>
                     @else
                         <div>
-                            <div style="display:flex;align-items:center;justify-content:space-between;font-size:12px;font-weight:600;margin-bottom:6px">
+                            <div style="display:flex;align-items:center;justify-content:space-between;font-size:var(--fs-xs);font-weight:600;margin-bottom:6px">
                                 <span class="tnum" style="color:var(--ink2)">{{ $full ? 'Full' : $used.'/'.$cap.' · '.$left.' left' }}</span>
                                 <span class="tnum" style="color:var(--faint)">{{ $pct }}%</span>
                             </div>
@@ -282,8 +282,8 @@ new class extends Component {
                          onto two lines on anything narrower than a desktop. --}}
                     <div class="card-foot">
                         <div>
-                            <div style="font-size:10.5px;font-weight:700;letter-spacing:.04em;color:var(--faint)">FEE</div>
-                            <div class="tnum" style="font-size:16px;font-weight:800;color:var(--ink);white-space:nowrap">{{ Format::money($c->fee) }}</div>
+                            <div style="font-size:var(--fs-3xs);font-weight:700;letter-spacing:.04em;color:var(--faint)">FEE</div>
+                            <div class="tnum" style="font-size:var(--fs-md);font-weight:800;color:var(--ink);white-space:nowrap">{{ Format::money($c->fee) }}</div>
                         </div>
                         @if ($canManage)
                             @php $toggleLabel = $c->is_active ? 'Deactivate course' : 'Activate course'; @endphp
@@ -312,9 +312,9 @@ new class extends Component {
                     <div class="drawer">
                         <div class="drawer-head">
                             <div style="flex:1;min-width:0">
-                                <div class="tnum" style="font-size:12px;font-weight:800;letter-spacing:.03em;color:var(--iris)">{{ $selected->code }}</div>
+                                <div class="tnum" style="font-size:var(--fs-xs);font-weight:800;letter-spacing:.03em;color:var(--iris)">{{ $selected->code }}</div>
                                 <div style="display:flex;align-items:center;gap:10px;margin-top:4px">
-                                    <div style="font-size:18px;font-weight:800;color:var(--ink)">{{ $selected->title }}</div>
+                                    <div style="font-size:var(--fs-lg);font-weight:800;color:var(--ink)">{{ $selected->title }}</div>
                                     @if ($selected->is_active)
                                         <x-ui.pill tone="validated">Active</x-ui.pill>
                                     @else
@@ -329,39 +329,39 @@ new class extends Component {
                             {{-- Summary --}}
                             <div class="grid-2" style="margin-bottom:22px">
                                 <div class="card" style="padding:14px 16px">
-                                    <div style="font-size:11px;font-weight:700;letter-spacing:.04em;color:var(--faint)">TRAINER</div>
-                                    <div style="font-size:14px;font-weight:700;color:var(--ink);margin-top:4px">{{ $selected->trainer?->name ?? 'No trainer assigned' }}</div>
+                                    <div style="font-size:var(--fs-2xs);font-weight:700;letter-spacing:.04em;color:var(--faint)">TRAINER</div>
+                                    <div style="font-size:var(--fs-base);font-weight:700;color:var(--ink);margin-top:4px">{{ $selected->trainer?->name ?? 'No trainer assigned' }}</div>
                                 </div>
                                 <div class="card" style="padding:14px 16px">
-                                    <div style="font-size:11px;font-weight:700;letter-spacing:.04em;color:var(--faint)">FEE</div>
-                                    <div class="tnum" style="font-size:14px;font-weight:700;color:var(--ink);margin-top:4px">{{ Format::money($selected->fee) }}</div>
+                                    <div style="font-size:var(--fs-2xs);font-weight:700;letter-spacing:.04em;color:var(--faint)">FEE</div>
+                                    <div class="tnum" style="font-size:var(--fs-base);font-weight:700;color:var(--ink);margin-top:4px">{{ Format::money($selected->fee) }}</div>
                                 </div>
                                 <div class="card" style="padding:14px 16px">
-                                    <div style="font-size:11px;font-weight:700;letter-spacing:.04em;color:var(--faint)">ENROLLED</div>
-                                    <div class="tnum" style="font-size:14px;font-weight:700;color:var(--ink);margin-top:4px">{{ $selected->seatsUsed() }}{{ $selected->capacity !== null ? ' / '.$selected->capacity : '' }}</div>
+                                    <div style="font-size:var(--fs-2xs);font-weight:700;letter-spacing:.04em;color:var(--faint)">ENROLLED</div>
+                                    <div class="tnum" style="font-size:var(--fs-base);font-weight:700;color:var(--ink);margin-top:4px">{{ $selected->seatsUsed() }}{{ $selected->capacity !== null ? ' / '.$selected->capacity : '' }}</div>
                                 </div>
                                 <div class="card" style="padding:14px 16px">
-                                    <div style="font-size:11px;font-weight:700;letter-spacing:.04em;color:var(--faint)">CAPACITY</div>
-                                    <div class="tnum" style="font-size:14px;font-weight:700;color:var(--ink);margin-top:4px">{{ $selected->capacity !== null ? $selected->capacity.' seats' : 'Unlimited' }}</div>
+                                    <div style="font-size:var(--fs-2xs);font-weight:700;letter-spacing:.04em;color:var(--faint)">CAPACITY</div>
+                                    <div class="tnum" style="font-size:var(--fs-base);font-weight:700;color:var(--ink);margin-top:4px">{{ $selected->capacity !== null ? $selected->capacity.' seats' : 'Unlimited' }}</div>
                                 </div>
                             </div>
 
                             <div style="background:linear-gradient(135deg,var(--navy),var(--navy2));border-radius:14px;padding:16px 18px;color:#fff;margin-bottom:22px">
-                                <div style="font-size:11.5px;font-weight:700;letter-spacing:.04em;color:#b9bcdd">REVENUE · PAID CHALLANS</div>
-                                <div class="tnum" style="font-size:24px;font-weight:800;margin-top:5px">{{ Format::money($revenue) }}</div>
+                                <div style="font-size:var(--fs-2xs);font-weight:700;letter-spacing:.04em;color:#b9bcdd">REVENUE · PAID CHALLANS</div>
+                                <div class="tnum" style="font-size:var(--fs-2xl);font-weight:800;margin-top:5px">{{ Format::money($revenue) }}</div>
                             </div>
 
                             {{-- Enrolled students --}}
-                            <div style="font-size:13px;font-weight:700;color:var(--ink);margin-bottom:12px">Enrolled students</div>
+                            <div style="font-size:var(--fs-sm);font-weight:700;color:var(--ink);margin-bottom:12px">Enrolled students</div>
                             @forelse ($enrolled as $a)
                                 @php $st = $a->challan?->paymentState(); @endphp
                                 <div style="display:flex;align-items:center;gap:12px;padding:11px 0;border-bottom:1px solid var(--surface3)">
                                     <x-ui.avatar :name="$a->student->name" variant="navy" :size="34" />
                                     <div style="flex:1;min-width:0">
-                                        <div style="font-size:13.5px;font-weight:700;color:var(--ink)">{{ $a->student->name }}</div>
-                                        <div class="tnum" style="font-size:12px;color:var(--muted)">{{ $a->student->student_code }}</div>
+                                        <div style="font-size:var(--fs-sm);font-weight:700;color:var(--ink)">{{ $a->student->name }}</div>
+                                        <div class="tnum rec-id" style="font-size:var(--fs-xs);color:var(--muted)">{{ $a->student->student_code }}</div>
                                     </div>
-                                    <div class="tnum" style="font-size:13px;font-weight:700;color:var(--ink)">{{ Format::money($a->netShare()) }}</div>
+                                    <div class="tnum" style="font-size:var(--fs-sm);font-weight:700;color:var(--ink)">{{ Format::money($a->netShare()) }}</div>
                                     @if ($st)
                                         <x-ui.pill tone="{{ $st }}" :dot="true">{{ ucfirst($st) }}</x-ui.pill>
                                     @endif

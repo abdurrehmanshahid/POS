@@ -23,15 +23,15 @@
                     <x-icon name="{{ $dangerIrreversible ? 'trash' : 'alert' }}" :size="19" style="color:#fff" />
                 </div>
                 <div style="flex:1;min-width:0">
-                    <div style="font-size:15.5px;font-weight:800;color:var(--ink);letter-spacing:-.01em">{{ $dangerTitle }}</div>
+                    <div style="font-size:var(--fs-md);font-weight:800;color:var(--ink);letter-spacing:-.01em">{{ $dangerTitle }}</div>
                     @if ($dangerIrreversible)
-                        <div style="font-size:11.5px;font-weight:700;color:var(--over);letter-spacing:.05em;text-transform:uppercase;margin-top:3px">Cannot be undone</div>
+                        <div style="font-size:var(--fs-2xs);font-weight:700;color:var(--over);letter-spacing:.05em;text-transform:uppercase;margin-top:3px">Cannot be undone</div>
                     @endif
                 </div>
             </div>
 
             <div style="padding:20px 22px">
-                <p style="font-size:13.5px;color:var(--ink2);line-height:1.6;margin:0 0 18px">{{ $dangerBody }}</p>
+                <p style="font-size:var(--fs-sm);color:var(--ink2);line-height:1.6;margin:0 0 18px">{{ $dangerBody }}</p>
 
                 @if ($dangerNeedsReason)
                     <label class="label">Reason</label>
@@ -52,8 +52,8 @@
                 @if ($this->dangerUsesTotp())
                     <input wire:model="dangerSecret" type="text" inputmode="numeric" maxlength="6"
                            autocomplete="one-time-code" placeholder="000000" class="input tnum"
-                           style="font-size:19px;letter-spacing:.32em;text-align:center;font-weight:700">
-                    <div style="font-size:11.5px;color:var(--muted);margin-top:7px;line-height:1.5">
+                           style="font-size:var(--fs-lg);letter-spacing:.32em;text-align:center;font-weight:700">
+                    <div style="font-size:var(--fs-2xs);color:var(--muted);margin-top:7px;line-height:1.5">
                         A fresh code is required for every destructive action, a used code will not work twice.
                     </div>
                 @else
@@ -62,7 +62,7 @@
                 @endif
 
                 @if ($dangerError)
-                    <div style="display:flex;align-items:flex-start;gap:7px;font-size:12px;color:var(--over);margin-top:12px;line-height:1.5">
+                    <div style="display:flex;align-items:flex-start;gap:7px;font-size:var(--fs-xs);color:var(--over);margin-top:12px;line-height:1.5">
                         <x-icon name="alert-circle" :size="14" style="flex:none;margin-top:1px" /> {{ $dangerError }}
                     </div>
                 @endif

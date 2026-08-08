@@ -39,6 +39,9 @@ new class extends Component {
     public bool $genChallans = true;
     public array $wizErrors = [];
 
+    /** Fields the officer has left or submitted; see touch(). */
+    public array $wizTouched = [];
+
     /** Existing student holding the CNIC currently typed, if any. */
     public ?int $cnicClashId = null;
 
@@ -104,6 +107,15 @@ new class extends Component {
      */
     public function mount(): void
     {
+        // ?new=1 opens a blank wizard. The dashboard's "New registration" tile
+        // is meant to start the job, not to land the officer on a list they then
+        // have to find a button on.
+        if (request()->boolean('new') && auth()->user()->can('registrations.create')) {
+            $this->openWizard();
+
+            return;
+        }
+
         $id = (int) request()->query('enrol');
         if ($id <= 0 || ! auth()->user()->can('registrations.create')) {
             return;
@@ -124,7 +136,8 @@ new class extends Component {
     public function openWizard(): void
     {
         $this->reset(['step', 'mode', 'studentSearch', 'pickedStudentId', 'newType', 'newName',
-            'newGuardian', 'newPhone', 'newCnic', 'courseIds', 'discountPct', 'discountReason', 'wizErrors']);
+            'newGuardian', 'newPhone', 'newCnic', 'courseIds', 'discountPct', 'discountReason',
+            'wizErrors', 'wizTouched']);
         $this->step = 1;
         $this->mode = 'new';
         $this->genChallans = true;
@@ -184,33 +197,93 @@ new class extends Component {
     // the insert at the very end. Each field now answers for itself as it is
     // typed, and the CNIC additionally looks for the human behind it.
 
-    public function updatedNewName(): void { $this->checkName(); }
+    public function updatedNewName(): void { $this->checkName($this->isTouched('name')); }
 
-    public function updatedNewGuardian(): void { $this->checkGuardian(); }
-
-    public function updatedNewPhone(): void { $this->checkPhone(); }
+    public function updatedNewPhone(): void { $this->checkPhone($this->isTouched('phone')); }
 
     public function updatedNewCnic(): void { $this->checkCnic(); }
 
-    private function checkName(): void
+    /** Guardian is optional free text, so there is nothing to be wrong about. */
+    public function updatedNewGuardian(): void {}
+
+    /**
+     * Mark a field finished and re-run its check. Bound to blur in the view.
+     *
+     * Emptiness and wrongness are different failures and want different timing.
+     * "Wrong" can be said the moment it is knowable. "Empty" cannot: every
+     * field starts empty, so an emptiness error fired on keystroke accuses the
+     * officer of not having finished typing — type one letter, delete it, and
+     * the form calls it an error. That is precisely how people are trained to
+     * stop reading red text. So emptiness waits until the officer has left the
+     * field or pressed Continue; wrongness does not wait.
+     */
+    public function touch(string $field): void
     {
-        $this->setFieldError('name', trim($this->newName) === '' ? 'Student name is required.' : null);
+        $this->wizTouched[$field] = true;
+
+        match ($field) {
+            'name' => $this->checkName(true),
+            'phone' => $this->checkPhone(true),
+            'cnic' => $this->checkCnic(),
+            default => null,
+        };
     }
 
-    private function checkGuardian(): void
+    private function isTouched(string $field): bool
     {
-        $this->setFieldError('guardian', trim($this->newGuardian) === '' ? 'Guardian name is required.' : null);
+        return (bool) ($this->wizTouched[$field] ?? false);
     }
 
-    private function checkPhone(): void
+    private function checkName(bool $touched): void
+    {
+        // Clears the instant it becomes valid, whether or not it was touched.
+        if (trim($this->newName) !== '') {
+            $this->setFieldError('name', null);
+
+            return;
+        }
+
+        $this->setFieldError('name', $touched ? 'Student name is required.' : null);
+    }
+
+    /**
+     * Required, because students.phone is NOT NULL and it is the only channel a
+     * fee reminder actually travels down. Guardian and CNIC are not: the schema
+     * made both nullable in 2026_08_08_000001 so an imported roll could carry
+     * "name, course, batch, phone and money, nothing else", and a counter that
+     * demands more than the database does is inventing a rule of its own.
+     */
+    private function checkPhone(bool $touched): void
     {
         $raw = trim($this->newPhone);
-        // Silent while the number is still being typed. Nagging someone about an
-        // incomplete value they are mid-way through entering trains them to
-        // ignore the error colour entirely.
-        $this->setFieldError('phone', $raw === '' || Contact::normalizePhone($raw)
-            ? null
-            : 'Enter a valid PK mobile (+92 3XX XXXXXXX).');
+
+        if ($raw === '') {
+            $this->setFieldError('phone', $touched ? 'A phone number is required.' : null);
+
+            return;
+        }
+
+        if (Contact::normalizePhone($raw)) {
+            $this->setFieldError('phone', null);
+
+            return;
+        }
+
+        // Silent mid-entry: a half-typed number is not yet a wrong one. Once
+        // it is long enough to be a complete attempt, it is fair to say so.
+        //
+        // Counted in DIGITS, not characters. A PK mobile carries ten significant
+        // digits and reaches that at 10, 11 or 12 characters typed depending on
+        // whether it is written 3001234567, 03001234567 or +923001234567 — and
+        // formatted with spaces, "+92 300 1234" is twelve characters with only
+        // eight of the ten digits in it. A character threshold therefore fired
+        // the error while the officer still had three digits left to type,
+        // which is the exact nagging the rest of this method exists to avoid.
+        $digits = strlen((string) preg_replace('/\D+/', '', $raw));
+
+        $this->setFieldError('phone', $touched || $digits >= 10
+            ? 'Enter a valid PK mobile (+92 3XX XXXXXXX).'
+            : null);
     }
 
     /**
@@ -282,9 +355,77 @@ new class extends Component {
         $this->studentSearch = $student->student_code;
         $this->cnicClashId = null;
         $this->wizErrors = [];
+        $this->wizTouched = [];
         $this->reset('newName', 'newGuardian', 'newPhone', 'newCnic');
 
         $this->dispatch('bbt-toast', tone: 'ok', title: 'Existing student selected', msg: $student->name.' · '.$student->student_code);
+    }
+
+    /**
+     * Guardians already on file whose name begins with what is being typed.
+     *
+     * Siblings are far and away the most common reason two students share a
+     * guardian — the institute already grants a "Sibling discount" — so
+     * re-typing a parent's name and number for the second child is work the
+     * system can simply do. Each suggestion carries the phone last recorded
+     * against that guardian, so accepting one fills both fields.
+     *
+     * Scoped through visibleTo, unlike the CNIC lookup which is deliberately
+     * global. That one exists to stop a duplicate person being created and is
+     * worth the reach; this one is a convenience, and convenience is not a good
+     * enough reason to let an officer harvest the guardian names and phone
+     * numbers of students they are not allowed to see.
+     *
+     * @return list<array{name:string, phone:string}>
+     */
+    public function guardianMatches(): array
+    {
+        $term = trim($this->newGuardian);
+
+        // Step 1 only. The guardian field is not on steps 2 and 3, but the
+        // property keeps its value, so without this the query ran again on every
+        // render of the course picker and the review screen to build a list
+        // nothing displays.
+        if ($this->step !== 1 || $this->mode !== 'new' || mb_strlen($term) < 2) {
+            return [];
+        }
+
+        // A guardian typing "50%" should search for that, not match everything.
+        $like = addcslashes($term, '%_\\').'%';
+
+        return Student::visibleTo(auth()->user())
+            ->whereNotNull('guardian_name')
+            ->where('guardian_name', 'like', $like)
+            ->orderByDesc('id')
+            // Bounded in SQL, because two characters against a full institute
+            // roll otherwise hydrates every match to show five. Not limited to
+            // 5: the de-duplication below is per distinct guardian and happens
+            // in PHP, so five rows can collapse to one sibling's parent and the
+            // query has to leave the list something to work with.
+            ->limit(50)
+            ->get(['guardian_name', 'phone'])
+            ->unique(fn ($s) => mb_strtolower($s->guardian_name))
+            // Nothing to suggest once the name is fully typed, whether by hand
+            // or by accepting a suggestion; otherwise the list hangs around
+            // offering the officer the exact words already in the box.
+            ->reject(fn ($s) => mb_strtolower(trim($s->guardian_name)) === mb_strtolower($term))
+            ->take(5)
+            ->map(fn ($s) => ['name' => $s->guardian_name, 'phone' => (string) $s->phone])
+            ->values()
+            ->all();
+    }
+
+    public function useGuardian(string $name, string $phone): void
+    {
+        $this->newGuardian = $name;
+
+        // Only fills an empty phone. Overwriting a number the officer has
+        // already typed would be the suggestion overruling the person, and the
+        // second child's contact number is not always the first one's.
+        if (trim($this->newPhone) === '' && $phone !== '') {
+            $this->newPhone = $phone;
+            $this->checkPhone($this->isTouched('phone'));
+        }
     }
 
     public function next(): void
@@ -296,11 +437,20 @@ new class extends Component {
             } else {
                 // Re-run every check rather than trusting what the live hooks
                 // left behind: a field never touched has never been validated.
-                $this->checkName();
-                $this->checkGuardian();
-                if (! Contact::normalizePhone($this->newPhone)) { $this->wizErrors['phone'] = 'Enter a valid PK mobile (+92 3XX XXXXXXX).'; }
-                if (! Contact::validCnic($this->newCnic)) { $this->wizErrors['cnic'] = 'CNIC must be #####-#######-#.'; }
-                else { $this->checkCnic(); }
+                // Pressing Continue is itself a statement that the officer is
+                // finished, so every field counts as touched from here on.
+                $this->wizTouched = ['name' => true, 'phone' => true, 'cnic' => true];
+                $this->checkName(true);
+                $this->checkPhone(true);
+                $this->checkCnic();
+
+                // CNIC is optional, but a half-typed one is not "omitted", it is
+                // wrong. Without this a partial number would pass here (checkCnic
+                // stays quiet below 15 chars so it does not nag mid-entry) and be
+                // stored as though it were a real identity number.
+                if (trim($this->newCnic) !== '' && ! Contact::validCnic($this->newCnic)) {
+                    $this->wizErrors['cnic'] = 'CNIC must be #####-#######-#, or leave it blank.';
+                }
 
                 if ($this->cnicClashId) {
                     $this->dispatch('bbt-toast', tone: 'warn', title: 'That CNIC is already registered',
@@ -404,6 +554,7 @@ new class extends Component {
                         ->limit(6)->get()
                     : collect(),
                 'cnicClash' => $this->cnicClashId ? Student::find($this->cnicClashId) : null,
+                'guardianMatches' => $this->guardianMatches(),
                 'pickedStudent' => $this->pickedStudentId ? Student::visibleTo($user)->find($this->pickedStudentId) : null,
             ];
         }
@@ -428,7 +579,7 @@ new class extends Component {
     @if (! $wizardOpen)
         {{-- ===================== LIST ===================== --}}
         <div style="display:flex;align-items:center;gap:14px;margin-bottom:18px">
-            <div style="flex:1"><span style="font-size:15px;font-weight:700;color:var(--ink)">{{ $scopeLabel }}</span> <span style="font-size:12.5px;color:var(--muted)">{{ $rows->count() }} records</span></div>
+            <div style="flex:1"><span style="font-size:var(--fs-md);font-weight:700;color:var(--ink)">{{ $scopeLabel }}</span> <span style="font-size:var(--fs-xs);color:var(--muted)">{{ $rows->count() }} records</span></div>
             <div class="search" style="width:280px"><x-icon name="search" :size="15" /><input wire:model.live.debounce.200ms="q" class="input" placeholder="Filter · try status:paid or /R26/"></div>
             @if ($canCreate)
                 <button class="btn btn-accent" wire:click="openWizard"><x-icon name="plus" :size="17" /> New Registration</button>
@@ -453,14 +604,14 @@ new class extends Component {
                             <td>
                                 <div style="display:flex;align-items:center;gap:10px">
                                     <x-ui.avatar :name="$a->student->name" :size="30" />
-                                    <div><div style="font-size:13.5px;font-weight:600;color:var(--ink)">{{ $a->student->name }}</div><div class="tnum" style="font-size:11px;font-weight:700;color:var(--iris)">{{ $a->student->student_code }}</div></div>
+                                    <div><div style="font-size:var(--fs-sm);font-weight:600;color:var(--ink)">{{ $a->student->name }}</div><div class="tnum rec-id" style="font-size:var(--fs-2xs);font-weight:700;color:var(--iris)">{{ $a->student->student_code }}</div></div>
                                 </div>
                             </td>
                             <td>{{ $a->course->title }}</td>
                             <td>
                                 <div style="display:flex;align-items:center;gap:8px">
                                     <x-ui.avatar :name="$a->enroller->name" variant="navy" :size="24" />
-                                    <span style="font-size:12.5px;color:var(--ink2)">{{ $a->enroller->name }}</span>
+                                    <span style="font-size:var(--fs-xs);color:var(--ink2)">{{ $a->enroller->name }}</span>
                                 </div>
                             </td>
                             <td class="right tnum" style="font-weight:700">{{ Format::money($a->netShare()) }}</td>

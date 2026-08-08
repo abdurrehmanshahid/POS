@@ -94,15 +94,15 @@ new #[Layout('components.layouts.guest')] class extends Component {
             <div style="display:inline-flex;align-items:center;justify-content:center;width:52px;height:52px;border-radius:15px;background:rgba(142,136,230,.16);border:1px solid rgba(142,136,230,.3);margin-bottom:14px">
                 <x-icon name="shield" :size="24" style="color:#a9a3ee" />
             </div>
-            <h2 style="font-size:24px;font-weight:800;color:#fff;margin:0 0 5px;letter-spacing:-.02em">Super Admin</h2>
-            <p style="font-size:13.5px;color:#9599c4;margin:0">Platform administration · restricted</p>
+            <h2 style="font-size:var(--fs-2xl);font-weight:800;color:#fff;margin:0 0 5px;letter-spacing:-.02em">Super Admin</h2>
+            <p style="font-size:var(--fs-sm);color:#9599c4;margin:0">Platform administration · restricted</p>
         </div>
 
         <div style="background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:26px 24px;box-shadow:0 18px 50px rgba(0,0,0,.35)">
             @if ($error)
                 <div style="display:flex;align-items:center;gap:9px;padding:11px 13px;background:var(--over-bg);border:1px solid var(--over-br);border-radius:11px;margin-bottom:16px">
                     <x-icon name="alert-circle" :size="16" style="color:var(--over);flex:none" />
-                    <span style="font-size:12.5px;color:var(--over);font-weight:600">{{ $error }}</span>
+                    <span style="font-size:var(--fs-xs);color:var(--over);font-weight:600">{{ $error }}</span>
                 </div>
             @endif
 
@@ -113,22 +113,22 @@ new #[Layout('components.layouts.guest')] class extends Component {
                 <label class="label">Password</label>
                 <div style="position:relative;margin-bottom:20px">
                     <input wire:model="password" :type="show ? 'text' : 'password'" class="input" style="padding-right:74px" autocomplete="current-password">
-                    <button @click="show = !show" type="button" style="position:absolute;right:8px;top:50%;transform:translateY(-50%);height:32px;padding:0 11px;border:none;background:var(--surface3);color:var(--ink2);border-radius:8px;font-size:12px;font-weight:700;cursor:pointer" x-text="show ? 'Hide' : 'Show'"></button>
+                    <button @click="show = !show" type="button" style="position:absolute;right:8px;top:50%;transform:translateY(-50%);height:32px;padding:0 11px;border:none;background:var(--surface3);color:var(--ink2);border-radius:8px;font-size:var(--fs-xs);font-weight:700;cursor:pointer" x-text="show ? 'Hide' : 'Show'"></button>
                 </div>
 
-                <button type="submit" class="btn btn-primary" style="width:100%;height:48px;font-size:15px">
+                <button type="submit" class="btn btn-primary" style="width:100%;height:48px;font-size:var(--fs-md)">
                     <x-icon name="signin" :size="18" /> Continue
                 </button>
             </form>
 
-            <div style="display:flex;align-items:center;gap:8px;justify-content:center;font-size:11.5px;color:var(--faint);margin-top:18px;line-height:1.5;text-align:center">
+            <div style="display:flex;align-items:center;gap:8px;justify-content:center;font-size:var(--fs-2xs);color:var(--faint);margin-top:18px;line-height:1.5;text-align:center">
                 <x-icon name="lock" :size="13" style="flex:none" />
                 Two-factor is mandatory. Password resets are not available here.
             </div>
         </div>
 
         <div style="text-align:center;margin-top:20px">
-            <a href="{{ route('login') }}" style="font-size:12.5px;color:#9599c4;font-weight:600">Staff portal instead</a>
+            <a href="{{ route('login') }}" style="font-size:var(--fs-xs);color:#9599c4;font-weight:600">Staff portal instead</a>
         </div>
     </div>
 </div>

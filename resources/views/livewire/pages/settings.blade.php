@@ -40,14 +40,14 @@ new class extends Component {
 
 <div class="container-app anim-fade">
     <div style="margin-bottom:18px">
-        <h2 style="font-size:21px;font-weight:800;color:var(--ink);letter-spacing:-.02em;margin:0">Settings</h2>
-        <p style="font-size:13px;color:var(--muted);margin:5px 0 0">Institute identity, challan header and security</p>
+        <h2 style="font-size:var(--fs-xl);font-weight:800;color:var(--ink);letter-spacing:-.02em;margin:0">Settings</h2>
+        <p style="font-size:var(--fs-sm);color:var(--muted);margin:5px 0 0">Institute identity, challan header and security</p>
     </div>
 
     {{-- Admin-only notice --}}
     <div style="display:flex;align-items:center;gap:10px;padding:11px 16px;background:var(--iris-bg);border:1px solid var(--border2);border-radius:12px;margin-bottom:22px">
         <x-icon name="lock" :size="17" style="color:var(--iris)" />
-        <span style="font-size:13px;color:var(--iris);font-weight:600">Admin only. Changes to bank details and serials are recorded in the audit log.</span>
+        <span style="font-size:var(--fs-sm);color:var(--iris);font-weight:600">Admin only. Changes to bank details and serials are recorded in the audit log.</span>
     </div>
 
     {{-- Institute & challan header --}}
@@ -77,9 +77,9 @@ new class extends Component {
             <div style="padding:14px 16px;background:var(--surface2);border:1px solid var(--border);border-radius:12px;display:flex;align-items:center;justify-content:space-between;gap:14px">
                 <div>
                     <div class="label" style="margin-bottom:3px">Next challan serial</div>
-                    <div style="font-size:12px;color:var(--muted)">System-generated &amp; atomic · cannot be reset by hand.</div>
+                    <div style="font-size:var(--fs-xs);color:var(--muted)">System-generated &amp; atomic · cannot be reset by hand.</div>
                 </div>
-                <span class="tnum" style="font-size:15px;font-weight:800;color:var(--ink);font-family:ui-monospace,'SF Mono',Menlo,monospace">{{ \App\Services\Sequences::challanNo($nextSerial) }}</span>
+                <span class="tnum" style="font-size:var(--fs-md);font-weight:800;color:var(--ink);font-family:ui-monospace,'SF Mono',Menlo,monospace">{{ \App\Services\Sequences::challanNo($nextSerial) }}</span>
             </div>
         </div>
     </div>
@@ -95,7 +95,7 @@ new class extends Component {
                     <span style="position:absolute;top:3px;left:3px;width:21px;height:21px;border-radius:50%;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.25);transition:transform .15s"
                           :style="on ? 'transform:translateX(19px)' : ''"></span>
                 </button>
-                <div style="font-size:13.5px;font-weight:600;color:var(--ink2);cursor:pointer" @click="on = !on">Require two-factor for admins on new devices</div>
+                <div style="font-size:var(--fs-sm);font-weight:600;color:var(--ink2);cursor:pointer" @click="on = !on">Require two-factor for admins on new devices</div>
             </div>
         </div>
     </div>

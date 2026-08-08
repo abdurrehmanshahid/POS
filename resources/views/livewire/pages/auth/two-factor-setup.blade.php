@@ -119,12 +119,12 @@ new #[Layout('components.layouts.guest')] class extends Component {
                         <x-icon name="shield" :size="21" style="color:var(--iris)" />
                     </div>
                     <div>
-                        <h2 style="font-size:21px;font-weight:800;color:var(--ink);margin:0;letter-spacing:-.01em">Set up two-factor</h2>
-                        <p style="font-size:13px;color:var(--muted);margin:2px 0 0">Required for the {{ $user->role?->name ?? 'super admin' }} role</p>
+                        <h2 style="font-size:var(--fs-xl);font-weight:800;color:var(--ink);margin:0;letter-spacing:-.01em">Set up two-factor</h2>
+                        <p style="font-size:var(--fs-sm);color:var(--muted);margin:2px 0 0">Required for the {{ $user->role?->name ?? 'super admin' }} role</p>
                     </div>
                 </div>
 
-                <ol style="margin:0 0 20px;padding-left:20px;font-size:13.5px;color:var(--ink2);line-height:1.9">
+                <ol style="margin:0 0 20px;padding-left:20px;font-size:var(--fs-sm);color:var(--ink2);line-height:1.9">
                     <li>Install <strong>Google Authenticator</strong> (or any TOTP app. Authy, 1Password).</li>
                     <li>Scan this QR code, or type the setup key by hand.</li>
                     <li>Enter the 6-digit code it shows to confirm.</li>
@@ -133,9 +133,9 @@ new #[Layout('components.layouts.guest')] class extends Component {
                 <div style="display:flex;gap:20px;align-items:center;padding:18px;background:var(--surface2);border:1px solid var(--border);border-radius:14px;margin-bottom:20px;flex-wrap:wrap">
                     <img src="{{ $qr }}" alt="Two-factor QR code" width="150" height="150" style="border-radius:10px;background:#fff;padding:8px;flex:none">
                     <div style="flex:1;min-width:180px">
-                        <div style="font-size:11.5px;font-weight:700;color:var(--faint);letter-spacing:.06em;text-transform:uppercase;margin-bottom:7px">Setup key</div>
-                        <div class="tnum" style="font-size:13px;font-weight:700;color:var(--ink);word-break:break-all;line-height:1.6;user-select:all">{{ $secret }}</div>
-                        <div style="font-size:11.5px;color:var(--muted);margin-top:9px;line-height:1.5">Use this if you can't scan. Account: {{ $user->email }}</div>
+                        <div style="font-size:var(--fs-2xs);font-weight:700;color:var(--faint);letter-spacing:.06em;text-transform:uppercase;margin-bottom:7px">Setup key</div>
+                        <div class="tnum" style="font-size:var(--fs-sm);font-weight:700;color:var(--ink);word-break:break-all;line-height:1.6;user-select:all">{{ $secret }}</div>
+                        <div style="font-size:var(--fs-2xs);color:var(--muted);margin-top:9px;line-height:1.5">Use this if you can't scan. Account: {{ $user->email }}</div>
                     </div>
                 </div>
 
@@ -143,15 +143,15 @@ new #[Layout('components.layouts.guest')] class extends Component {
                     <label class="label">6-digit code from your app</label>
                     <input wire:model="code" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="6"
                            placeholder="000000" class="input tnum"
-                           style="margin-bottom:12px;font-size:22px;letter-spacing:.35em;text-align:center;font-weight:700" autofocus>
+                           style="margin-bottom:12px;font-size:var(--fs-xl);letter-spacing:.35em;text-align:center;font-weight:700" autofocus>
 
                     @if ($error)
-                        <div style="display:flex;align-items:center;gap:7px;font-size:12px;color:var(--over);margin-bottom:14px">
+                        <div style="display:flex;align-items:center;gap:7px;font-size:var(--fs-xs);color:var(--over);margin-bottom:14px">
                             <x-icon name="alert-circle" :size="14" /> {{ $error }}
                         </div>
                     @endif
 
-                    <button type="submit" class="btn btn-accent" style="width:100%;height:48px;font-size:15px">Confirm &amp; enable</button>
+                    <button type="submit" class="btn btn-accent" style="width:100%;height:48px;font-size:var(--fs-md)">Confirm &amp; enable</button>
                 </form>
 
                 {{-- The way out.
@@ -176,25 +176,25 @@ new #[Layout('components.layouts.guest')] class extends Component {
                         <x-icon name="shield-check" :size="21" style="color:var(--paid)" />
                     </div>
                     <div>
-                        <h2 style="font-size:21px;font-weight:800;color:var(--ink);margin:0;letter-spacing:-.01em">Two-factor is on</h2>
-                        <p style="font-size:13px;color:var(--muted);margin:2px 0 0">Save your recovery codes now</p>
+                        <h2 style="font-size:var(--fs-xl);font-weight:800;color:var(--ink);margin:0;letter-spacing:-.01em">Two-factor is on</h2>
+                        <p style="font-size:var(--fs-sm);color:var(--muted);margin:2px 0 0">Save your recovery codes now</p>
                     </div>
                 </div>
 
                 <div style="display:flex;gap:9px;padding:12px 13px;background:var(--over-bg);border:1px solid var(--over-br);border-radius:11px;margin-bottom:16px">
                     <x-icon name="alert-circle" :size="16" style="color:var(--over);flex:none;margin-top:1px" />
-                    <span style="font-size:12.5px;color:var(--over);font-weight:600;line-height:1.55">
+                    <span style="font-size:var(--fs-xs);color:var(--over);font-weight:600;line-height:1.55">
                         These are shown once and cannot be retrieved later. Each works a single time if you lose your phone. Print them or put them in a password manager.
                     </span>
                 </div>
 
                 <div class="tnum" style="display:grid;grid-template-columns:1fr 1fr;gap:8px;padding:16px;background:var(--surface2);border:1px solid var(--border);border-radius:12px;margin-bottom:20px">
                     @foreach ($recoveryCodes as $rc)
-                        <div style="font-size:14px;font-weight:700;color:var(--ink);letter-spacing:.04em;user-select:all">{{ $rc }}</div>
+                        <div style="font-size:var(--fs-base);font-weight:700;color:var(--ink);letter-spacing:.04em;user-select:all">{{ $rc }}</div>
                     @endforeach
                 </div>
 
-                <button wire:click="finish" class="btn btn-accent" style="width:100%;height:48px;font-size:15px">
+                <button wire:click="finish" class="btn btn-accent" style="width:100%;height:48px;font-size:var(--fs-md)">
                     I've saved them, continue
                 </button>
             @endif

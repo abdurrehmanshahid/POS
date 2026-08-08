@@ -176,6 +176,49 @@ class StudentManagementTest extends TestCase
             ->assertSet('pickedStudentId', $student->id);
     }
 
+    /**
+     * The dashboard's quick actions are links, so the screens they point at have
+     * to open the form themselves. Landing on a list and hunting for a button is
+     * what the tiles exist to remove.
+     */
+    public function test_the_new_query_param_opens_a_blank_wizard(): void
+    {
+        Livewire::actingAs($this->officer())
+            ->withQueryParams(['new' => 1])
+            ->test('pages.registrations')
+            ->assertSet('wizardOpen', true)
+            ->assertSet('step', 1)
+            ->assertSet('mode', 'new')
+            ->assertSet('pickedStudentId', null);
+    }
+
+    public function test_the_new_query_param_opens_the_student_form(): void
+    {
+        Livewire::actingAs($this->officer())
+            ->withQueryParams(['new' => 1])
+            ->test('pages.students')
+            ->assertSet('formOpen', true)
+            ->assertSet('editingId', null);
+    }
+
+    /**
+     * A stale bookmark should land on the list, not on a 403. The permission is
+     * still enforced where it matters — `newStudent()` itself aborts — so this
+     * only decides what an unprivileged GET does, and refusing to render a page
+     * the user may otherwise read would be the wrong answer.
+     */
+    public function test_the_new_query_param_is_ignored_without_the_permission(): void
+    {
+        $officer = $this->officer();
+        $officer->role->permissions()->where('permission_key', 'registrations.create')->delete();
+
+        Livewire::actingAs($officer->refresh())
+            ->withQueryParams(['new' => 1])
+            ->test('pages.students')
+            ->assertSet('formOpen', false)
+            ->assertOk();
+    }
+
     public function test_enrol_deep_link_respects_scope(): void
     {
         // A student that belongs only to another officer's enrolments.
@@ -241,18 +284,49 @@ class StudentManagementTest extends TestCase
             ->assertSet('newCnic', '');
     }
 
-    public function test_step_one_fields_validate_as_they_are_typed(): void
+    /**
+     * Wrongness is reported as soon as it is knowable; emptiness waits until the
+     * officer has left the field.
+     *
+     * Every field starts empty, so a "required" error fired on keystroke accuses
+     * someone of not having finished typing yet. The old code claimed in a
+     * comment to be "silent while the number is still being typed" and then
+     * errored on the first digit, which is how people learn to ignore red text.
+     */
+    public function test_step_one_reports_wrongness_at_once_but_emptiness_only_on_leaving(): void
     {
         $c = Livewire::actingAs($this->admin())
             ->test('pages.registrations')
             ->call('openWizard');
 
-        // Still on step 1, nothing submitted, yet the field already objects.
+        // Mid-entry. Not yet a wrong number, just an unfinished one.
         $c->set('newPhone', '12345');
+        $this->assertArrayNotHasKey('phone', $c->get('wizErrors'));
+
+        // Twelve CHARACTERS but only nine digits, because the mask spaces the
+        // number out. The officer still has a digit to type, so this must stay
+        // silent — a character-length threshold called it wrong here.
+        $c->set('newPhone', '+92 300 1234');
+        $this->assertArrayNotHasKey('phone', $c->get('wizErrors'),
+            'A spaced, half-typed number is not a wrong one.');
+
+        // Long enough to be a complete attempt, and still not a valid mobile.
+        $c->set('newPhone', '1234512345123');
         $this->assertArrayHasKey('phone', $c->get('wizErrors'));
 
         $c->set('newPhone', '03001234567');
         $this->assertArrayNotHasKey('phone', $c->get('wizErrors'));
+
+        // An untouched empty name says nothing...
+        $this->assertArrayNotHasKey('name', $c->get('wizErrors'));
+
+        // ...until the officer leaves it empty, which is a real answer.
+        $c->call('touch', 'name');
+        $this->assertArrayHasKey('name', $c->get('wizErrors'));
+
+        // And it clears the moment there is something in it.
+        $c->set('newName', 'A');
+        $this->assertArrayNotHasKey('name', $c->get('wizErrors'));
 
         $c->set('newCnic', '35201-123');
         $this->assertArrayNotHasKey('cnic', $c->get('wizErrors'), 'Silent while still being typed.');
@@ -260,6 +334,182 @@ class StudentManagementTest extends TestCase
         $c->set('newCnic', '35201-1234567-9');
         $this->assertArrayNotHasKey('cnic', $c->get('wizErrors'));
         $c->assertSet('cnicClashId', null);
+    }
+
+    /**
+     * The schema stopped requiring a guardian and a CNIC in 2026_08_08_000001 so
+     * an imported roll could carry "name, course, batch, phone and money". A
+     * counter that demands more than the database does is inventing its own rule.
+     */
+    public function test_a_name_and_a_phone_are_enough_to_register(): void
+    {
+        $course = Course::where('code', 'GD-101')->firstOrFail();
+
+        Livewire::actingAs($this->officer())
+            ->test('pages.registrations')
+            ->call('openWizard')
+            ->set('newName', 'Guardianless Student')
+            ->set('newPhone', '+92 300 7654321')
+            ->call('next')
+            ->assertSet('step', 2)
+            ->call('toggleCourse', $course->id)
+            ->call('next')
+            ->call('submit');
+
+        $student = Student::where('name', 'Guardianless Student')->firstOrFail();
+        $this->assertNull($student->cnic);
+        $this->assertNull($student->guardian_name);
+    }
+
+    /**
+     * The two doors that create a student must agree about what a student is.
+     *
+     * The wizard was allowed to omit a guardian and a CNIC, and the Students
+     * screen was not updated to match. Opening such a student for editing
+     * assigned NULL to a `public string` property and threw a TypeError before
+     * the form rendered, so the record could be created and then never touched
+     * again — a 500 on the screen whose whole job is correcting a mistyped name.
+     */
+    public function test_a_student_registered_without_a_guardian_can_still_be_edited(): void
+    {
+        $course = Course::where('code', 'GD-101')->firstOrFail();
+
+        Livewire::actingAs($this->admin())
+            ->test('pages.registrations')
+            ->call('openWizard')
+            ->set('newName', 'Sparse Record')
+            ->set('newPhone', '+92 300 4455661')
+            ->call('next')
+            ->call('toggleCourse', $course->id)
+            ->call('next')
+            ->call('submit');
+
+        $student = Student::where('name', 'Sparse Record')->firstOrFail();
+        $this->assertNull($student->guardian_name);
+        $this->assertNull($student->cnic);
+
+        Livewire::actingAs($this->admin())
+            ->test('pages.students')
+            ->call('editStudent', $student->id)
+            ->assertSet('formOpen', true)
+            ->assertSet('fGuardian', '')
+            ->assertSet('fCnic', '');
+    }
+
+    /** ...and saved again, without inventing the fields the wizard did not ask for. */
+    public function test_a_student_without_a_guardian_can_be_saved_from_the_students_form(): void
+    {
+        $course = Course::where('code', 'GD-101')->firstOrFail();
+
+        Livewire::actingAs($this->admin())
+            ->test('pages.registrations')
+            ->call('openWizard')
+            ->set('newName', 'Sparse Record')
+            ->set('newPhone', '+92 300 4455661')
+            ->call('next')
+            ->call('toggleCourse', $course->id)
+            ->call('next')
+            ->call('submit');
+
+        $student = Student::where('name', 'Sparse Record')->firstOrFail();
+
+        Livewire::actingAs($this->admin())
+            ->test('pages.students')
+            ->call('editStudent', $student->id)
+            ->set('fName', 'Sparse Record Corrected')
+            ->call('saveStudent')
+            ->assertHasNoErrors();
+
+        $student->refresh();
+        $this->assertSame('Sparse Record Corrected', $student->name);
+        // Still NULL, not '' — the UNIQUE cnic column treats '' as a real value.
+        $this->assertNull($student->guardian_name);
+        $this->assertNull($student->cnic);
+    }
+
+    /** Two guardianless students must not collide on the UNIQUE cnic column. */
+    public function test_the_students_form_can_create_two_students_without_a_cnic(): void
+    {
+        foreach (['Blank One', 'Blank Two'] as $name) {
+            Livewire::actingAs($this->admin())
+                ->test('pages.students')
+                ->call('newStudent')
+                ->set('fName', $name)
+                ->set('fPhone', '+92 300 9988771')
+                ->call('saveStudent')
+                ->assertHasNoErrors();
+        }
+
+        $this->assertSame(2, Student::whereIn('name', ['Blank One', 'Blank Two'])->count());
+        $this->assertSame(0, Student::whereIn('name', ['Blank One', 'Blank Two'])->whereNotNull('cnic')->count());
+    }
+
+    /** A half-typed CNIC is not "omitted", it is wrong, and must not be stored. */
+    public function test_a_partial_cnic_is_refused_rather_than_stored(): void
+    {
+        Livewire::actingAs($this->admin())
+            ->test('pages.registrations')
+            ->call('openWizard')
+            ->set('newName', 'Partial Cnic')
+            ->set('newPhone', '+92 300 1112223')
+            ->set('newCnic', '35201-12')
+            ->call('next')
+            ->assertSet('step', 1);
+    }
+
+    /**
+     * Blank must reach the column as NULL, never ''. The CNIC column is UNIQUE,
+     * and both MySQL and SQLite exclude NULLs from uniqueness while treating ''
+     * as an ordinary value, so storing the empty string would let the first
+     * student without a CNIC save and collide with the second.
+     */
+    public function test_two_students_can_be_registered_without_a_cnic(): void
+    {
+        $course = Course::where('code', 'GD-101')->firstOrFail();
+
+        foreach (['First NoCnic', 'Second NoCnic'] as $name) {
+            Livewire::actingAs($this->admin())
+                ->test('pages.registrations')
+                ->call('openWizard')
+                ->set('newName', $name)
+                ->set('newPhone', '+92 301 1234567')
+                ->call('next')
+                ->call('toggleCourse', $course->id)
+                ->call('next')
+                ->call('submit');
+        }
+
+        $this->assertSame(2, Student::whereIn('name', ['First NoCnic', 'Second NoCnic'])->count());
+        $this->assertSame(2, Student::whereIn('name', ['First NoCnic', 'Second NoCnic'])->whereNull('cnic')->count());
+    }
+
+    /** Siblings share a guardian, so the second child's form is mostly a retype. */
+    public function test_a_guardian_already_on_file_is_offered_and_fills_the_phone(): void
+    {
+        $existing = Student::whereNotNull('guardian_name')->whereNotNull('phone')->firstOrFail();
+
+        $c = Livewire::actingAs($this->admin())
+            ->test('pages.registrations')
+            ->call('openWizard')
+            ->set('newGuardian', mb_substr($existing->guardian_name, 0, 3));
+
+        $names = array_column($c->viewData('guardianMatches') ?? [], 'name');
+        $this->assertContains($existing->guardian_name, $names);
+
+        $c->call('useGuardian', $existing->guardian_name, $existing->phone)
+            ->assertSet('newGuardian', $existing->guardian_name)
+            ->assertSet('newPhone', $existing->phone);
+    }
+
+    /** A suggestion may fill a blank, never overrule a number already typed. */
+    public function test_a_guardian_suggestion_does_not_overwrite_a_typed_phone(): void
+    {
+        Livewire::actingAs($this->admin())
+            ->test('pages.registrations')
+            ->call('openWizard')
+            ->set('newPhone', '+92 322 9998887')
+            ->call('useGuardian', 'Some Guardian', '+92 300 0000000')
+            ->assertSet('newPhone', '+92 322 9998887');
     }
 
     // ---- Drawer state -------------------------------------------------------

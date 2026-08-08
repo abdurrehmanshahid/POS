@@ -148,38 +148,37 @@ new #[Layout('components.layouts.guest')] class extends Component {
     }
 }; ?>
 
-<div style="min-height:100vh;display:grid;grid-template-columns:1.05fr .95fr;background:var(--navy-deep)">
+<div class="login-split">
     {{-- Marketing panel --}}
-    <div style="position:relative;display:flex;flex-direction:column;justify-content:space-between;padding:48px 56px;background:radial-gradient(1200px 600px at 15% -10%,#3a357f 0%,transparent 55%),radial-gradient(900px 500px at 110% 120%,rgba(247,148,30,.22) 0%,transparent 50%),var(--navy);overflow:hidden"
-         class="login-hero">
-        <div style="display:flex;align-items:center;gap:14px">
-            <img src="{{ asset('assets/bbt-logo-white.png') }}" alt="Big Binary Tech" style="height:52px;display:block" onerror="this.outerHTML='<span style=&quot;color:#fff;font-weight:800;font-size:22px&quot;>Big Binary Tech</span>'">
+    <div class="login-hero">
+        <div class="login-brand" style="display:flex;align-items:center;gap:14px">
+            <img src="{{ asset('assets/bbt-logo-white.png') }}" alt="Big Binary Tech" style="height:52px;display:block" onerror="this.outerHTML='<span style=&quot;color:#fff;font-weight:800;font-size:var(--fs-xl)&quot;>Big Binary Tech</span>'">
         </div>
         <div style="position:relative;z-index:2;max-width:460px">
-            <div style="display:inline-flex;align-items:center;gap:8px;padding:6px 12px;border-radius:999px;background:rgba(247,148,30,.16);border:1px solid rgba(247,148,30,.3);color:var(--orange2);font-size:12.5px;font-weight:600;letter-spacing:.02em;margin-bottom:22px">Institute Management System</div>
-            <h1 style="font-size:38px;line-height:1.15;font-weight:800;color:#fff;margin:0 0 16px;letter-spacing:-.02em">Registrations, fees &amp; access -<span style="color:var(--orange2)"> accountable by design.</span></h1>
-            <p style="font-size:15.5px;line-height:1.65;color:#b9bcdd;margin:0">Every action is scoped by permission and signed under the officer's name. Admins grant exactly what each role needs, nothing hardcoded, no loopholes.</p>
+            <div style="display:inline-flex;align-items:center;gap:8px;padding:6px 12px;border-radius:999px;background:rgba(247,148,30,.16);border:1px solid rgba(247,148,30,.3);color:var(--orange2);font-size:var(--fs-xs);font-weight:600;letter-spacing:.02em;margin-bottom:22px">Institute Management System</div>
+            <h1 style="font-size:var(--fs-4xl);line-height:1.15;font-weight:800;color:#fff;margin:0 0 16px;letter-spacing:-.02em">Registrations, fees &amp; access -<span style="color:var(--orange2)"> accountable by design.</span></h1>
+            <p style="font-size:var(--fs-md);line-height:1.65;color:#b9bcdd;margin:0">Every action is scoped by permission and signed under the officer's name. Admins grant exactly what each role needs, nothing hardcoded, no loopholes.</p>
             <div style="display:flex;gap:26px;margin-top:34px">
-                <div><div style="font-size:24px;font-weight:800;color:#fff" class="tnum">2,000+</div><div style="font-size:12.5px;color:#9599c4;margin-top:2px">Managed users</div></div>
+                <div><div style="font-size:var(--fs-2xl);font-weight:800;color:#fff" class="tnum">2,000+</div><div style="font-size:var(--fs-xs);color:#9599c4;margin-top:2px">Managed users</div></div>
                 <div style="width:1px;background:rgba(255,255,255,.12)"></div>
-                <div><div style="font-size:24px;font-weight:800;color:#fff" class="tnum">44</div><div style="font-size:12.5px;color:#9599c4;margin-top:2px">Active courses</div></div>
+                <div><div style="font-size:var(--fs-2xl);font-weight:800;color:#fff" class="tnum">44</div><div style="font-size:var(--fs-xs);color:#9599c4;margin-top:2px">Active courses</div></div>
                 <div style="width:1px;background:rgba(255,255,255,.12)"></div>
-                <div><div style="font-size:24px;font-weight:800;color:#fff">100%</div><div style="font-size:12.5px;color:#9599c4;margin-top:2px">Audited money</div></div>
+                <div><div style="font-size:var(--fs-2xl);font-weight:800;color:#fff">100%</div><div style="font-size:var(--fs-xs);color:#9599c4;margin-top:2px">Audited money</div></div>
             </div>
         </div>
-        <div style="position:relative;z-index:2;font-size:12.5px;color:#7f83b0">© 2026 Big Binary Tech Institute · Secure staff portal</div>
+        <div style="position:relative;z-index:2;font-size:var(--fs-xs);color:#7f83b0">© 2026 Big Binary Tech Institute · Secure staff portal</div>
     </div>
 
     {{-- Form panel --}}
     <div style="display:flex;align-items:center;justify-content:center;padding:40px;background:var(--bg)">
         <div style="width:100%;max-width:410px">
-            <h2 style="font-size:25px;font-weight:800;color:var(--ink);margin:0 0 6px;letter-spacing:-.01em">Sign in</h2>
-            <p style="font-size:14px;color:var(--muted);margin:0 0 24px">Enter your credentials to continue to the portal.</p>
+            <h2 style="font-size:var(--fs-2xl);font-weight:800;color:var(--ink);margin:0 0 6px;letter-spacing:-.01em">Sign in</h2>
+            <p style="font-size:var(--fs-base);color:var(--muted);margin:0 0 24px">Enter your credentials to continue to the portal.</p>
 
             @if ($error)
                 <div style="display:flex;align-items:center;gap:9px;padding:11px 13px;background:var(--over-bg);border:1px solid var(--over-br);border-radius:11px;margin-bottom:16px">
                     <x-icon name="alert-circle" :size="16" style="color:var(--over)" />
-                    <span style="font-size:12.5px;color:var(--over);font-weight:600">{{ $error }}</span>
+                    <span style="font-size:var(--fs-xs);color:var(--over);font-weight:600">{{ $error }}</span>
                 </div>
             @endif
 
@@ -197,15 +196,15 @@ new #[Layout('components.layouts.guest')] class extends Component {
                      morph as one subtree. --}}
                 <div style="position:relative;margin-bottom:16px" x-data="{ show: false }" wire:key="password-field">
                     <input wire:model="password" :type="show ? 'text' : 'password'" placeholder="Enter password" class="input" style="padding-right:74px">
-                    <button @click="show = !show" type="button" style="position:absolute;right:8px;top:50%;transform:translateY(-50%);height:32px;padding:0 11px;border:none;background:var(--surface3);color:var(--ink2);border-radius:8px;font-size:12px;font-weight:700;cursor:pointer" x-text="show ? 'Hide' : 'Show'"></button>
+                    <button @click="show = !show" type="button" style="position:absolute;right:8px;top:50%;transform:translateY(-50%);height:32px;padding:0 11px;border:none;background:var(--surface3);color:var(--ink2);border-radius:8px;font-size:var(--fs-xs);font-weight:700;cursor:pointer" x-text="show ? 'Hide' : 'Show'"></button>
                 </div>
 
                 <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px">
-                    <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--ink2);cursor:pointer"><input wire:model="remember" type="checkbox" style="width:16px;height:16px;accent-color:var(--iris)">Keep me signed in</label>
-                    <a href="{{ route('password.request') }}" wire:navigate style="font-size:13px;font-weight:600">Forgot password?</a>
+                    <label style="display:flex;align-items:center;gap:8px;font-size:var(--fs-sm);color:var(--ink2);cursor:pointer"><input wire:model="remember" type="checkbox" style="width:16px;height:16px;accent-color:var(--iris)">Keep me signed in</label>
+                    <a href="{{ route('password.request') }}" wire:navigate style="font-size:var(--fs-sm);font-weight:600">Forgot password?</a>
                 </div>
 
-                <button type="submit" class="btn btn-primary" style="width:100%;height:48px;font-size:15px;margin-bottom:18px">
+                <button type="submit" class="btn btn-primary" style="width:100%;height:48px;font-size:var(--fs-md);margin-bottom:18px">
                     <x-icon name="signin" :size="18" /> Sign in
                 </button>
             </form>
@@ -214,21 +213,21 @@ new #[Layout('components.layouts.guest')] class extends Component {
                  local environment, and the fill actions abort server-side too. --}}
             @if (app()->environment('local'))
             <div style="padding:14px 16px;border:1px dashed var(--border2);border-radius:12px;background:var(--surface2);margin-bottom:14px">
-                <div style="font-size:11.5px;font-weight:700;color:var(--faint);letter-spacing:.06em;text-transform:uppercase;margin-bottom:10px">Local dev · demo accounts (click to fill)</div>
+                <div style="font-size:var(--fs-2xs);font-weight:700;color:var(--faint);letter-spacing:.06em;text-transform:uppercase;margin-bottom:10px">Local dev · demo accounts (click to fill)</div>
                 <div style="display:flex;flex-direction:column;gap:8px">
                     <button wire:click="fillAdmin" style="display:flex;align-items:center;gap:10px;width:100%;height:44px;padding:0 12px;border:1.5px solid var(--border2);background:var(--surface);border-radius:10px;cursor:pointer;text-align:left">
-                        <span class="avatar avatar-navy" style="width:28px;height:28px;font-size:11px">AA</span>
-                        <span style="flex:1"><span style="display:block;font-size:12.5px;font-weight:700;color:var(--ink)">Administrator</span><span class="tnum" style="display:block;font-size:11px;color:var(--muted)">adminansar · Bbt@Admin1</span></span>
+                        <span class="avatar avatar-navy" style="width:28px;height:28px;font-size:var(--fs-2xs)">AA</span>
+                        <span style="flex:1"><span style="display:block;font-size:var(--fs-xs);font-weight:700;color:var(--ink)">Administrator</span><span class="tnum" style="display:block;font-size:var(--fs-2xs);color:var(--muted)">adminansar · Bbt@Admin1</span></span>
                     </button>
                     <button wire:click="fillOfficer" style="display:flex;align-items:center;gap:10px;width:100%;height:44px;padding:0 12px;border:1.5px solid var(--border2);background:var(--surface);border-radius:10px;cursor:pointer;text-align:left">
-                        <span class="avatar avatar-orange" style="width:28px;height:28px;font-size:11px">AR</span>
-                        <span style="flex:1"><span style="display:block;font-size:12.5px;font-weight:700;color:var(--ink)">Admission Officer</span><span class="tnum" style="display:block;font-size:11px;color:var(--muted)">aliraza · Bbt@Officer1</span></span>
+                        <span class="avatar avatar-orange" style="width:28px;height:28px;font-size:var(--fs-2xs)">AR</span>
+                        <span style="flex:1"><span style="display:block;font-size:var(--fs-xs);font-weight:700;color:var(--ink)">Admission Officer</span><span class="tnum" style="display:block;font-size:var(--fs-2xs);color:var(--muted)">aliraza · Bbt@Officer1</span></span>
                     </button>
                 </div>
             </div>
             @endif
 
-            <div style="display:flex;align-items:center;gap:8px;justify-content:center;font-size:12px;color:var(--faint)">
+            <div style="display:flex;align-items:center;gap:8px;justify-content:center;font-size:var(--fs-xs);color:var(--faint)">
                 <x-icon name="lock" :size="13" /> 256-bit TLS · role &amp; permission scoped
             </div>
         </div>

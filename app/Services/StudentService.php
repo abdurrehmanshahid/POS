@@ -109,7 +109,7 @@ class StudentService
      * check on CNIC and the search index meaningful.
      *
      * @param  array<string, mixed>  $data
-     * @return array{type:string,name:string,guardian_name:string,phone:string,cnic:string}
+     * @return array{type:string,name:string,guardian_name:?string,phone:string,cnic:?string}
      */
     private function validate(array $data, ?Student $existing = null): array
     {
@@ -124,13 +124,18 @@ class StudentService
         if ($name === '') {
             $errors['name'] = 'Student name is required.';
         }
-        if ($guardian === '') {
-            $errors['guardian_name'] = 'Guardian name is required.';
-        }
 
-        if (! Contact::validCnic($cnic)) {
-            $errors['cnic'] = 'CNIC must look like 35201-1234567-1.';
-        } else {
+        // Guardian and CNIC are optional, matching the wizard and the schema
+        // (2026_08_08_000001). They were required here alone, so a student the
+        // wizard was allowed to create could never be saved from this form — the
+        // two doors that write a student disagreed about what a student is.
+        //
+        // Optional is not the same as unchecked: a half-typed CNIC is not
+        // omitted, it is wrong, and storing it would put a broken identity
+        // number on an issued challan.
+        if ($cnic !== '' && ! Contact::validCnic($cnic)) {
+            $errors['cnic'] = 'CNIC must look like 35201-1234567-1, or leave it blank.';
+        } elseif ($cnic !== '') {
             // Uniqueness includes soft-deleted rows: a CNIC belonging to a
             // removed student is still that person's, and silently reusing it
             // would merge two humans if the record is ever restored.
@@ -158,8 +163,8 @@ class StudentService
         return [
             'type' => $type,
             'name' => $name,
-            'guardian_name' => $guardian,
-            'cnic' => $cnic,
+            'guardian_name' => Contact::optional($guardian),
+            'cnic' => Contact::optional($cnic),
             'phone' => $phone,
         ];
     }

@@ -54,6 +54,16 @@ new class extends Component {
         $this->selectedId = null;
     }
 
+    public function mount(): void
+    {
+        // ?new=1 opens the form straight away, for the dashboard's quick action.
+        // Silently ignored without the permission rather than aborting: a stale
+        // bookmark should land on the list, not on a 403.
+        if (request()->boolean('new') && auth()->user()->can('registrations.create')) {
+            $this->newStudent();
+        }
+    }
+
     /**
      * Creating a student is part of enrolling one, so it rides on
      * `registrations.create`, the permission whose label is literally
@@ -79,9 +89,14 @@ new class extends Component {
         $this->editingId = $student->id;
         $this->fType = $student->type;
         $this->fName = $student->name;
-        $this->fGuardian = $student->guardian_name;
+        // Coalesced because both columns are nullable and these props are typed
+        // `string`: a student registered without a guardian threw a TypeError
+        // here before the form could render, so the one screen that exists to
+        // correct a record was a 500 for exactly the records most likely to
+        // need correcting. Blank is turned back into NULL on save.
+        $this->fGuardian = $student->guardian_name ?? '';
         $this->fPhone = $student->phone;
-        $this->fCnic = $student->cnic;
+        $this->fCnic = $student->cnic ?? '';
         $this->resetValidation();
         $this->formOpen = true;
     }
@@ -168,8 +183,8 @@ new class extends Component {
     {{-- Header --}}
     <div style="display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:18px">
         <div>
-            <h1 style="font-size:20px;font-weight:800;color:var(--ink);margin:0;letter-spacing:-.01em">{{ $scopeLabel }}</h1>
-            <div class="tnum" style="font-size:13px;color:var(--muted);margin-top:3px">{{ $total }} total</div>
+            <h1 style="font-size:var(--fs-xl);font-weight:800;color:var(--ink);margin:0;letter-spacing:-.01em">{{ $scopeLabel }}</h1>
+            <div class="tnum" style="font-size:var(--fs-sm);color:var(--muted);margin-top:3px">{{ $total }} total</div>
         </div>
         <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
             <div class="search" style="width:320px;max-width:100%">
@@ -186,7 +201,7 @@ new class extends Component {
     {{-- Table --}}
     <div class="panel">
         <div class="scroll-x">
-            <table class="table">
+            <table class="table table-cards">
                 <thead>
                     <tr>
                         <th>ID</th>
@@ -208,20 +223,20 @@ new class extends Component {
                             $outstanding = $s->outstanding();
                         @endphp
                         <tr class="clickable" wire:click="viewStudent({{ $s->id }})">
-                            <td class="tnum" style="color:var(--iris);font-weight:700">{{ $s->student_code }}</td>
-                            <td>
+                            <td class="tnum rec-id" data-label="ID" style="color:var(--iris);font-weight:700">{{ $s->student_code }}</td>
+                            <td data-label="Student">
                                 <div style="display:flex;align-items:center;gap:11px">
                                     <x-ui.avatar :name="$s->name" variant="orange" :size="30" />
                                     <div style="min-width:0">
                                         <div style="font-weight:600;color:var(--ink)">{{ $s->name }}</div>
-                                        <div style="font-size:12px;color:var(--muted)">{{ $s->guardian_name }} · {{ $s->typeLabel() }}</div>
+                                        <div style="font-size:var(--fs-xs);color:var(--muted)">{{ $s->guardian_name }} · {{ $s->typeLabel() }}</div>
                                     </div>
                                 </div>
                             </td>
-                            <td class="tnum">{{ $s->cnic }}</td>
-                            <td>{{ $enrolledBy }}</td>
-                            <td class="tnum">{{ $courses }}</td>
-                            <td>
+                            <td class="tnum" data-label="CNIC">{{ $s->cnic }}</td>
+                            <td data-label="Enrolled by">{{ $enrolledBy }}</td>
+                            <td class="tnum" data-label="Courses">{{ $courses }}</td>
+                            <td data-label="Fees">
                                 @if ($courses === 0)
                                     <x-ui.pill tone="cancelled">No enrolment</x-ui.pill>
                                 @elseif ($outstanding <= 0)
@@ -231,7 +246,7 @@ new class extends Component {
                                 @endif
                             </td>
                             @if ($canEdit)
-                                <td class="right">
+                                <td class="right" data-label="Actions">
                                     {{-- wire:click.stop so editing does not also open the drawer --}}
                                     <button class="btn btn-ghost btn-sm" wire:click.stop="editStudent({{ $s->id }})">
                                         <x-icon name="edit" :size="14" /> Edit
@@ -270,8 +285,8 @@ new class extends Component {
                         <div class="drawer-head">
                             <x-ui.avatar :name="$selected->name" variant="orange" :size="42" />
                             <div style="flex:1;min-width:0">
-                                <div style="font-size:16px;font-weight:800;color:var(--ink)">{{ $selected->name }}</div>
-                                <div class="tnum" style="font-size:12.5px;color:var(--iris);font-weight:700;margin-top:2px">{{ $selected->student_code }}</div>
+                                <div style="font-size:var(--fs-md);font-weight:800;color:var(--ink)">{{ $selected->name }}</div>
+                                <div class="tnum" style="font-size:var(--fs-xs);color:var(--iris);font-weight:700;margin-top:2px">{{ $selected->student_code }}</div>
                             </div>
                             <button class="btn-icon" wire:click="closeDrawer"><x-icon name="x" :size="18" /></button>
                         </div>
@@ -285,21 +300,21 @@ new class extends Component {
                                     ['Enrolled by', $enrolledBy, false],
                                 ] as [$label, $value, $isNum])
                                     <div>
-                                        <div style="font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--faint);font-weight:700;margin-bottom:4px">{{ $label }}</div>
-                                        <div @class(['tnum' => $isNum]) style="font-size:13.5px;color:var(--ink);font-weight:500">{{ $value ?: 'Not recorded' }}</div>
+                                        <div style="font-size:var(--fs-2xs);text-transform:uppercase;letter-spacing:.05em;color:var(--faint);font-weight:700;margin-bottom:4px">{{ $label }}</div>
+                                        <div @class(['tnum' => $isNum]) style="font-size:var(--fs-sm);color:var(--ink);font-weight:500">{{ $value ?: 'Not recorded' }}</div>
                                     </div>
                                 @endforeach
                             </div>
 
-                            <div style="font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--faint);font-weight:700;margin-bottom:11px">Enrolments</div>
+                            <div style="font-size:var(--fs-2xs);text-transform:uppercase;letter-spacing:.05em;color:var(--faint);font-weight:700;margin-bottom:11px">Enrolments</div>
                             <div style="display:flex;flex-direction:column;gap:10px">
                                 @forelse ($selected->admissions as $a)
                                     <div style="display:flex;align-items:center;gap:12px;padding:12px 14px;border:1px solid var(--border);border-radius:12px">
                                         <div style="flex:1;min-width:0">
-                                            <div style="font-size:13.5px;font-weight:600;color:var(--ink)">{{ $a->course?->title }}</div>
-                                            <div class="tnum" style="font-size:12px;color:var(--muted);margin-top:1px">{{ $a->reg_no }}</div>
+                                            <div style="font-size:var(--fs-sm);font-weight:600;color:var(--ink)">{{ $a->course?->title }}</div>
+                                            <div class="tnum rec-id" style="font-size:var(--fs-xs);color:var(--muted);margin-top:1px">{{ $a->reg_no }}</div>
                                         </div>
-                                        <div class="tnum" style="font-size:13.5px;font-weight:700;color:var(--ink)">{{ Format::money($a->netShare()) }}</div>
+                                        <div class="tnum" style="font-size:var(--fs-sm);font-weight:700;color:var(--ink)">{{ Format::money($a->netShare()) }}</div>
                                         @if ($a->challan)
                                             @php $st = $a->challan->paymentState(); @endphp
                                             <x-ui.pill :tone="$st" :dot="true">{{ ucfirst($st) }}</x-ui.pill>
@@ -364,45 +379,45 @@ new class extends Component {
                                     @foreach ([['R', 'Regular', 'Regular courses'], ['T', 'Track', 'Track programmes']] as [$val, $title, $sub])
                                         <button type="button" wire:click="$set('fType','{{ $val }}')"
                                                 style="flex:1;text-align:left;padding:12px 14px;border-radius:12px;cursor:pointer;border:1.5px solid {{ $fType === $val ? 'var(--iris)' : 'var(--border2)' }};background:{{ $fType === $val ? 'var(--iris-bg)' : 'var(--surface)' }}">
-                                            <div style="font-size:13.5px;font-weight:700;color:var(--ink)">{{ $title }}</div>
-                                            <div style="font-size:11.5px;color:var(--muted);margin-top:2px">{{ $sub }}</div>
+                                            <div style="font-size:var(--fs-sm);font-weight:700;color:var(--ink)">{{ $title }}</div>
+                                            <div style="font-size:var(--fs-2xs);color:var(--muted);margin-top:2px">{{ $sub }}</div>
                                         </button>
                                     @endforeach
                                 </div>
                                 <div style="display:flex;align-items:center;gap:8px;padding:10px 13px;background:var(--surface2);border:1px dashed var(--border2);border-radius:11px;margin-bottom:18px">
-                                    <span style="font-size:11.5px;font-weight:700;color:var(--faint);letter-spacing:.05em;text-transform:uppercase">ID to assign</span>
-                                    <span class="tnum" style="font-size:14px;font-weight:800;color:var(--iris)">{{ $nextCode }}</span>
+                                    <span style="font-size:var(--fs-2xs);font-weight:700;color:var(--faint);letter-spacing:.05em;text-transform:uppercase">ID to assign</span>
+                                    <span class="tnum" style="font-size:var(--fs-base);font-weight:800;color:var(--iris)">{{ $nextCode }}</span>
                                 </div>
                             @else
                                 <div style="display:flex;align-items:center;gap:8px;padding:10px 13px;background:var(--surface2);border:1px dashed var(--border2);border-radius:11px;margin-bottom:18px">
-                                    <span style="font-size:11.5px;font-weight:700;color:var(--faint);letter-spacing:.05em;text-transform:uppercase">Student ID</span>
-                                    <span class="tnum" style="font-size:14px;font-weight:800;color:var(--iris)">{{ $selected?->student_code }}</span>
-                                    <span style="font-size:11.5px;color:var(--muted);margin-left:auto">Cannot be changed</span>
+                                    <span style="font-size:var(--fs-2xs);font-weight:700;color:var(--faint);letter-spacing:.05em;text-transform:uppercase">Student ID</span>
+                                    <span class="tnum" style="font-size:var(--fs-base);font-weight:800;color:var(--iris)">{{ $selected?->student_code }}</span>
+                                    <span style="font-size:var(--fs-2xs);color:var(--muted);margin-left:auto">Cannot be changed</span>
                                 </div>
                             @endif
 
                             <label class="label">Student name</label>
                             <input wire:model="fName" type="text" class="input" placeholder="Full name" style="margin-bottom:4px">
-                            @error('fName')<div style="font-size:11.5px;color:var(--over);margin-bottom:8px">{{ $message }}</div>@enderror
+                            @error('fName')<div style="font-size:var(--fs-2xs);color:var(--over);margin-bottom:8px">{{ $message }}</div>@enderror
                             <div style="height:12px"></div>
 
                             <label class="label">Guardian name</label>
                             <input wire:model="fGuardian" type="text" class="input" placeholder="Father / guardian" style="margin-bottom:4px">
-                            @error('fGuardian')<div style="font-size:11.5px;color:var(--over);margin-bottom:8px">{{ $message }}</div>@enderror
+                            @error('fGuardian')<div style="font-size:var(--fs-2xs);color:var(--over);margin-bottom:8px">{{ $message }}</div>@enderror
                             <div style="height:12px"></div>
 
                             <label class="label">Phone</label>
                             <input wire:model="fPhone" type="text" inputmode="numeric" maxlength="18"
                                    x-data x-on:input="window.bbtApplyMask($el, window.bbtMaskPhone)"
                                    class="input tnum" placeholder="+92 300 1234567" style="margin-bottom:4px">
-                            @error('fPhone')<div style="font-size:11.5px;color:var(--over);margin-bottom:8px">{{ $message }}</div>@enderror
+                            @error('fPhone')<div style="font-size:var(--fs-2xs);color:var(--over);margin-bottom:8px">{{ $message }}</div>@enderror
                             <div style="height:12px"></div>
 
                             <label class="label">CNIC / B-Form</label>
                             <input wire:model="fCnic" type="text" inputmode="numeric" maxlength="15"
                                    x-data x-on:input="window.bbtApplyMask($el, window.bbtMaskCnic)"
                                    class="input tnum" placeholder="35201-1234567-1" style="margin-bottom:4px">
-                            @error('fCnic')<div style="font-size:11.5px;color:var(--over);margin-bottom:8px">{{ $message }}</div>@enderror
+                            @error('fCnic')<div style="font-size:var(--fs-2xs);color:var(--over);margin-bottom:8px">{{ $message }}</div>@enderror
 
                             <div style="display:flex;gap:10px;margin-top:24px">
                                 <button type="button" class="btn btn-ghost" style="flex:0 0 auto" @click="open=false">Cancel</button>
