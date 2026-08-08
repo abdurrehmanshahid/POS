@@ -357,7 +357,7 @@ new class extends Component {
         $canAll = $user->can('scope.all');
 
         $admissions = Admission::visibleTo($user)
-            ->with(['student', 'course', 'enroller', 'challan'])
+            ->with(['student', 'course', 'enroller', 'challan.installments'])
             ->latest()
             ->get()
             ->filter(function (Admission $a) use ($matcher) {
@@ -463,7 +463,7 @@ new class extends Component {
                                     <span style="font-size:12.5px;color:var(--ink2)">{{ $a->enroller->name }}</span>
                                 </div>
                             </td>
-                            <td class="right tnum" style="font-weight:700">{{ Format::money($a->challan?->net_amount ?? 0) }}</td>
+                            <td class="right tnum" style="font-weight:700">{{ Format::money($a->netShare()) }}</td>
                             <td><x-ui.pill :tone="$pillTone" :dot="! $cancelled">{{ $pillLabel }}</x-ui.pill></td>
                         </tr>
                     @empty

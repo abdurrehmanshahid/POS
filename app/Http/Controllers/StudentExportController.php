@@ -52,7 +52,7 @@ class StudentExportController extends Controller
                 // who has handed over half their fee owes half; the old
                 // arithmetic exported them as owing all of it, so this file
                 // contradicted the student drawer sitting next to it on screen.
-                $outstanding = $adm->sum(fn ($a) => (int) ($a->challan?->balance() ?? 0));
+                $outstanding = $s->outstanding();
 
                 $status = $adm->isEmpty() ? 'No enrolment' : ($outstanding <= 0 ? 'Cleared' : 'Owes');
 

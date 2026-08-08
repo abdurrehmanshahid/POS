@@ -127,7 +127,16 @@ class InstituteCoreTest extends TestCase
 
     // ---- Registration fan-out ---------------------------------------------
 
-    public function test_multi_course_registration_creates_one_challan_each_with_audit(): void
+    /**
+     * A multi-course registration produces ONE invoice billing every course.
+     *
+     * This test previously asserted the opposite, one challan per course, and
+     * it was changed rather than kept because the institute's own paperwork
+     * settles it: Invoice #1077 bills a single student for three Shopify
+     * courses on one document with one fee, one discount and one balance. The
+     * old shape handed a three-course student three invoices to reconcile.
+     */
+    public function test_multi_course_registration_creates_one_invoice_billing_every_course(): void
     {
         $officer = $this->officer();
         $courses = Course::whereIn('code', ['WD-101', 'AI-201'])->pluck('id')->all();
@@ -142,17 +151,114 @@ class InstituteCoreTest extends TestCase
             'discount_reason' => 'Referral',
         ]);
 
-        $this->assertCount(2, $result['admissions']);
-        $this->assertCount(2, $result['challans']);
+        $this->assertCount(2, $result['admissions'], 'Two courses, so two enrolments.');
+        $this->assertCount(1, $result['challans'], 'Billed on a single invoice.');
         $this->assertSame('BBT-R26-0011', $result['student']->student_code);
 
-        // WD-101 fee 20000, 10% -> disc 2000, net 18000; discount audited.
-        $wd = collect($result['challans'])->firstWhere('base_amount', 20000);
-        $this->assertSame(2000, $wd->discount_amount);
-        $this->assertSame(18000, $wd->net_amount);
-        $this->assertSame($officer->id, $wd->discount_approved_by);
-        $this->assertTrue($wd->auditLogs()->where('action', 'Discount applied')->exists());
-        $this->assertTrue($wd->auditLogs()->where('action', 'Challan issued')->exists());
+        // WD-101 20000 + AI-201 20000 = 40000, 10% -> disc 4000, net 36000.
+        $invoice = $result['challans'][0];
+        $this->assertSame(40000, $invoice->base_amount);
+        $this->assertSame(4000, $invoice->discount_amount);
+        $this->assertSame(36000, $invoice->net_amount);
+        $this->assertSame($officer->id, $invoice->discount_approved_by);
+        $this->assertTrue($invoice->auditLogs()->where('action', 'Discount applied')->exists());
+        $this->assertTrue($invoice->auditLogs()->where('action', 'Challan issued')->exists());
+
+        // Both enrolments are billed on it, each carrying its own course's fee.
+        $billed = $invoice->admissions()->pluck('billed_amount', 'course_id');
+        $this->assertCount(2, $billed);
+        $this->assertSame(40000, (int) $billed->sum(), 'The shares must reconstruct the invoice exactly.');
+
+        // The invariant the whole model rests on.
+        $this->assertSame($invoice->base_amount, $invoice->liveBilledTotal());
+
+        // And every enrolment resolves back to the one invoice, including the
+        // non-anchor. Under the old relation the second course reported having
+        // no challan while being billed on one.
+        foreach ($result['admissions'] as $admission) {
+            $this->assertSame($invoice->id, $admission->refresh()->challan?->id);
+        }
+    }
+
+    /**
+     * Cancelling one course on a grouped invoice must not take the invoice,
+     * and the money on it, out of the reports while other courses are live.
+     *
+     * Money totals used to test the ANCHOR enrolment's status, so cancelling
+     * that single enrolment dropped the whole invoice out of billed and
+     * received even though the student was still enrolled on, and still owed
+     * for, everything else on it.
+     */
+    public function test_cancelling_one_course_leaves_the_rest_of_its_invoice_billed(): void
+    {
+        $admin = $this->admin();
+        $ledger = app(Ledger::class);
+
+        $result = app(RegistrationService::class)->register($admin, [
+            'new_student' => [
+                'type' => 'R', 'name' => 'Partial Cancel', 'guardian_name' => 'Guardian',
+                'phone' => '+92 300 6660000', 'cnic' => '35201-6660000-3',
+            ],
+            'course_ids' => Course::whereIn('code', ['WD-101', 'AI-201'])->pluck('id')->all(),
+        ]);
+
+        $invoice = $result['challans'][0];
+        $billedWithInvoice = $ledger->billed($admin);
+
+        // The anchor: the enrolment challans.admission_id points at.
+        $anchor = $result['admissions'][0];
+        $this->assertSame($anchor->id, $invoice->admission_id);
+
+        app(ChallanActions::class)->cancel($anchor, $admin, 'Student dropped this course');
+
+        $this->assertSame(
+            $billedWithInvoice,
+            $ledger->billed($admin),
+            'The other course on this invoice is still live, so the invoice is still billed.'
+        );
+
+        // Once every enrolment on it is cancelled, it correctly falls out.
+        app(ChallanActions::class)->cancel($result['admissions'][1], $admin, 'Student withdrew entirely');
+
+        $this->assertSame(
+            $billedWithInvoice - (int) $invoice->net_amount,
+            $ledger->billed($admin),
+            'With nothing live on it, the invoice leaves the totals.'
+        );
+    }
+
+    /**
+     * Revenue must reach every course on a grouped invoice, not only the one
+     * that heads it. This is the failure `billed_amount` exists to prevent.
+     */
+    public function test_a_grouped_invoice_credits_revenue_to_every_course_on_it(): void
+    {
+        $officer = $this->officer();
+
+        $result = app(RegistrationService::class)->register($officer, [
+            'new_student' => [
+                'type' => 'R', 'name' => 'Grouped Revenue', 'guardian_name' => 'Guardian',
+                'phone' => '+92 300 4440000', 'cnic' => '35201-4440000-1',
+            ],
+            'course_ids' => Course::whereIn('code', ['WD-101', 'AI-201'])->pluck('id')->all(),
+        ]);
+
+        $invoice = $result['challans'][0];
+        $shares = $invoice->admissions()->with('course')->get();
+
+        $this->assertSame(
+            ['AI-201', 'WD-101'],
+            $shares->pluck('course.code')->sort()->values()->all(),
+            'Both courses are billed on the invoice and can be reported on.'
+        );
+
+        foreach ($shares as $share) {
+            $this->assertSame(
+                (int) $share->course->fee,
+                $share->billed_amount,
+                $share->course->code.' carries its own fee as its share of the invoice.'
+            );
+        }
     }
 
     public function test_discount_without_reason_is_rejected(): void

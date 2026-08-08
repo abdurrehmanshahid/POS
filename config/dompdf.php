@@ -45,7 +45,22 @@ return [
          * Times-Roman, Times-Bold, Times-BoldItalic, Times-Italic,
          * Symbol, ZapfDingbats.
          */
-        'font_dir' => storage_path('fonts'), // advised by dompdf (https://github.com/dompdf/dompdf/pull/782)
+        /*
+         * dompdf writes a font cache the first time it renders, so this path
+         * has to be writable or the fee voucher - the most-used output in the
+         * application - throws instead of printing.
+         *
+         * `storage/fonts` is not in the repository and the deploy steps only
+         * chmod `storage` itself, so on a host where PHP cannot create it the
+         * failure lands on a student waiting at the counter. On a serverless
+         * runtime the whole application directory is read-only and this is
+         * guaranteed to fail.
+         *
+         * DOMPDF_FONT_DIR lets a deployment point both of these at a writable
+         * location (`/tmp` on Lambda or any read-only filesystem) without a
+         * code change. Unset, the behaviour is exactly as before.
+         */
+        'font_dir' => env('DOMPDF_FONT_DIR', storage_path('fonts')), // advised by dompdf (https://github.com/dompdf/dompdf/pull/782)
 
         /**
          * The location of the DOMPDF font cache directory
@@ -55,7 +70,7 @@ return [
          *
          * Note: This directory must exist and be writable by the webserver process.
          */
-        'font_cache' => storage_path('fonts'),
+        'font_cache' => env('DOMPDF_FONT_DIR', storage_path('fonts')),
 
         /**
          * The location of a temporary directory.

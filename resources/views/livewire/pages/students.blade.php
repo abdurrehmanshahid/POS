@@ -133,7 +133,7 @@ new class extends Component {
             ->with(['admissions' => fn ($q) => $q
                 ->where('status', '!=', 'cancelled')
                 ->when(! $user->can('scope.all'), fn ($qq) => $qq->where('enrolled_by', $user->id))
-                ->with(['course', 'enroller', 'challan'])])
+                ->with(['course', 'enroller', 'challan.installments', 'challan.payments'])])
             ->orderBy('name')
             ->get();
 
@@ -205,7 +205,7 @@ new class extends Component {
                             $courses = $adms->count();
                             $recent = $adms->sortByDesc('id')->first();
                             $enrolledBy = $recent?->enroller?->name ?? 'Not enrolled';
-                            $outstanding = $adms->sum(fn ($a) => $a->challan && ! $a->challan->isPaid() ? $a->challan->net_amount : 0);
+                            $outstanding = $s->outstanding();
                         @endphp
                         <tr class="clickable" wire:click="viewStudent({{ $s->id }})">
                             <td class="tnum" style="color:var(--iris);font-weight:700">{{ $s->student_code }}</td>
@@ -299,7 +299,7 @@ new class extends Component {
                                             <div style="font-size:13.5px;font-weight:600;color:var(--ink)">{{ $a->course?->title }}</div>
                                             <div class="tnum" style="font-size:12px;color:var(--muted);margin-top:1px">{{ $a->reg_no }}</div>
                                         </div>
-                                        <div class="tnum" style="font-size:13.5px;font-weight:700;color:var(--ink)">{{ Format::money($a->challan?->net_amount) }}</div>
+                                        <div class="tnum" style="font-size:13.5px;font-weight:700;color:var(--ink)">{{ Format::money($a->netShare()) }}</div>
                                         @if ($a->challan)
                                             @php $st = $a->challan->paymentState(); @endphp
                                             <x-ui.pill :tone="$st" :dot="true">{{ ucfirst($st) }}</x-ui.pill>

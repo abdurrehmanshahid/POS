@@ -3,8 +3,10 @@
 namespace Tests\Feature;
 
 use App\Models\Challan;
+use App\Models\Course;
 use App\Models\User;
 use App\Services\ChallanActions;
+use App\Services\RegistrationService;
 use App\Services\Reporting;
 use App\Support\Period;
 use Database\Seeders\DatabaseSeeder;
@@ -105,6 +107,105 @@ class ReportsTest extends TestCase
         $today = $reporting->summary($admin, Period::resolve('today'));
 
         $this->assertSame((int) $challan->net_amount, $today['collected']);
+    }
+
+    /**
+     * A grouped invoice must credit every course it bills, in proportion.
+     *
+     * Before the invoice could span several enrolments, revenue-by-course
+     * joined through `challans.admission_id`, which names only the first
+     * course. A student paying 40,000 for two courses on one document reported
+     * the whole 40,000 against whichever course headed the invoice and nothing
+     * at all against the other, so a course could look dead while genuinely
+     * earning.
+     */
+    public function test_a_grouped_invoice_splits_its_revenue_across_its_courses(): void
+    {
+        $admin = $this->admin();
+        $reporting = app(Reporting::class);
+
+        $before = $reporting->revenueByCourse($admin, Period::resolve('today'), 50)
+            ->keyBy('code')->map(fn ($c) => $c->total);
+
+        // WD-101 at 20,000 and AI-201 at 20,000 on one invoice, no discount.
+        $result = app(RegistrationService::class)->register($admin, [
+            'new_student' => [
+                'type' => 'R', 'name' => 'Split Revenue', 'guardian_name' => 'Guardian',
+                'phone' => '+92 300 7770000', 'cnic' => '35201-7770000-9',
+            ],
+            'course_ids' => Course::whereIn('code', ['WD-101', 'AI-201'])->pluck('id')->all(),
+        ]);
+
+        $invoice = $result['challans'][0];
+        $this->assertSame(40000, $invoice->base_amount);
+
+        app(ChallanActions::class)->markPaid($invoice, $admin, 'Cash');
+
+        $after = $reporting->revenueByCourse($admin, Period::resolve('today'), 50)
+            ->keyBy('code')->map(fn ($c) => $c->total);
+
+        $wdGain = $after['WD-101'] - ($before['WD-101'] ?? 0);
+        $aiGain = $after['AI-201'] - ($before['AI-201'] ?? 0);
+
+        $this->assertSame(20000, $wdGain, 'WD-101 earned its own half of the invoice.');
+        $this->assertSame(20000, $aiGain, 'AI-201 earned its half too, rather than nothing.');
+
+        // And the split still reconciles with what was actually collected.
+        $this->assertSame(40000, $wdGain + $aiGain);
+    }
+
+    /**
+     * Cancelling one course before paying must not lose money from the
+     * per-course report.
+     *
+     * Every apportioning query filters its rows to live enrolments, so dividing
+     * by the invoice's full `base_amount` meant the shares stopped summing to
+     * the invoice the moment a course was dropped — and dropping a course
+     * before any money is collected is explicitly permitted. On a 40,000
+     * invoice discounted to 36,000, the Reports screen showed "Collected
+     * 36,000" beside a revenue-by-course table totalling 18,000. Two figures,
+     * one screen, 18,000 apart.
+     */
+    public function test_a_cancelled_course_does_not_lose_revenue_from_the_per_course_report(): void
+    {
+        $admin = $this->admin();
+        $reporting = app(Reporting::class);
+        $period = Period::resolve('today');
+
+        $beforeByCourse = $reporting->revenueByCourse($admin, $period, 50)->sum('total');
+        $beforeCollected = $reporting->summary($admin, $period)['collected'];
+
+        $result = app(RegistrationService::class)->register($admin, [
+            'new_student' => [
+                'type' => 'R', 'name' => 'Dropped A Course', 'guardian_name' => 'Guardian',
+                'phone' => '+92 300 2220000', 'cnic' => '35201-2220000-4',
+            ],
+            'course_ids' => Course::whereIn('code', ['WD-101', 'AI-201'])->pluck('id')->all(),
+            'discount_pct' => 10,
+            'discount_reason' => 'Referral',
+        ]);
+
+        $invoice = $result['challans'][0];
+        $this->assertSame(36000, $invoice->net_amount);
+
+        // Permitted: nothing has been collected yet.
+        app(ChallanActions::class)->cancel($result['admissions'][1], $admin, 'Student dropped it');
+
+        app(ChallanActions::class)->markPaid($invoice->refresh(), $admin, 'Cash');
+
+        $collected = $reporting->summary($admin, $period)['collected'] - $beforeCollected;
+        $byCourse = $reporting->revenueByCourse($admin, $period, 50)->sum('total') - $beforeByCourse;
+
+        $this->assertSame(36000, $collected);
+        $this->assertSame(
+            $collected,
+            $byCourse,
+            'The remaining course carries the whole invoice, so the shares still add up to what was banked.'
+        );
+
+        // And the dropped course is worth nothing to the student.
+        $this->assertSame(0, $result['admissions'][1]->refresh()->netShare());
+        $this->assertSame(36000, $result['admissions'][0]->refresh()->netShare());
     }
 
     public function test_a_part_payment_is_reported_the_day_it_arrives(): void

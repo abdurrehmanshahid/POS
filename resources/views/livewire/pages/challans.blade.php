@@ -112,7 +112,11 @@ new class extends Component {
         $L = app(Ledger::class);
         $matcher = new Matcher($this->q);
 
-        $all = $this->scoped()->with(['admission.student', 'admission.course'])->get();
+        // `installments` is eager loaded because every row below calls
+        // paymentState(), and on a split plan that consults the schedule to see
+        // whether an earlier installment has been missed. Without this the
+        // list fires one query per challan.
+        $all = $this->scoped()->with(['admission.student', 'admission.course', 'installments'])->get();
 
         // Counts come from the unfiltered set, so a chip always shows how many
         // it would reveal rather than how many survived the current filter.

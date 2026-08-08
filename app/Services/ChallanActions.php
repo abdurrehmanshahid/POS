@@ -16,6 +16,8 @@ use RuntimeException;
  */
 class ChallanActions
 {
+    public function __construct(private Installments $installments) {}
+
     /** Settle the whole outstanding balance in one movement (spec §7.6). */
     public function markPaid(Challan $challan, User $actor, string $via): Challan
     {
@@ -90,8 +92,19 @@ class ChallanActions
                 'paid_via' => $via,
             ]);
 
+            // The schedule is re-derived from the ledger on EVERY collection,
+            // not only when the fee settles in full.
+            //
+            // The previous line here marked every installment paid the moment
+            // the challan settled, and did nothing before that. On a two-part
+            // plan that is backwards: the advance a student hands over on
+            // admission day is precisely the payment that settles installment
+            // one, and until it is recorded as such the student shows as
+            // overdue on a deadline they actually met, while the second
+            // installment they genuinely still owe is invisible.
+            $this->installments->reconcile($challan);
+
             if ($settled) {
-                $challan->installments()->update(['status' => 'paid', 'paid_at' => now()]);
                 Audit::markedPaid($challan, $actor, $via);
             } else {
                 Audit::record('Part payment received', $actor, [

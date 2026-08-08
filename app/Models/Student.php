@@ -48,6 +48,33 @@ class Student extends Model
         });
     }
 
+    /**
+     * What this student still owes across all their invoices.
+     *
+     * Summed over DISTINCT invoices, because one invoice can bill several
+     * courses and adding it up per enrolment charges the same fee once per
+     * course — a three-course student read as owing three times their fee.
+     *
+     * This number has now been wrong twice: once for reading `net_amount`
+     * instead of `balance()`, so an advance already handed over was ignored,
+     * and once for the double-count above. It appeared in three subtly
+     * different forms across the staff screen, the owner console and the CSV
+     * that goes to accounts, which is exactly how it got out of step. One
+     * implementation, so the fourth surface cannot invent a fifth answer.
+     *
+     * Answers from the loaded relation, so callers that already eager load
+     * `admissions.challan.payments` pay nothing extra.
+     */
+    public function outstanding(): int
+    {
+        return (int) $this->admissions
+            ->where('status', '!=', 'cancelled')
+            ->pluck('challan')
+            ->filter()
+            ->unique('id')
+            ->sum(fn (Challan $challan) => $challan->balance());
+    }
+
     // ---- Display -----------------------------------------------------------
 
     public function initials(): string

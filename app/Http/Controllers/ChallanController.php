@@ -22,7 +22,10 @@ class ChallanController extends Controller
     {
         $challan->load(
             'admission.student', 'admission.course.trainer', 'admission.cohort',
-            'admission.enroller', 'discountApprover', 'installments', 'payments',
+            // `admissions.course` (plural) as well as the anchor's: the voucher
+            // lists every course on the invoice, and without this it lazy-loads
+            // one query per course while rendering the PDF.
+            'admission.enroller', 'admissions.course', 'discountApprover', 'installments', 'payments',
         );
 
         // Officers may only download their own enrolments (spec §6).

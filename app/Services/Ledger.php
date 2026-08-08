@@ -8,6 +8,7 @@ use App\Models\Course;
 use App\Models\Payment;
 use App\Models\User;
 use App\Support\Clock;
+use App\Support\RevenueShare;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
@@ -20,10 +21,24 @@ use Illuminate\Support\Facades\DB;
  */
 class Ledger
 {
-    /** Challans on non-cancelled admissions visible to the user. */
+    /**
+     * Challans still billing at least one live enrolment, visible to the user.
+     *
+     * Tested against `admissions` (every enrolment on the invoice) rather than
+     * `admission` (the anchor alone). Now that one invoice can bill several
+     * courses, filtering on the anchor meant cancelling that one enrolment
+     * dropped the ENTIRE invoice out of every money total, including any
+     * advance already collected against it, while the other courses on it
+     * remained live and owed. That is the same shape as the purge and
+     * cancellation holes: money silently leaving the reports with nothing
+     * recording that it ever existed.
+     *
+     * An invoice counts while any of its enrolments is live, and falls out only
+     * once they are all cancelled, which is exactly when nothing is owed on it.
+     */
     public function scopedChallans(User $user): Builder
     {
-        return Challan::query()->whereHas('admission', function (Builder $a) use ($user) {
+        return Challan::query()->whereHas('admissions', function (Builder $a) use ($user) {
             $a->where('status', '!=', 'cancelled');
             if (! $user->hasPermission('scope.all')) {
                 $a->where('enrolled_by', $user->id);
@@ -48,7 +63,11 @@ class Ledger
     public function scopedPayments(User $user): Builder
     {
         return Payment::query()
-            ->whereIn('challan_id', $this->scopedChallans($user)->select('challans.id'));
+            // Table-qualified. `admissions` also carries a `challan_id` now
+            // that one invoice can bill several enrolments, so callers that
+            // join it, revenueByCourse among them, hit an ambiguous column and
+            // failed at the driver.
+            ->whereIn('payments.challan_id', $this->scopedChallans($user)->select('challans.id'));
     }
 
     /**
@@ -118,17 +137,23 @@ class Ledger
     {
         // Σ payments, matching received(): a course where students are halfway
         // through paying should show the half that arrived, not zero and not all.
+        // Joined through `admissions.challan_id` and apportioned, exactly as
+        // Reporting::revenueByCourse does. Reaching the invoice through its
+        // anchor credited a grouped invoice's whole revenue to the course that
+        // happened to head it and nothing to the others, so this dashboard
+        // card and the Reports screen disagreed about the same money.
         return $this->scopedChallans($user)
             ->join('payments', 'payments.challan_id', '=', 'challans.id')
-            ->join('admissions', 'admissions.id', '=', 'challans.admission_id')
+            ->join('admissions', 'admissions.challan_id', '=', 'challans.id')
             ->join('courses', 'courses.id', '=', 'admissions.course_id')
+            ->where('admissions.status', '!=', 'cancelled')
             ->groupBy('courses.id', 'courses.title', 'courses.code')
             ->orderByDesc('amount')
             ->limit($limit)
             ->get([
                 'courses.title as title',
                 'courses.code as code',
-                DB::raw('SUM(payments.amount) as amount'),
+                DB::raw(RevenueShare::sumOfPayments().' as amount'),
             ])
             ->map(fn ($r) => ['title' => $r->title, 'code' => $r->code, 'amount' => (int) $r->amount])
             ->all();
@@ -219,8 +244,9 @@ class Ledger
 
     private function overdueChallansQuery(User $user): Builder
     {
-        return $this->scopedChallans($user)
-            ->where('challans.status', '!=', 'paid')
-            ->whereDate('due_date', '<', Clock::today()->toDateString());
+        // The predicate itself lives on the model (Challan::scopeOverdue), so
+        // this query, the owner console's count and the officer scorecard
+        // cannot drift apart again.
+        return $this->scopedChallans($user)->overdue();
     }
 }

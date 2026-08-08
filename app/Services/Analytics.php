@@ -10,6 +10,7 @@ use App\Models\Payment;
 use App\Models\Student;
 use App\Models\User;
 use App\Support\Clock;
+use App\Support\RevenueShare;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
@@ -54,7 +55,12 @@ class Analytics
                     $join->where('admissions.created_at', '>=', $since);
                 }
             })
-            ->leftJoin('challans', 'challans.admission_id', '=', 'admissions.id')
+            // Through the enrolment's own invoice link. Joining on
+            // `challans.admission_id` only ever matched the anchor, so every
+            // non-anchor course an officer enrolled counted as billing nothing
+            // and their collection rate was measured against a total that
+            // excluded most of their own work.
+            ->leftJoin('challans', 'challans.id', '=', 'admissions.challan_id')
             ->groupBy('users.id', 'users.name', 'users.username', 'users.role_id', 'users.deleted_at')
             ->select([
                 'users.id',
@@ -64,11 +70,17 @@ class Analytics
                 'users.deleted_at',
                 DB::raw('COUNT(DISTINCT admissions.id) as enrolments'),
                 DB::raw('COUNT(DISTINCT admissions.student_id) as students'),
-                DB::raw('COALESCE(SUM(challans.net_amount), 0) as billed'),
+                DB::raw('COALESCE('.RevenueShare::sumOfBilled().', 0) as billed'),
                 DB::raw('COALESCE(SUM(challans.discount_amount), 0) as discounts'),
-                DB::raw("COALESCE(SUM(CASE WHEN challans.status != 'paid' AND challans.due_date < ? THEN 1 ELSE 0 END), 0) as overdue"),
+                // Counts DISTINCT invoices, and tests the same deadline the rest
+                // of the app does. Left as a bare due_date comparison it
+                // undercounted against counts()['overdue'] two methods below,
+                // which had been taught about split plans and this had not.
+                DB::raw("COUNT(DISTINCT CASE WHEN challans.status != 'paid' AND (challans.due_date < ? OR EXISTS (SELECT 1 FROM installments i WHERE i.challan_id = challans.id AND i.status = 'unpaid' AND i.due_date < ?)) THEN challans.id END) as overdue"),
             ])
-            ->addBinding(Clock::today()->toDateString(), 'select')
+            // Two bindings: the overdue expression tests today against both the
+            // challan's own due date and its instalment schedule.
+            ->addBinding([Clock::today()->toDateString(), Clock::today()->toDateString()], 'select')
             ->get();
 
         return $rows->map(function ($r) use ($collected) {
@@ -92,11 +104,14 @@ class Analytics
     {
         return Payment::query()
             ->join('challans', 'challans.id', '=', 'payments.challan_id')
-            ->join('admissions', 'admissions.id', '=', 'challans.admission_id')
+            ->join('admissions', 'admissions.challan_id', '=', 'challans.id')
             ->where('admissions.status', '!=', 'cancelled')
             ->when($since, fn ($q) => $q->where('admissions.created_at', '>=', $since))
             ->groupBy('admissions.enrolled_by')
-            ->select('admissions.enrolled_by', DB::raw('SUM(payments.amount) as total'))
+            // Apportioned, so an invoice covering courses enrolled by two
+            // different officers credits each with the share they actually
+            // brought in rather than giving all of it to whoever anchored it.
+            ->select('admissions.enrolled_by', DB::raw(RevenueShare::sumOfPayments().' as total'))
             ->get()
             ->mapWithKeys(fn ($r) => [(int) $r->enrolled_by => (int) $r->total])
             ->all();
@@ -106,7 +121,7 @@ class Analytics
     public function ledger(): array
     {
         $agg = Challan::query()
-            ->whereHas('admission', fn ($q) => $q->where('status', '!=', 'cancelled'))
+            ->whereHas('admissions', fn ($q) => $q->where('status', '!=', 'cancelled'))
             ->selectRaw('COUNT(*) as challans')
             ->selectRaw('COALESCE(SUM(net_amount), 0) as billed')
             ->first();
@@ -117,8 +132,8 @@ class Analytics
         // made the owner console under-report the institute's own revenue by
         // every advance it had taken but not yet settled.
         $received = (int) Payment::query()
-            ->whereIn('challan_id', Challan::query()
-                ->whereHas('admission', fn ($q) => $q->where('status', '!=', 'cancelled'))
+            ->whereIn('payments.challan_id', Challan::query()
+                ->whereHas('admissions', fn ($q) => $q->where('status', '!=', 'cancelled'))
                 ->select('challans.id'))
             ->sum('amount');
 
@@ -147,9 +162,9 @@ class Analytics
             'courses' => Course::where('is_active', true)->count(),
             'admissions' => Admission::where('status', '!=', 'cancelled')->count(),
             'cancelled' => Admission::where('status', 'cancelled')->count(),
-            'overdue' => Challan::where('status', '!=', 'paid')
-                ->whereDate('due_date', '<', Clock::today())
-                ->whereHas('admission', fn ($q) => $q->where('status', '!=', 'cancelled'))
+            'overdue' => Challan::query()
+                ->overdue()
+                ->whereHas('admissions', fn ($q) => $q->where('status', '!=', 'cancelled'))
                 ->count(),
         ];
     }
@@ -161,12 +176,15 @@ class Analytics
      */
     public function revenueByCourse(int $limit = 8): Collection
     {
+        // Through `admissions.challan_id` and apportioned, matching the staff
+        // dashboard and the Reports screen. Reaching the invoice by its anchor
+        // credited a grouped invoice entirely to whichever course headed it.
         $collected = Payment::query()
             ->join('challans', 'challans.id', '=', 'payments.challan_id')
-            ->join('admissions', 'admissions.id', '=', 'challans.admission_id')
+            ->join('admissions', 'admissions.challan_id', '=', 'challans.id')
             ->where('admissions.status', '!=', 'cancelled')
             ->groupBy('admissions.course_id')
-            ->select('admissions.course_id', DB::raw('SUM(payments.amount) as total'))
+            ->select('admissions.course_id', DB::raw(RevenueShare::sumOfPayments().' as total'))
             ->get()
             ->mapWithKeys(fn ($r) => [(int) $r->course_id => (int) $r->total])
             ->all();
@@ -179,12 +197,16 @@ class Analytics
                 $j->on('admissions.course_id', '=', 'courses.id')
                     ->where('admissions.status', '!=', 'cancelled');
             })
-            ->leftJoin('challans', 'challans.admission_id', '=', 'admissions.id')
+            ->leftJoin('challans', 'challans.id', '=', 'admissions.challan_id')
             ->groupBy('courses.id', 'courses.code', 'courses.title', 'courses.capacity')
             ->select([
                 'courses.id', 'courses.code', 'courses.title', 'courses.capacity',
                 DB::raw('COUNT(DISTINCT admissions.id) as enrolments'),
-                DB::raw('COALESCE(SUM(challans.net_amount), 0) as billed'),
+                // The course's share of the invoice's net, not the whole
+                // invoice. Summing net_amount per enrolment counted a grouped
+                // invoice once per course and inflated "billed" by the course
+                // count on the owner's own console.
+                DB::raw('COALESCE('.RevenueShare::sumOfBilled().', 0) as billed'),
             ])
             ->get()
             ->map(function ($c) use ($collected) {

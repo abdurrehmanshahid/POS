@@ -27,6 +27,36 @@
         $method = $challan->payments->sortByDesc('received_at')->first()?->method ?? $challan->paid_via;
 
         $copies = ['Student Copy', 'Head Office Copy', 'Campus Copy'];
+
+        // Every course this invoice bills, not just the one that heads it. An
+        // invoice covering three Shopify levels has to name all three or the
+        // student cannot tell what they paid for. Falls back to the anchor's
+        // course so a challan raised before grouped invoicing still prints.
+        // Cancelled enrolments are excluded: a course the student dropped has
+        // no business on the voucher they are handed to pay with.
+        $billedCourses = $challan->admissions
+            ->where('status', '!=', 'cancelled')
+            ->pluck('course')
+            ->filter();
+        if ($billedCourses->isEmpty() && $course) {
+            $billedCourses = collect([$course]);
+        }
+
+        $contactEmail = config('institute.contact_email');
+        $contactPhone = config('institute.contact_phone');
+
+        // Embedded from the local filesystem, never a URL: dompdf runs with
+        // `enable_remote => false`, and a voucher must render identically on a
+        // shared host with no outbound network. Guarded with is_file() so a
+        // missing asset degrades to the wordmark below rather than throwing
+        // while a parent is waiting at the counter for their copy.
+        // A print-sized copy, not the screen logo. dompdf embeds the source
+        // bitmap once per placement, and this voucher places it three times, so
+        // the screen asset produced a ~900 KB PDF for one fee challan, on a
+        // document that gets printed and WhatsApped to parents. At 140px tall
+        // it is still comfortably above the 20px it renders at.
+        $logo = public_path('assets/bbt-logo-print.png');
+        $hasLogo = is_file($logo);
     @endphp
     <style>
         /* DomPDF: table layout only, no flexbox or grid. Landscape A4, three
@@ -40,7 +70,12 @@
 
         .copy-head { text-align: center; padding: 7px 6px 5px; border-bottom: 1px solid #cfd4e6; }
         .copy-title { font-size: 10px; font-weight: bold; color: #2A2668; letter-spacing: .4px; text-transform: uppercase; }
-        .brand { font-size: 11px; font-weight: bold; color: #2A2668; margin-top: 3px; }
+        /* Height only, so the mark keeps its aspect ratio on all three copies.
+           A three-up landscape voucher has very little vertical room, so this
+           sits deliberately below the copy title rather than competing with it. */
+        .logo { height: 28px; margin-top: 5px; }
+        .bullet { color: #6b7192; }
+        .brand { font-size: 11px; font-weight: bold; color: #2A2668; margin-top: 1px; }
         .brand small { display: block; font-size: 7.5px; color: #6b7192; font-weight: normal; margin-top: 1px; }
         .docno { font-size: 10px; font-weight: bold; color: #12132a; margin-top: 4px; }
 
@@ -76,8 +111,15 @@
             <td class="copy">
                 <div class="copy-head">
                     <div class="copy-title">{{ $copy }}</div>
+                    @if ($hasLogo)
+                        <img src="{{ $logo }}" alt="" class="logo">
+                    @endif
                     <div class="brand">{{ $settings->name }}<small>Fee Challan / Payment Voucher</small></div>
-                    <div class="docno tnum">Challan #: {{ $challan->challan_no }}</div>
+                    {{-- "Invoice #" is what the institute's existing paperwork
+                         calls this, and what a student asks for at the counter.
+                         The identifier itself stays fully qualified so two
+                         years of numbering cannot collide. --}}
+                    <div class="docno tnum">Invoice #: {{ $challan->challan_no }}</div>
                 </div>
 
                 <div class="sec">Bank Details</div>
@@ -90,9 +132,11 @@
 
                 <div class="sec">Student Details</div>
                 <table class="kv">
-                    <tr><td class="k">Student ID</td><td class="v">{{ $student?->student_code }}</td></tr>
+                    {{-- Field order follows the institute's existing invoice
+                         exactly, so counter staff read the same rows in the
+                         same places they already know. --}}
                     <tr><td class="k">Name</td><td class="v">{{ $student?->name }}</td></tr>
-                    <tr><td class="k">Father / Guardian</td><td class="v">{{ $student?->guardian_name }}</td></tr>
+                    <tr><td class="k">Father</td><td class="v">{{ $student?->guardian_name ?: '—' }}</td></tr>
                     <tr><td class="k">Phone</td><td class="v">{{ $student?->phone }}</td></tr>
                     <tr><td class="k">CNIC</td><td class="v">{{ $student?->cnic }}</td></tr>
                     <tr><td class="k">Payment Method</td><td class="v">{{ $method ?: '—' }}</td></tr>
@@ -101,18 +145,28 @@
 
                 <div class="sec">Fee Details</div>
                 <table class="kv">
-                    <tr><td class="k">Admission #</td><td class="v">{{ $adm?->reg_no }}</td></tr>
-                    <tr><td class="k">Course</td><td class="v">{{ $course?->title }}<br><span style="font-weight:normal;color:#6b7192">{{ $course?->code }}</span></td></tr>
-                    <tr><td class="k">Batch</td><td class="v">{{ $cohort?->name ?? '—' }}</td></tr>
                     <tr><td class="k">Fee</td><td class="v">{{ Format::money($challan->base_amount) }}</td></tr>
                     @if ($challan->discount_amount > 0)
                         <tr><td class="k">Discount</td><td class="v">{{ rtrim(rtrim(number_format($discountPct, 2), '0'), '.') }}%<br><span style="font-weight:normal;color:#6b7192">{{ $challan->discount_reason }}</span></td></tr>
                     @endif
                     <tr class="total"><td class="k" style="color:#2A2668;font-weight:bold">Net Payable</td><td class="v" style="color:#2A2668">{{ Format::money($challan->net_amount) }}</td></tr>
+                    {{-- Rendered as a list because the institute's invoice bills
+                         several courses together on one document. This challan
+                         covers exactly one enrolment, so it lists one; the
+                         markup is ready for the grouped invoice without a
+                         second template. --}}
+                    <tr><td class="k">Course(s)</td><td class="v">
+                        @foreach ($billedCourses as $line)
+                            <div><span class="bullet">•</span> {{ $line->title }}
+                                <span style="font-weight:normal;color:#6b7192">({{ $line->code }})</span></div>
+                        @endforeach
+                    </td></tr>
+                    <tr><td class="k">Batch</td><td class="v">{{ $cohort?->name ?? '—' }}</td></tr>
                     <tr><td class="k">Advance Payment</td><td class="v">{{ Format::money($advance) }}</td></tr>
                     <tr class="{{ $balance > 0 ? 'over' : '' }}"><td class="k">Balance</td><td class="v">{{ Format::money($balance) }}</td></tr>
                     <tr><td class="k">Due Date</td><td class="v">{{ Format::date($challan->due_date) }}</td></tr>
                     <tr><td class="k">Officer</td><td class="v">{{ $adm?->enroller?->name }}</td></tr>
+                    <tr><td class="k">Admission #</td><td class="v tnum">{{ $adm?->reg_no }}<span style="font-weight:normal;color:#6b7192"> · {{ $student?->student_code }}</span></td></tr>
                 </table>
 
                 <div class="stamp">
@@ -135,7 +189,7 @@
 
 <div class="foot">
     System-generated voucher. The admission number is read from the record and cannot be altered.
-    Verify payments at accounts@bbt.edu.pk · +92 42 000 0000 · generated {{ Format::date(now()) }}.
+    Verify payments at {{ $contactEmail }}@if ($contactPhone) · {{ $contactPhone }}@endif · generated {{ Format::date(now()) }}.
 </div>
 </body>
 </html>

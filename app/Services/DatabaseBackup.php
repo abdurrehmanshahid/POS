@@ -121,10 +121,21 @@ class DatabaseBackup
     {
         $quote = $driver === 'mysql' ? '`' : '"';
         $first = true;
+        $generated = $this->generatedColumns($table, $driver);
 
-        DB::table($table)->orderBy($this->keyColumn($table))->chunk(self::CHUNK, function ($rows) use ($out, $table, $quote, &$first) {
+        DB::table($table)->orderBy($this->keyColumn($table))->chunk(self::CHUNK, function ($rows) use ($out, $table, $quote, $generated, &$first) {
             foreach ($rows as $row) {
                 $data = (array) $row;
+
+                // Generated columns are computed by the engine and cannot be
+                // written to. `SELECT *` returns them, so naming them in the
+                // INSERT produced a dump that always failed on restore with
+                // MySQL error 3105, on `admissions.active_slot`. That made the
+                // Backup & export screen, the institute's only recovery path,
+                // produce files that could never be imported.
+                foreach ($generated as $column) {
+                    unset($data[$column]);
+                }
 
                 if ($first) {
                     $cols = implode(', ', array_map(fn ($c) => $quote.$c.$quote, array_keys($data)));
@@ -139,6 +150,44 @@ class DatabaseBackup
         });
 
         fwrite($out, $first ? "-- (no rows)\n" : ";\n");
+    }
+
+    /**
+     * Columns the engine computes and refuses to accept a value for.
+     *
+     * Asked of the database rather than hardcoded, so a generated column added
+     * by a future migration is excluded automatically instead of silently
+     * breaking restores again.
+     *
+     * @return list<string>
+     */
+    private function generatedColumns(string $table, string $driver): array
+    {
+        if (in_array($driver, ['mysql', 'mariadb'], true)) {
+            return array_map(
+                fn ($row) => (string) ((array) $row)['COLUMN_NAME'],
+                DB::select(
+                    'SELECT COLUMN_NAME FROM information_schema.COLUMNS
+                     WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?
+                       AND GENERATION_EXPRESSION IS NOT NULL AND GENERATION_EXPRESSION <> ?',
+                    [$table, '']
+                )
+            );
+        }
+
+        if ($driver === 'sqlite') {
+            // table_xinfo, not table_info: the latter omits hidden columns
+            // entirely. `hidden` is 2 for VIRTUAL and 3 for STORED.
+            return array_values(array_map(
+                fn ($row) => (string) ((array) $row)['name'],
+                array_filter(
+                    DB::select('PRAGMA table_xinfo('.$table.')'),
+                    fn ($row) => in_array((int) ((array) $row)['hidden'], [2, 3], true)
+                )
+            ));
+        }
+
+        return [];
     }
 
     /** Best available ordering column, id where present, else the first column. */

@@ -53,6 +53,26 @@ return [
             'username' => env('DB_USERNAME', 'root'),
             'password' => env('DB_PASSWORD', ''),
             'unix_socket' => env('DB_SOCKET', ''),
+            // Pinned to UTC to match config('app.timezone').
+            //
+            // `payments.received_at` is a TIMESTAMP, which MySQL stores in UTC
+            // and converts on read using the SESSION time zone, while
+            // `challans.paid_at` is a DATETIME, which it never converts. Left
+            // unset the connection inherits the server's zone, so the two
+            // disagree by the server's offset and a payment taken near midnight
+            // on the last of the month can be grouped into the wrong month by
+            // the DATE_FORMAT aggregates every revenue figure is built on.
+            // SQLite converts nothing, so this has never shown up locally.
+            //
+            // CAUTION on an install that already holds data. TIMESTAMP columns
+            // are converted on READ, so changing the session zone re-interprets
+            // history: a payment written under an Asia/Karachi server reads back
+            // five hours earlier here, which can move it into the previous
+            // month in the DATE_FORMAT aggregates. Safe for a fresh database,
+            // which is BBT's case. On an existing one, set DB_TIMEZONE to the
+            // server's old offset first and migrate the stored values
+            // deliberately.
+            'timezone' => env('DB_TIMEZONE', '+00:00'),
             'charset' => env('DB_CHARSET', 'utf8mb4'),
             'collation' => env('DB_COLLATION', 'utf8mb4_unicode_ci'),
             'prefix' => '',
@@ -73,6 +93,10 @@ return [
             'username' => env('DB_USERNAME', 'root'),
             'password' => env('DB_PASSWORD', ''),
             'unix_socket' => env('DB_SOCKET', ''),
+            // See the note on the mysql connection above. cPanel shared hosting
+            // usually serves MariaDB rather than MySQL, so this is the one that
+            // will actually be in force in production.
+            'timezone' => env('DB_TIMEZONE', '+00:00'),
             'charset' => env('DB_CHARSET', 'utf8mb4'),
             'collation' => env('DB_COLLATION', 'utf8mb4_unicode_ci'),
             'prefix' => '',

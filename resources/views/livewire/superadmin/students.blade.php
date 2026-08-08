@@ -34,7 +34,7 @@ new #[Layout('components.layouts.super')] class extends Component {
     {
         $students = Student::withTrashed()
             ->withCount(['admissions' => fn ($q) => $q->where('status', '!=', 'cancelled')])
-            ->with(['admissions.challan'])
+            ->with(['admissions.challan.payments'])
             ->when(! $this->showRemoved, fn ($q) => $q->whereNull('deleted_at'))
             ->when($this->q !== '', function ($q) {
                 $term = '%'.Str::lower(trim($this->q)).'%';
@@ -171,9 +171,7 @@ new #[Layout('components.layouts.super')] class extends Component {
                 <tbody>
                     @forelse ($students as $s)
                         @php
-                            $outstanding = $s->admissions
-                                ->where('status', '!=', 'cancelled')
-                                ->sum(fn ($a) => $a->challan && $a->challan->status !== 'paid' ? $a->challan->net_amount : 0);
+                            $outstanding = $s->outstanding();
                             $blocker = $removal->purgeBlocker($s);
                         @endphp
                         <tr @style(['opacity:.5' => $s->trashed()])>

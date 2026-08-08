@@ -68,6 +68,19 @@ class RegistrationService
 
             $this->assertCoursesAreEnrollable($courses, $courseIds);
 
+            // Put them back in the order the officer picked them.
+            //
+            // `whereIn` returns rows in whatever order the engine likes, in
+            // practice by id. The first course becomes the invoice's anchor,
+            // which is the one the Challans list, the dues report and the
+            // voucher's admission number all show, so leaving it to the engine
+            // meant an officer who selected "Shopify Advanced" then "Shopify
+            // Basics" got an invoice headed by Basics. It also keeps the
+            // enrolment order matching the share loop further down.
+            $courses = $courses->sortBy(
+                fn (Course $course) => array_search($course->id, $courseIds, true)
+            )->values();
+
             $student = $this->resolveStudent($actor, $data);
 
             $this->assertNotAlreadyEnrolled($student, $courses);
@@ -78,7 +91,7 @@ class RegistrationService
             $challans = [];
 
             foreach ($courses as $course) {
-                $admission = Admission::create([
+                $admissions[] = Admission::create([
                     'reg_no' => $this->sequences->nextAdmissionNo(),
                     'student_id' => $student->id,
                     'course_id' => $course->id,
@@ -89,23 +102,25 @@ class RegistrationService
                     'enrolled_by' => $actor->id,
                     'status' => 'validated',
                 ]);
+            }
 
-                $admissions[] = $admission;
-
-                // The wizard's "Generate fee challan(s) on submit" checkbox.
-                // It used to be decorative: a challan was raised either way, so
-                // unticking it changed nothing while promising otherwise. The
-                // enrolment is still real, the fee is simply not billed yet.
-                if (! $issueChallans) {
-                    continue;
-                }
-
-                $base = (int) $course->fee;
+            // The wizard's "Generate fee challan(s) on submit" checkbox. The
+            // enrolments are real either way; the fee is simply not billed yet.
+            if ($issueChallans) {
+                // ONE invoice for the whole registration, billing every course
+                // on it, because that is how the institute actually invoices:
+                // one document, one fee, one discount, one balance, with the
+                // courses listed on it. Raising a separate challan per course
+                // meant a three-course registration handed the student three
+                // invoices to reconcile and three balances to chase.
+                $base = (int) $courses->sum('fee');
                 $discount = $pct > 0 ? (int) round($base * $pct / 100) : 0;
 
                 $challan = Challan::create([
                     'challan_no' => $this->sequences->nextChallanNo(),
-                    'admission_id' => $admission->id,
+                    // The anchor. Every existing query reaches the student and
+                    // the headline course through this.
+                    'admission_id' => $admissions[0]->id,
                     'base_amount' => $base,
                     'discount_amount' => $discount,
                     'discount_reason' => $discount > 0 ? $reason : null,
@@ -115,6 +130,17 @@ class RegistrationService
                     'due_date' => $due,
                     'status' => 'unpaid',
                 ]);
+
+                // Each enrolment carries its own course's fee as its share, so
+                // base_amount is exactly the sum of what the invoice bills and
+                // revenue-by-course can credit every course rather than only
+                // the one that happens to head the document.
+                foreach ($courses as $i => $course) {
+                    $admissions[$i]->update([
+                        'challan_id' => $challan->id,
+                        'billed_amount' => (int) $course->fee,
+                    ]);
+                }
 
                 Audit::issued($challan, $actor);
                 if ($discount > 0) {

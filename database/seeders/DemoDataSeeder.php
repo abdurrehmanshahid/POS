@@ -30,7 +30,13 @@ class DemoDataSeeder extends Seeder
     public function run(): void
     {
         // ---- Settings (§14.5), serial is the atomic challan counter -------
-        Setting::query()->create([
+        //
+        // Updated, not created. Every install now gets its settings row from a
+        // migration, because the application cannot issue a challan without one
+        // and seeders are optional on deploy. Creating a second row here would
+        // leave two, and both readers take `first()`, so which institute name
+        // and bank account the challans carry would be decided by row order.
+        Setting::query()->firstOrFail()->update([
             'name' => 'Big Binary Tech Institute',
             'bank' => 'Meezan Bank Ltd',
             'account' => '0102-0104-567890',
@@ -173,6 +179,15 @@ class DemoDataSeeder extends Seeder
                 'paid_at' => $paidAt ? Carbon::parse($paidAt.' 12:00:00') : null,
             ]);
             $this->backdate('challans', $challan->id, $at);
+
+            // Bind the enrolment to the invoice that bills it. The demo data
+            // is all single-course, so the enrolment carries the whole base
+            // amount and the invariant `base_amount = Σ billed_amount` holds
+            // exactly as it does for a real single-course registration.
+            $admission->update([
+                'challan_id' => $challan->id,
+                'billed_amount' => $base,
+            ]);
 
             // Immutable audit trail (§2.10): issued, discount (if any), paid (if paid).
             Audit::issued($challan, $enroller, $atDate);

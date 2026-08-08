@@ -70,6 +70,24 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Contact details printed on the fee voucher
+    |--------------------------------------------------------------------------
+    |
+    | The fee challan is the one document that leaves the building and reaches
+    | a parent, and its footer is where somebody goes when a payment does not
+    | show up. It previously carried `+92 42 000 0000`, a placeholder that looks
+    | like a real Lahore landline, so a parent chasing a missing fee would have
+    | dialled a dead number and concluded the institute was not contactable.
+    |
+    | The phone deliberately has NO default. A blank one is omitted from the
+    | voucher entirely, which is honest; a fabricated one is not.
+    |
+    */
+    'contact_email' => env('INSTITUTE_CONTACT_EMAIL', 'accounts@bbt.edu.pk'),
+    'contact_phone' => env('INSTITUTE_CONTACT_PHONE'),
+
+    /*
+    |--------------------------------------------------------------------------
     | Removed: revenue_history
     |--------------------------------------------------------------------------
     |

@@ -5,6 +5,8 @@ use App\Models\Challan;
 use App\Models\Course;
 use App\Models\Teacher;
 use App\Support\Format;
+use App\Support\RevenueShare;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Validator;
 use Livewire\Volt\Component;
 
@@ -177,13 +179,27 @@ new class extends Component {
         $enrolled = collect();
         $revenue = 0;
         if ($selected) {
-            $enrolled = Admission::with(['student', 'challan'])
+            $enrolled = Admission::with(['student', 'challan.installments', 'challan.payments'])
                 ->where('course_id', $selected->id)
                 ->where('status', 'validated')
                 ->get();
-            $revenue = Challan::where('status', 'paid')
-                ->whereHas('admission', fn ($q) => $q->where('course_id', $selected->id))
-                ->sum('net_amount');
+
+            // Σ this course's share of the payments actually banked.
+            //
+            // Two defects in the previous version. It summed whole invoices
+            // reached through their anchor, so a course billed on a grouped
+            // invoice it did not head earned nothing while a course that did
+            // head one earned the other courses' money too. And it read the
+            // paid flag, so a student halfway through paying counted as zero,
+            // which is the same divergence between this screen and the
+            // dashboard that the payments ledger was introduced to end.
+            $revenue = (int) (DB::table('payments')
+                ->join('challans', 'challans.id', '=', 'payments.challan_id')
+                ->join('admissions', 'admissions.challan_id', '=', 'challans.id')
+                ->where('admissions.course_id', $selected->id)
+                ->where('admissions.status', '!=', 'cancelled')
+                ->selectRaw(RevenueShare::sumOfPayments().' as total')
+                ->value('total') ?? 0);
         }
 
         return [
@@ -345,7 +361,7 @@ new class extends Component {
                                         <div style="font-size:13.5px;font-weight:700;color:var(--ink)">{{ $a->student->name }}</div>
                                         <div class="tnum" style="font-size:12px;color:var(--muted)">{{ $a->student->student_code }}</div>
                                     </div>
-                                    <div class="tnum" style="font-size:13px;font-weight:700;color:var(--ink)">{{ Format::money($a->challan?->net_amount) }}</div>
+                                    <div class="tnum" style="font-size:13px;font-weight:700;color:var(--ink)">{{ Format::money($a->netShare()) }}</div>
                                     @if ($st)
                                         <x-ui.pill tone="{{ $st }}" :dot="true">{{ ucfirst($st) }}</x-ui.pill>
                                     @endif

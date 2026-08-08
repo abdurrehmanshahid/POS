@@ -6,6 +6,7 @@ use App\Models\Payment;
 use App\Models\User;
 use App\Support\Clock;
 use App\Support\Period;
+use App\Support\RevenueShare;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
@@ -207,17 +208,36 @@ class Reporting
      */
     public function revenueByCourse(User $user, Period $period, int $limit = 8): Collection
     {
+        // Joined through `admissions.challan_id`, not `challans.admission_id`.
+        //
+        // One invoice can bill several courses, and the challan points at only
+        // the first of them. Joining that way credited the whole payment to
+        // whichever course happened to head the document and reported zero for
+        // the rest, so a student paying 80,000 for three Shopify levels showed
+        // as 80,000 of Shopify revenue and nothing at all for the other two.
+        //
+        // Each payment is therefore apportioned across the courses on its
+        // invoice in proportion to what each was billed. The shares sum to the
+        // invoice by construction (see the migration's invariant), so the total
+        // across all courses still reconciles exactly with Σ payments.
         return $this->collected($user, $period)
             ->join('challans', 'challans.id', '=', 'payments.challan_id')
-            ->join('admissions', 'admissions.id', '=', 'challans.admission_id')
+            ->join('admissions', 'admissions.challan_id', '=', 'challans.id')
             ->join('courses', 'courses.id', '=', 'admissions.course_id')
+            // A cancelled course on a still-live invoice must stop earning.
+            // The invoice stays in scope while its other courses run, and
+            // without this the dropped one kept being credited its share
+            // forever. The old join could only ever reach the anchor, which
+            // scopedChallans already guaranteed was live, so this filter used
+            // to be implicit and was lost when the join widened.
+            ->where('admissions.status', '!=', 'cancelled')
             ->groupBy('courses.id', 'courses.code', 'courses.title')
             ->select([
                 'courses.id', 'courses.code', 'courses.title',
-                DB::raw('SUM(payments.amount) as total'),
+                DB::raw(RevenueShare::sumOfPayments().' as total'),
                 DB::raw('COUNT(DISTINCT admissions.id) as enrolments'),
             ])
-            ->orderByDesc(DB::raw('SUM(payments.amount)'))
+            ->orderByDesc('total')
             ->limit($limit)
             ->get()
             ->map(fn ($c) => (object) [
@@ -351,12 +371,20 @@ class Reporting
                     ->where('admissions.status', '!=', 'cancelled')
                     ->whereBetween('admissions.created_at', [$period->from, $period->to]);
             })
-            ->leftJoin('challans', 'challans.admission_id', '=', 'admissions.id')
+            // Through the enrolment's own invoice link, apportioned. This
+            // scorecard and the owner console's (Analytics::staffPerformance)
+            // answer the same question about the same officer, and joining on
+            // `challans.admission_id` here while the other joined on
+            // `admissions.challan_id` made them disagree on any grouped
+            // invoice: every non-anchor course an officer enrolled counted as
+            // billing nothing, so their collection rate was measured against a
+            // total that excluded most of their own work.
+            ->leftJoin('challans', 'challans.id', '=', 'admissions.challan_id')
             ->groupBy('users.id', 'users.name', 'users.username', 'users.role_id', 'users.deleted_at')
             ->select([
                 'users.id', 'users.name', 'users.username', 'users.role_id', 'users.deleted_at',
                 DB::raw('COUNT(DISTINCT admissions.id) as enrolments'),
-                DB::raw('COALESCE(SUM(challans.net_amount), 0) as billed'),
+                DB::raw('COALESCE('.RevenueShare::sumOfBilled().', 0) as billed'),
                 DB::raw('COALESCE(SUM(challans.discount_amount), 0) as discounts'),
             ])
             ->orderByDesc(DB::raw('COUNT(DISTINCT admissions.id)'))
@@ -391,11 +419,15 @@ class Reporting
     {
         return Payment::query()
             ->join('challans', 'challans.id', '=', 'payments.challan_id')
-            ->join('admissions', 'admissions.id', '=', 'challans.admission_id')
+            ->join('admissions', 'admissions.challan_id', '=', 'challans.id')
             ->where('admissions.status', '!=', 'cancelled')
             ->whereBetween('admissions.created_at', [$period->from, $period->to])
             ->groupBy('admissions.enrolled_by')
-            ->select('admissions.enrolled_by', DB::raw('SUM(payments.amount) as total'))
+            // Apportioned, matching Analytics::collectedByOfficer. These two
+            // answer the same question for two different screens, and leaving
+            // one on the anchor join is how the drift this class keeps being
+            // bitten by actually starts.
+            ->select('admissions.enrolled_by', DB::raw(RevenueShare::sumOfPayments().' as total'))
             ->get()
             ->mapWithKeys(fn ($r) => [(int) $r->enrolled_by => (int) $r->total])
             ->all();
