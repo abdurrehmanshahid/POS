@@ -5,9 +5,9 @@ still open. Built by reading every service, model, migration and screen in the
 repository, running the suite, querying the live SQLite database, and driving the
 running app in a browser.
 
-- Branch: `feat/registration-ux-and-fluid-type`, audited from `ba24f42`
+- Branch: `main`, post-merge audit from squash commit `281601f`
 - Date: 2026-08-08 (previous audit 2026-08-03 from `59c116c`)
-- Suite: **183 passed, 552 assertions, 0 failed** (158 at the previous audit)
+- Suite: **189 passed, 578 assertions, 0 failed** (158 at the previous audit)
 - Style: `vendor/bin/pint` clean
 - Build: `npm run build` clean
 - Companion document: [STATUS-REPORT.md](STATUS-REPORT.md) for the narrative
@@ -38,14 +38,22 @@ Every bug carries an ID. Use it in commits and branches, for example
 | Defects found | 26 | 9 |
 | Defects fixed | 26 | 9 |
 | Defects still open | 0 | 0 |
-| Feature gaps found | 4 | 1 |
+| Feature gaps found | 9 | 6 |
 | Feature gaps closed | 2 | 0 |
-| Feature gaps open | 2 (GAP-03, GAP-04) | — |
-| Tests added | 31 | 7 |
+| Feature gaps open | 7 (GAP-03 … GAP-09) | 5 from the benchmark |
+| Open production risks | 1 (RISK-01) | 1 |
+| Tests added | 34 | 10 |
 
 Of the 9 defects in this round, 4 came from driving the app in a browser and 5
 from the review pass over the diff. **None of the 9 was caught by the suite**,
-which was green at 180 before the round started and is green at 186 now.
+which was green at 180 before the round started and is green at 189 on merged
+`main` now.
+
+GAP-05 to GAP-09 and RISK-01 came from a later benchmark of the money workflow
+against how established POS products model it. They are **product and production
+gaps, not defects**: nothing listed under them is known to be broken, and none
+of that round re-opened or re-tested repository code. Where a claim in this
+document says code was verified, it was verified on the date given.
 
 ---
 
@@ -123,7 +131,11 @@ which was green at 180 before the round started and is green at 186 now.
 | Overdue detection against `Clock::today()` | BE | `Services/Ledger.php`, `Models/Challan.php` | SHIPPED |
 | Challan list filters and row actions | FE | `pages/challans.blade.php` | SHIPPED |
 | Three copy voucher PDF | FE+BE | `challans/pdf.blade.php`, `ChallanController.php` | SHIPPED |
-| Concurrency safety on collection | BE | `Services/ChallanActions.php` | SHIPPED (was BUG-08) |
+| Concurrency safety on collection | BE | `Services/ChallanActions.php` | SHIPPED, unproven by test (RISK-01) |
+| Idempotent collection (retry safety) | — | — | **MISSING (GAP-08, open)** |
+| Receipt for a collection | — | — | **MISSING (GAP-05, open)** |
+| Refund / reversal / correction | — | — | **MISSING (GAP-07, open)** |
+| Cashier shift and cash reconciliation | — | — | **MISSING (GAP-06, open)** |
 | One invoice billing several enrolments | DB+BE | `let_one_challan_bill_several_enrolments`, `Models/Challan.php` | SHIPPED |
 | Per-course apportionment of one invoice | BE | `Support/RevenueShare.php`, `Admission::netShare()` | SHIPPED |
 | Installment schedule: model and reconcile | BE | `Services/Installments.php` | SHIPPED |
@@ -145,6 +157,21 @@ which was green at 180 before the round started and is green at 186 now.
 | Reconciliation assertion | BE | `Services/Analytics.php::ledger` | SHIPPED (was BUG-14) |
 | Dashboard revenue trend | BE | `Services/Ledger.php::revenueTrend` | SHIPPED (was GAP-02) |
 | Attendance rates per course | BE | `Services/Attendances.php::ratesByCourse` | SHIPPED (was GAP-01) |
+
+### 1.5a Interface and responsive behaviour
+
+Landed in `281601f` and previously unmapped.
+
+| Capability | Layer | Files | Stage |
+| --- | --- | --- | --- |
+| Fluid type scale, 11 clamp() steps | FE | `resources/css/app.css` | SHIPPED |
+| Permission-gated dashboard quick actions | FE+BE | `pages/dashboard.blade.php` | SHIPPED |
+| `?new=1` deep links to the wizard and student form | BE | `pages/registrations.blade.php`, `pages/students.blade.php` | SHIPPED |
+| Recent registrations panel, scoped, money-free | FE+BE | `pages/dashboard.blade.php` | SHIPPED |
+| Tables become cards below 640px | FE | `app.css` `.table-cards`, challans + students | SHIPPED |
+| Responsive sign-in screen | FE | `app.css` `.login-split`, `100dvh` | SHIPPED (was BUG-20) |
+| Keyboard-navigable guardian suggestions | FE | `partials/registration-wizard.blade.php` | SHIPPED |
+| Identifiers never wrap mid-token | FE | `app.css` `.rec-id` | SHIPPED (was BUG-21) |
 
 ### 1.6 Attendance
 
@@ -678,9 +705,175 @@ round. BUG-18 to BUG-21 are the 2026-08-08 round; BUG-01 to BUG-17 are the
 
 ---
 
+## Part 3b: The money workflow after collection
+
+GAP-05 to GAP-09 come from benchmarking the fee workflow against how established
+POS products model the same job. The system is a good institute-management and
+billing application; what it does not yet close is the operational loop **after
+the cashier takes the money**:
+
+`student → admission → fee/installment plan → challan → collect → receipt → close shift → reconcile → report`
+
+Everything up to and including `collect` is shipped. Everything after it is
+missing. Each entry below was checked against the codebase on 2026-08-08 and the
+absence confirmed by search, not assumed from the map.
+
+### GAP-05 No receipt after money is collected: OPEN
+
+- **Layer:** FE + BE **Size:** Small **Status:** OPEN
+- **Confirmed absent:** no match for `receipt` anywhere in `app/`,
+  `resources/views/` or `routes/`.
+- **What:** `challans/pdf.blade.php` is a three-copy **voucher** — a demand for
+  payment, produced before any money moves. It is not evidence that a particular
+  collection happened, and a student who pays an advance currently leaves the
+  counter with nothing that says so.
+- **Required shape:** an immutable document generated from a `payments` row —
+  receipt number, payment id, student, challan, amount, method, who collected
+  it, when, the balance left afterwards, and a link to any later reversal.
+  Reprinting must reproduce the original facts rather than recompute them from
+  today's ledger, or a reprint after a later payment will contradict the copy
+  the student is holding.
+- **Keep it small:** one route, one controller, one Blade template over the
+  ledger that already exists. It must not introduce a second money table.
+
+### GAP-06 No cashier shift or end-of-day cash reconciliation: OPEN
+
+- **Layer:** FE + BE + DB **Size:** Medium **Status:** OPEN
+- **Confirmed absent:** no `cashier_session`, `cash_movement`, `opening_balance`
+  or shift concept in `app/` or `database/migrations/`.
+- **What:** `Reporting::byPaymentMethod()` already answers "how much cash was
+  recorded today", and its own docblock says the point is so the drawer can be
+  reconciled against the Cash row. Nothing completes that thought: there is no
+  session to open, no opening float, no cash in/out, no counted-cash entry at
+  close, and therefore no variance.
+- **Why this is the POS boundary:** the system can currently say what was
+  *recorded*. It cannot say whether the money in the drawer agrees, which is the
+  question an end-of-day close exists to answer and the one that catches both
+  mistakes and theft.
+- **Required shape:** `cashier_sessions` plus an append-only `cash_movements`;
+  one open session per cashier; expected = opening + cash collections + cash in
+  − refunds − cash out; counted cash entered at close; a variance requires a
+  reason and a permission; a closed session is immutable.
+
+### GAP-07 No refund, reversal or payment correction: OPEN
+
+- **Layer:** FE + BE + DB **Size:** Medium **Status:** OPEN
+- **Confirmed absent:** no `refund`, `reversal` or `void` anywhere in `app/`.
+- **What:** A payment entered against the wrong student, for the wrong amount,
+  or by the wrong method has no correction path. The only tools are cancelling
+  the admission — which `ChallanActions::cancel()` correctly refuses once money
+  is collected — or editing the row by hand in the database.
+- **Required invariant:** never edit or delete a collected payment. A correction
+  is an append-only reversal row linked to the original, with a reason, a
+  permission, and step-up for the sensitive cases. Installments, balances,
+  reports and any future session totals all derive from the **net** ledger.
+- **Precedent already in the codebase:** `audit_logs` is append-only and
+  enforced in `AuditLog::booted()`, and `Installments::reconcile()` derives
+  status from the ledger rather than maintaining it alongside. The same two
+  ideas are exactly what a reversal needs.
+
+### GAP-08 Collection has no idempotency boundary: OPEN
+
+- **Layer:** FE + BE + DB **Size:** Small **Status:** OPEN
+- **Confirmed absent:** `payments` carries `id, challan_id, amount, method,
+  received_by, received_at, note, created_at, updated_at` — no operation key —
+  and `ChallanActions::recordPayment()` has a `lockForUpdate()` and nothing else.
+- **What:** BUG-08 fixed a real race: two officers collecting at once can no
+  longer both pass the balance check. That is a different problem from **one**
+  officer's request arriving twice. A double-click, a browser retry, a proxy
+  retry or a future gateway retry each produce two requests that are individually
+  valid, and the row lock serialises them rather than rejecting the second — so
+  two payments land while the balance still allows it.
+- **Required shape:** a client-generated operation UUID carried on the request, a
+  UNIQUE constraint on it, a replay returning the first result instead of
+  inserting, the submit control disabled while in flight, and a test that fires
+  the identical request twice and asserts one payment row.
+
+### GAP-09 Backups are generated; restore is barely specified: OPEN
+
+- **Layer:** BE + Ops **Size:** Small **Status:** OPEN
+- **Partially present, and the tracker should say so:** `DEPLOYMENT.md` does
+  document a restore — "Restore through phpMyAdmin → Import" — and
+  `tech-stack.md` mentions restore tests. So this is thinner than it should be,
+  not absent.
+- **What is genuinely missing:** any evidence a backup has been restored. There
+  is no restore command, no drill, no checksum, no retention policy, and no
+  post-restore assertion. A backup is a hypothesis until something has been
+  rebuilt from it.
+- **Required shape:** restore into an empty database, then assert the same
+  invariants the application already knows how to check — payments reconcile
+  against challans, audit rows survive, counters resume without colliding, and
+  permissions still resolve. `Analytics::ledger()` already computes the
+  reconciliation assertion this would reuse.
+
+### RISK-01 The concurrency guarantees are untested, on every driver
+
+- **Layer:** DB + Test **Severity:** High **Status:** MUST VERIFY
+- **What:** Four invariants rest on `lockForUpdate()` — serial allocation in
+  `Sequences`, course capacity in `RegistrationService`, collection in
+  `ChallanActions`, and the settings row holding `next_challan_serial`. **No
+  test anywhere exercises two simultaneous connections.** Searching `tests/` for
+  `lockForUpdate`, `DB::connection(`, `reconnect`, `pcntl` or `proc_open`
+  returns nothing. Every test runs in one process on one connection, where a row
+  lock is a no-op by construction.
+- **This is not the SQLite problem it first looks like.** CI already runs the
+  suite against **MySQL 8.4** as well as SQLite — see the matrix `include` in
+  `.github/workflows/ci.yml` and commit `9df777b`, "actually run the PHP suite,
+  on three versions and both drivers". Adding a MySQL job would change nothing,
+  because the gap is the single-process test, not the engine underneath it. It
+  is worth stating plainly, because "run it against MySQL" is the obvious
+  recommendation here and it is already done.
+- **What is true about SQLite:** it permits one writer at a time per database
+  file, so a concurrency test written against it would prove less than the same
+  test on InnoDB even if one existed. That makes the driver a reason to run such
+  a test on MySQL — not a reason to believe the guarantee is currently proven
+  anywhere.
+- **Required proof:** a test that opens two genuinely independent connections and
+  drives both at the same challan, the same course's last seat, and the same
+  sequence, asserting one winner. Run it on the MySQL leg. Until that exists,
+  every "concurrency safe" line in Part 1 and Part 4 of this document rests on
+  code review, not on a passing test.
+
+### Scope guard: what this deliberately is not
+
+Recorded so the gaps above are not read as licence to grow the product.
+
+Do **not** add inventory, restaurant tables, retail SKUs, offline financial
+writes, microservices, a SPA rewrite or an accounting ERP. The lean path is the
+one at the top of this section and nothing more.
+
+Blade + Livewire + Alpine is the right stack at this scale. When a surface gets
+slow, optimise it rather than replacing the stack: paginate long lists, index the
+predicates that reporting and search actually use, debounce type-ahead, eager
+load known relations, defer heavy dashboard panels, and queue large exports,
+imports and backups while keeping validation and the dry-run response immediate.
+The performance risks here are N+1 queries, unbounded searches like BUG-26 and
+synchronous exports — not the framework.
+
+If card payments arrive, use a terminal or processor abstraction and keep
+cardholder data out of this application entirely; PCI DSS reaches any system that
+stores, processes or transmits it, and any system that can affect one that does.
+
+### On the benchmark itself
+
+GAP-05 to GAP-09 were derived on 2026-08-08 from public documentation for Odoo
+Point of Sale (session open/close, cash in/out, receipts, refunds), Square cash
+drawer shifts, and Stripe's refund and idempotency guidance, alongside PCI DSS
+and the SQLite and MySQL/InnoDB locking documentation. The comparison supplied
+the *shape* of each gap; the *absence* of each one was then confirmed against
+this repository by search, and those searches are quoted in each entry above.
+
+---
+
 ## Part 4: Verified healthy
 
-Checked and found correct, so nobody re-audits them:
+Checked and found correct, so nobody re-audits them.
+
+**One qualification, added 2026-08-08.** Every claim below about locking and
+concurrency rests on reading the code, not on a passing test — no test drives two
+simultaneous connections. See RISK-01. The claims are believed correct and are
+not known to be wrong; they are simply not proven by the suite, and this document
+should not be read as saying they are.
 
 - Money is integer PKR everywhere, `net_amount` derived, never client supplied.
 - Discount bounded 0 to 100 server side, reason mandatory, audited.
@@ -718,10 +911,10 @@ they are not re-raised:
 
 ## Part 5: QA notes
 
-Servers are running:
-
-- Application: <http://127.0.0.1:8000>
-- Vite dev server: <http://localhost:5173>
+To bring the app up: `php artisan serve` and `npm run dev`, giving
+<http://127.0.0.1:8000> and <http://localhost:5173>. Earlier revisions of this
+document said "servers are running", which was true on the afternoon it was
+written and has been misleading ever since.
 
 Demo logins (local only, gated on `APP_ENV=local` in both the template and the
 action):
@@ -735,18 +928,23 @@ action):
 counts are measured against that date and the demo figures reproduce
 (billed 214,000 = received 119,000 + outstanding 95,000).
 
-### Two changes were made to your development database
+### Changes made to the development database
 
-Both were required for the new work to be reachable, and both match what a fresh
-`migrate:fresh --seed` now produces:
+**2026-08-03.** Two migrations ran (the attendance unique index and the live
+enrolment constraint) and `attendance.manage` was granted to the `admin` and
+`officer` roles. Both match what a fresh `migrate:fresh --seed` now produces.
 
-1. Two migrations ran: the attendance unique index, and the live enrolment
-   constraint.
-2. `attendance.manage` was granted to the `admin` and `officer` roles. The
-   seeder does this for new installs; your database predated the key.
+**2026-08-08.** Two attendance rows were written while the register screen was
+being driven, and deleted afterwards; `attendances` is back to 0. The state
+reconciles: 12 students, 11 admissions, 11 challans, 6 payments, and
+214,000 = 119,000 + 95,000.
 
-Attendance marks written while testing the screen were deleted afterwards, so
-the table is empty.
+`audit_logs` grew from 32 to 38 rows across that session and **cannot be cleaned
+up**, because the table is append-only by design and `AuditLog::booted()`
+enforces it. Six rows therefore remain: sign-ins, one "Attendance recorded" for
+the register that was later deleted, and three "Two-factor failed" entries for
+`adminansar` at 11:38 that are most likely a browser autofill submitting the
+prefilled sign-in form. Recorded here rather than left to be discovered.
 
 ### Worth exercising by hand
 
