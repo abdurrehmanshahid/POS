@@ -6,12 +6,12 @@
 **Companion:** [PROJECT-TRACKER.md](PROJECT-TRACKER.md) for the trackable map and
 the per-bug register
 
-> **Superseded in part — see [§9, the 2026-08-08 round](#9-update-2026-08-08),
-> at the end of this document.** Sections 1 to 8 are left as written, because
-> the reasoning behind each fix is still the record of why the code looks the
-> way it does. Three claims below have since changed: GAP-03 is no longer purely
-> a product question, the suite is 183 tests rather than 158, and the servers in
-> §8 are long stopped.
+> **Superseded in part — see [§9, the 2026-08-08 round](#9-update-2026-08-08)
+> and [§10, the 2026-08-09 round](#10-update-2026-08-09-the-roll-importer), at
+> the end of this document.** Sections 1 to 8 are left as written, because the
+> reasoning behind each fix is still the record of why the code looks the way it
+> does. Four claims below have since changed: GAP-03 is closed, GAP-04 is closed,
+> the suite is 228 tests rather than 158, and the servers in §8 are long stopped.
 
 ---
 
@@ -472,6 +472,8 @@ different commits.
 
 ### 9.6 Still open
 
+*Both of the first two closed on 2026-08-09; see §10.*
+
 - **GAP-03** is half closed. The installment *service* exists and is tested; the
   UI that would create a schedule does not, so `installments` has 0 rows. The
   product question the previous report asked is now answered — the schedule is
@@ -484,3 +486,82 @@ different commits.
   driven in a browser as both the officer and the Administrator, at 1440px and
   390px, with zero console errors and the ledger banner reconciling on screen
   (Rs 214,000 = Rs 119,000 + Rs 95,000). `/superadmin` was not opened.
+
+---
+
+## 10. Update: 2026-08-09, the roll importer
+
+**Branch:** `main` at `c336fc3` (PR #33) · **Suite:** 228 passed, 687 assertions
+
+This round wrote code rather than auditing it. GAP-03 and GAP-04 both closed, and
+the two are really one job: the importer is the thing that finally calls
+`Installments::schedule()`.
+
+### 10.1 The spreadsheet was interrogated before a line of the loader was written
+
+Three questions had to be answered from the data itself, because getting any of
+them wrong would have written incorrect financial history that nobody would
+notice until a student disputed a balance.
+
+**Is `Second Installment` money that was collected, or money that is owed?** It
+is owed. All 33 rows marked `Pending` have Second Installment exactly equal to
+the outstanding Balance, and Total Amount exactly equal to the Advance. Had the
+importer read that column as a payment, it would have invented **Rs 450,688** of
+revenue that the institute never received. The importer creates a `payments` row
+from *Total Amount* and nothing else; `Second Installment` becomes an
+installment, which is what it is.
+
+**What is the fee — the course catalogue, or the sheet?** The sheet. Original
+Price is greater than or equal to Discounted Price on all 478 rows without a
+single exception, so it is a coherent base. The catalogue is not: Super Kid Camp
+is seeded at 15,000, and of the 32 rows selling it, **3 bill 15,000 and 29 do
+not** — 17 at 20,000, the rest spread from 10,000 to 40,000. Billing from the
+catalogue would have quietly contradicted the institute's own records on nine
+rows out of ten.
+
+**What makes a row the same row on a second run?** Phone plus course code —
+deliberately not name, and not registration date. Both of those get re-typed and
+corrected between exports, and a fingerprint over either would let the same
+student in twice.
+
+### 10.2 Writing requires saying so
+
+`roll:import` dry-runs by default. `--commit` is not a flag that changes the mode
+from safe to unsafe; its absence is what makes the safe mode reachable at all, so
+forgetting it can never load 478 students. Every row is one transaction, so a row
+that fails part-way leaves no student without their admission and no admission
+without its money.
+
+There is no fuzzy matching anywhere in the resolver. Zero matches and multiple
+matches are both rejections. A near-miss on a course name is exactly the case
+where a helpful guess produces a plausible, wrong, financial record.
+
+### 10.3 A bug that only MySQL could have caught
+
+The review pass before the commit found `admissions.status => 'active'`. The
+column is `enum('validated','pending','cancelled')`; `'active'` is not in it. On
+MySQL every single row would have failed. On SQLite every single row passed,
+because the CHECK constraint was dropped when a later migration rebuilt the
+table.
+
+CI runs the suite on MySQL 8.4 as well as SQLite, so the fix was verified rather
+than assumed. It is worth noticing that this is RISK-01's shape in miniature: the
+driver that would catch a thing is not always the driver you are testing on. It
+never reached `main`, so it is not in the bug register.
+
+### 10.4 The code is ready; the data is not
+
+A real dry-run over all 478 rows resolves **93 ready, 385 refused, and writes
+nothing**. The refusals are not importer failures — they are the questions the
+institute has to answer before its own history can be loaded: 27 course names
+that are not in the catalogue, 72 students with no phone number against a NOT
+NULL column, 6 CSRs with no account, 28 duplicated lines, and 6 rows where more
+was collected than was billed.
+
+`DATA-01` in the tracker lists all ten categories with counts and the decision
+each one needs. **The first `--commit` against real data has not been run**, and
+should not be until those answers exist and a backup has been taken.
+
+One detail worth carrying into that day: all 93 currently-importable rows are
+fully paid, so the first import will create no installments whatsoever. A clean
+first run is therefore not evidence that the schedule works. The 39 tests are.

@@ -5,9 +5,9 @@ still open. Built by reading every service, model, migration and screen in the
 repository, running the suite, querying the live SQLite database, and driving the
 running app in a browser.
 
-- Branch: `main`, post-merge audit from squash commit `281601f`
-- Date: 2026-08-08 (previous audit 2026-08-03 from `59c116c`)
-- Suite: **189 passed, 578 assertions, 0 failed** (158 at the previous audit)
+- Branch: `main`, post-merge from squash commit `c336fc3` (importer, PR #33)
+- Date: 2026-08-09 (previous audit 2026-08-08 from `281601f`)
+- Suite: **228 passed, 687 assertions, 0 failed** (189 at the previous audit)
 - Style: `vendor/bin/pint` clean
 - Build: `npm run build` clean
 - Companion document: [STATUS-REPORT.md](STATUS-REPORT.md) for the narrative
@@ -33,21 +33,29 @@ Every bug carries an ID. Use it in commits and branches, for example
 
 ## Status at a glance
 
-| | Cumulative | 2026-08-08 round |
+| | Cumulative | 2026-08-09 round |
 | --- | --- | --- |
-| Defects found | 26 | 9 |
-| Defects fixed | 26 | 9 |
+| Defects found | 26 | 0 |
+| Defects fixed | 26 | 0 |
 | Defects still open | 0 | 0 |
-| Feature gaps found | 9 | 6 |
-| Feature gaps closed | 2 | 0 |
-| Feature gaps open | 7 (GAP-03 … GAP-09) | 5 from the benchmark |
+| Feature gaps found | 10 | 1 (GAP-03a, split out) |
+| Feature gaps closed | 4 | 2 (GAP-03, GAP-04) |
+| Feature gaps open | 6 (GAP-03a, GAP-05 … GAP-09) | 5 from the benchmark |
 | Open production risks | 1 (RISK-01) | 1 |
-| Tests added | 34 | 10 |
+| Open data decisions | 1 (DATA-01, blocking) | 1 |
+| Tests added | 73 | 39 |
 
-Of the 9 defects in this round, 4 came from driving the app in a browser and 5
-from the review pass over the diff. **None of the 9 was caught by the suite**,
-which was green at 180 before the round started and is green at 189 on merged
-`main` now.
+The 2026-08-09 round built the roll importer and the schedule caller. It found no
+new defects because it added new code rather than auditing old code — but ten
+findings from `/simplify` and `/code-review` were fixed before the commit, one of
+which (`admissions.status => 'active'`, a value absent from
+`enum('validated','pending','cancelled')`) would have made **every row fail on
+MySQL and pass on SQLite**. It is recorded here rather than in the bug register
+because it never reached `main`.
+
+Of the 9 defects in the 2026-08-08 round, 4 came from driving the app in a browser
+and 5 from the review pass over the diff. **None of the 9 was caught by the
+suite**, which was green at 180 before that round started.
 
 GAP-05 to GAP-09 and RISK-01 came from a later benchmark of the money workflow
 against how established POS products model it. They are **product and production
@@ -139,7 +147,8 @@ document says code was verified, it was verified on the date given.
 | One invoice billing several enrolments | DB+BE | `let_one_challan_bill_several_enrolments`, `Models/Challan.php` | SHIPPED |
 | Per-course apportionment of one invoice | BE | `Support/RevenueShare.php`, `Admission::netShare()` | SHIPPED |
 | Installment schedule: model and reconcile | BE | `Services/Installments.php` | SHIPPED |
-| Installment schedule: creating one | FE | — | **MISSING (GAP-03, open)** |
+| Installment schedule: a caller that creates one | BE | `Services/Import/RollPersister.php::schedule` | SHIPPED (was GAP-03) |
+| Installment schedule: an operator-facing way to create one | FE | — | **MISSING (GAP-03a, open)** |
 
 ### 1.5 Reporting, analytics and exports
 
@@ -202,7 +211,7 @@ Landed in `281601f` and previously unmapped.
 
 ### 1.8 Database
 
-25 migrations. Verified against the live SQLite file.
+26 migrations. Verified against the live SQLite file.
 
 | Table | Notes | Stage |
 | --- | --- | --- |
@@ -213,15 +222,50 @@ Landed in `281601f` and previously unmapped.
 | `students` | unique `cnic`, unique `student_code`, soft deletes | SHIPPED |
 | `courses` | `capacity` nullable = unlimited, soft deletes | SHIPPED |
 | `cohorts` | unique `(course_id, name)`, soft deletes | SHIPPED |
-| `admissions` | unique `reg_no`; **unique live enrolment per (student, course)** | SHIPPED |
-| `challans` | unique `admission_id` enforces one per admission | SHIPPED |
+| `admissions` | unique `reg_no`; **unique live enrolment per (student, course)**; nullable unique `import_key` | SHIPPED |
+| `challans` | unique `admission_id` still holds; it names the **anchor** enrolment. The other enrolments on a grouped invoice join back through `admissions.challan_id`, which is why the unique survived | SHIPPED |
 | `payments` | `cascadeOnDelete` on `challan_id`, backfilled from the paid flag | SHIPPED |
-| `installments` | written by `Services/Installments.php`, but nothing calls `schedule()` outside tests, so the table is empty in practice | PARTIAL (GAP-03) |
+| `installments` | written by `Services/Installments.php`, now called by the importer. Still 0 rows on the development database because no `--commit` run has happened there | SHIPPED |
 | `attendances` | **unique `(course_id, student_id, session_date)`**, nullable `cohort_id` | SHIPPED |
 | `audit_logs` | deliberately no FKs, polymorphic actor and subject | SHIPPED |
 | `settings` | holds `next_challan_serial` under a row lock | SHIPPED |
 | `app_notifications` | | SHIPPED |
 | `counters` | one row per series | SHIPPED |
+
+### 1.9 Importing the existing roll
+
+Landed in `c336fc3`. Four stages, each testable without the one before it.
+
+| Capability | Layer | Files | Stage |
+| --- | --- | --- | --- |
+| Read the sheet by header name, not column position | BE | `Services/Import/RollReader.php` | SHIPPED |
+| Normalise money, dates and phones into a typed row | BE | `Services/Import/RollReader.php`, `RollRow.php` | SHIPPED |
+| Resolve course, CSR and batch from free text | BE | `Services/Import/RollResolver.php`, `config/roll-import.php` | SHIPPED |
+| Reject on zero matches **and** on multiple matches | BE | `RollResolver.php` | SHIPPED |
+| Reject duplicates within the same file | BE | `RollResolver::rejectDuplicatesWithinTheFile` | SHIPPED |
+| Persist one row per transaction, rolled back whole | BE | `Services/Import/RollPersister.php` | SHIPPED |
+| Backdate the record to the registration date | BE | `RollPersister::backdate` | SHIPPED |
+| Apportion a grouped invoice across its courses | BE | `RollPersister::apportion` | SHIPPED |
+| Idempotency: fingerprint + UNIQUE `admissions.import_key` | BE+DB | `RollResolver::fingerprint`, `give_admissions_an_import_key` | SHIPPED |
+| Dry run by default; writing needs an explicit `--commit` | BE | `Console/Commands/ImportRoll.php` | SHIPPED |
+| Rejection CSV for the operator | BE | `ImportRoll::writeRejects` | SHIPPED |
+| An operator-facing screen for the import | FE | — | not built, and deliberately not planned |
+
+**Three decisions worth not re-litigating**, because each one was reached by
+checking the roll rather than by preference:
+
+- **The base is `Original Price`, not the course catalogue fee.** Original Price
+  is ≥ Discounted Price on all 478 rows with no exceptions, so it is a coherent
+  base. The catalogue is not: Super Kid Camp is seeded at 15,000, and of the 32
+  rows selling it only **3 bill 15,000** — 17 bill 20,000 and the remainder range
+  from 10,000 to 40,000.
+- **`Second Installment` never creates a `payments` row.** All 33 `Pending` rows
+  have Second Installment equal to the outstanding Balance *and* Total Amount
+  equal to the Advance — that is a schedule, not a collection. Treating the
+  column as money received would have invented **Rs 450,688** of revenue.
+- **The fingerprint is phone + course code**, deliberately not name and not
+  registration date. Names are re-typed and dates get corrected; a fingerprint
+  over either would let the same student in twice on the second run.
 
 ---
 
@@ -658,9 +702,21 @@ round. BUG-18 to BUG-21 are the 2026-08-08 round; BUG-01 to BUG-17 are the
   comment explaining why. The chart is shorter until real history accumulates,
   which is the correct thing for it to be.
 
-### GAP-03 Split / installment plan: HALF CLOSED, still OPEN
+### GAP-03 Split / installment plan: CLOSED
 
-- **Layer:** FE **Size:** Small **Status:** OPEN (updated 2026-08-08)
+- **Layer:** BE **Size:** Small **Status:** CLOSED 2026-08-09 in `c336fc3`
+- **How it closed:** the importer calls `Installments::schedule()` for every row
+  that arrives with an outstanding balance, building a one- or two-part plan from
+  the roll's *Advance Payment* and *Pending Payment Due Date*. The service had
+  been complete and uncalled since `896339e`; what it lacked was a caller, and the
+  import is the caller the schedule was designed for.
+- **What is left, tracked as GAP-03a:** there is still no way for an officer to
+  offer a split plan at the counter. That is a screen, and it is a smaller and
+  better-understood job now that a caller exists and its output is under test.
+
+The reasoning that got here, kept because it records why a schedule is not
+redundant beside the payments ledger:
+
 - **The product question is settled.** The previous audit left this open asking
   whether a schedule was redundant beside the payments ledger. It is not, and
   the institute's own exported roll is the proof: it carries an *Advance
@@ -675,33 +731,81 @@ round. BUG-18 to BUG-21 are the 2026-08-08 round; BUG-01 to BUG-17 are the
   maintained beside it, so the two cannot disagree. `ChallanActions` reconciles
   on every collection, and the challan drawer and list read the schedule.
   13 tests in `tests/Feature/InstallmentTest.php`.
-- **What is still missing:** anything that calls `schedule()`. There is no UI
-  offering the choice, no caller outside the tests, and `installments` has 0
-  rows. Every challan is still `full`.
-- **Why it matters now:** this is the shape the real roll arrives in, so the
-  import (GAP-04) needs it. Building the creation path is the remaining work.
+- **What was missing until 2026-08-09:** anything that calls `schedule()`.
 
-### GAP-04 No importer for the institute's existing roll: OPEN
+### GAP-03a No counter-facing way to offer a split plan: OPEN
 
-- **Layer:** BE **Size:** Medium **Status:** OPEN (found 2026-08-08)
-- **What:** The database holds only the 12 demo-seeded students. The institute's
-  real roll sits in two spreadsheets at the repository root:
-  `student_details_report (45).xlsx` (**478 students**) and
-  `student_details_report-121.xlsx` (17 rows), carrying ID, Name, Course,
-  Status, CSR, Phone, Email, Batch, Registration Date, Pending Payment Due Date,
-  Original Price, Discounted Price, Advance Payment, Second Installment,
-  Balance.
-- **There is no importer anywhere in the codebase** — no command, no controller,
-  no UI, no route.
-- **The schema was already prepared for it and the loader was never built.**
-  Migration `2026_08_08_000001_allow_imported_students_without_cnic` exists
-  specifically so an imported roll can carry "name, course, batch, phone and
-  money, nothing else", and `Installments` was written against these exact
-  columns. Both halves anticipate an import that does not exist.
-- **Open decisions:** how to resolve `CSR` to a `users` row, `Course` to a
-  `courses` row and `Batch` to a `cohorts` row when the spreadsheet gives free
-  text; what to do with a row whose money does not reconcile; and whether the
-  import runs as an artisan command with `--dry-run` or as a screen.
+- **Layer:** FE **Size:** Small **Status:** OPEN (split out of GAP-03 on
+  2026-08-09, when the import closed the backend half)
+- **What:** `Installments::schedule()` now has a caller, but only the importer.
+  An officer taking a new admission at the counter still cannot offer "half now,
+  half by the 15th" — the registration wizard has no plan step and the challan
+  drawer has no way to add one after the fact.
+- **Required shape:** a plan step on the wizard's review screen and an "add a
+  plan" action on the challan drawer, both calling the existing `schedule()`.
+  No new service, no new table, no second source of truth for status —
+  `reconcile()` already derives it from the ledger.
+
+### GAP-04 No importer for the institute's existing roll: CLOSED
+
+- **Layer:** BE **Size:** Medium **Status:** CLOSED 2026-08-09 in `c336fc3`
+- **What was built:** `php artisan roll:import <file> [--commit] [--rejects=]`,
+  over the four stages mapped in §1.9, with 39 tests in
+  `tests/Feature/RollImportTest.php`.
+- **The safety properties that were asked for, and where each is proven:**
+
+| Property | Proof |
+| --- | --- |
+| Nothing is written without `--commit` | All 478 real rows dry-run, database counts unchanged before and after |
+| No fuzzy matching | Zero matches and multiple matches are both rejections, `#[DataProvider('rejections')]` |
+| A schedule never becomes a payment | `payments` are driven by *Total Amount* alone; the 33 `Pending` rows produce installments and no payment |
+| A failed row leaves nothing behind | One transaction per row; a forced failure mid-row leaves no student, admission, challan or payment |
+| Re-running is a no-op | Second run over the same fixture adds 0 students, 0 admissions, 0 challans, 0 payments, 0 installments |
+| The ledger reconciles afterwards | `sum(billed) = sum(received) + sum(balance)` asserted after import |
+
+- **The schema had been prepared for this and the loader never built.** Migration
+  `2026_08_08_000001_allow_imported_students_without_cnic` exists specifically so
+  an imported roll can carry "name, course, batch, phone and money, nothing
+  else", and `Installments` was written against these exact columns.
+- **The code is done; the data is not.** See the next entry — the importer is
+  ready to run and running it is blocked on decisions only the institute can
+  make.
+
+### DATA-01 The roll cannot be imported until the institute answers ten questions
+
+- **Layer:** Data **Size:** Small per item **Status:** OPEN, blocking the
+  `--commit` run (raised 2026-08-09)
+
+A real dry-run of `student_details_report (45).xlsx` on merged `main` (2026-08-09)
+read all 478 rows and resolved **93 ready, 385 refused, 0 written**. Every
+refusal is a question for the institute, not a bug in the importer. Counts are
+reason instances, taken from the rejection CSV; a row can carry several, so they
+sum above 385.
+
+| Refused for | Count | The question |
+| --- | --- | --- |
+| Unknown course | 339 (27 distinct) | Which are new catalogue entries (DevOps, Cyber Security, UI/UX Designing) and which are levels of a course already seeded (`DMM (Level-1 Part-B)` beside `Part-A`)? The second answer changes the fee model, so this is a product decision, not a mapping chore |
+| No phone number | 72 | `students.phone` is NOT NULL. Either the numbers are found, the column becomes nullable, or these rows stay out |
+| Unknown CSR | 43 (6 accounts) | Do Sofia, Mariyam, Shumail Altaf, Eman Ashraf and two others get `users` rows, or does the enrolment go to an "imported" account? Attribution drives officer scoping and the performance scorecards, so a placeholder is not free |
+| Instalment outstanding, no due date | 33 | A balance is owed but the roll gives no date, so nothing can say whether it is overdue. Import with a chosen date, or leave the balance unscheduled? |
+| Not a course | 32 (3 distinct) | `Recovery (Batch 4)`, `Co-working Space`, `Certificate Fee (Batch# 02)` — real money against something that is not an enrolment. The system has no non-course charge, so these need one or need excluding |
+| Duplicate line within the file | 28 | The same student on the same course appears two or three times (lines 10–12, 145–147, 53–54 and others). Which line is authoritative? |
+| Phone is not a PK mobile | 25 (21 distinct) | Includes `.`, `Digital Media` in the phone column, and one genuine Turkish number `+905355170955`. Correct the roll, or relax the rule for foreign students |
+| No course named | 21 | The Course column is empty |
+| No discounted price | 2 | Nothing to bill |
+| Collected more than the fee | 6 | e.g. 36,000 against 35,000, and 55,000 against 54,996. The system refuses overpayment by design (see Part 4), so each needs the fee corrected or the excess explained |
+
+**The 93 importable rows carry received 1,544,000 and outstanding 0.** Every one
+of them is fully paid, which means the first `--commit` would create **no
+installments at all** — the schedule path GAP-03 just closed would not be
+exercised by it. Worth knowing before reading a clean first import as proof the
+schedule works; the tests are the proof, not that run.
+
+**The order that keeps this safe:** answer the questions → re-run the dry-run
+until the rejection list contains only rows that were consciously excluded →
+take a backup → `--commit`. The first `--commit` against real data has not
+happened and should not happen without an explicit decision and a backup taken
+immediately beforehand.
 
 ---
 
@@ -946,6 +1050,23 @@ the register that was later deleted, and three "Two-factor failed" entries for
 `adminansar` at 11:38 that are most likely a browser autofill submitting the
 prefilled sign-in form. Recorded here rather than left to be discovered.
 
+**2026-08-09.** One migration ran, `give_admissions_an_import_key` (batch 5),
+adding a nullable UNIQUE column. It matches what a fresh `migrate:fresh --seed`
+now produces.
+
+**The importer has never written to this database.** After merging PR #33 and
+running the real 478-row roll in dry-run, the counts are unchanged from
+2026-08-08: 12 students, 11 admissions, 11 challans, 6 payments, 0 installments,
+and `admissions.import_key` is null on all 11 rows. That is the dry run working
+as specified, and it is the state the next person should expect to find.
+`audit_logs` is at 40, two above 2026-08-08, from sign-ins during the round.
+
+Also removed on 2026-08-09: a stray `Invoice #1077 | Huzaifa.pdf` left in the
+repository root by the 2026-08-08 browser pass. It was gitignored, so it never
+reached a commit. `.playwright-mcp/` still holds ~8.5 MB of screenshots and
+downloaded PDFs from browser QA; it is gitignored tool output and safe to delete
+whenever the space is wanted.
+
 ### Worth exercising by hand
 
 | What | How | Expect |
@@ -957,3 +1078,6 @@ prefilled sign-in form. Recorded here rather than left to be discovered.
 | BUG-16 | Sign in as `adminansar` | "Sign out instead" on the enrolment screen |
 | GAP-01 | Attendance, mark a class, save, reopen the same day | Marks load back, banner says already taken |
 | GAP-02 | Dashboard revenue chart | Real months only, no invented Jan to Jun |
+| GAP-04 | `php artisan roll:import "student_details_report (45).xlsx"` | 93 ready, 385 refused, and the counts in §Part 5 unchanged afterwards |
+| GAP-04 | Add `--rejects=/tmp/r.csv` and open the file | One line per refused row, carrying the Excel line number |
+| DATA-01 | Read the rejection CSV's `reasons` column | Only the ten categories in DATA-01, nothing unexplained |
