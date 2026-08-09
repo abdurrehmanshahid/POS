@@ -260,7 +260,10 @@
         @if ($step < 3)
             <button class="btn btn-primary" wire:click="next">Continue <x-icon name="arrow-right" :size="16" /></button>
         @else
-            <button class="btn btn-accent" wire:click="submit">Register student</button>
+            {{-- Narrows the double-click window; the token in
+                 Operations::once() is what actually closes it. --}}
+            <button class="btn btn-accent" wire:click="submit"
+                    wire:loading.attr="disabled" wire:target="submit">Register student</button>
         @endif
     </div>
 </div>

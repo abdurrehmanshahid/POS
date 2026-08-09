@@ -6,18 +6,21 @@ use App\Models\Counter;
 use App\Models\Course;
 use App\Models\Student;
 use App\Services\ChallanActions;
+use App\Services\Operations;
 use App\Services\RegistrationService;
+use App\Support\Concerns\CollectsPayments;
+use App\Support\Concerns\GuardsDoubleSubmit;
 use App\Support\Contact;
 use App\Support\Matcher;
+use Illuminate\Database\Eloquent\Builder;
 use Livewire\Volt\Component;
 
 new class extends Component {
+    use CollectsPayments, GuardsDoubleSubmit;
+
     // List + shared drawer state
     public string $q = '';
     public ?int $drawerId = null;
-    public ?int $payId = null;
-    public string $payMethod = '';
-    public int $payAmount = 0;
     public ?int $cancelAdmId = null;
     public string $cancelReason = '';
     public string $cancelError = '';
@@ -48,38 +51,12 @@ new class extends Component {
     // ---- Shared drawer -----------------------------------------------------
     public function select(int $challanId): void { $this->drawerId = $challanId; }
     public function closeDrawer(): void { $this->drawerId = null; }
-    public function askPay(int $id): void
-    {
-        $this->payId = $id;
-        $this->payMethod = '';
-        $this->payAmount = (int) ($this->scopedChallans()->find($id)?->balance() ?? 0);
-    }
-
-    public function confirmPay(): void
-    {
-        $challan = $this->scopedChallans()->find($this->payId);
-        if (! $challan || ! auth()->user()->can('challans.pay')) { abort(403); }
-        try {
-            app(ChallanActions::class)->recordPayment($challan, auth()->user(), $this->payAmount, $this->payMethod);
-        } catch (\Throwable $e) {
-            $this->dispatch('bbt-toast', tone: 'err', title: 'Could not record payment', msg: $e->getMessage());
-            return;
-        }
-        $this->payId = null;
-        $this->dispatch('bbt-toast',
-            tone: 'ok',
-            title: $challan->fresh()->isPaid() ? 'Payment recorded' : 'Part payment received',
-            // Fully qualified: the template below already imports Format, and
-            // Volt compiles both blocks into one file.
-            msg: $challan->challan_no.' · '.\App\Support\Format::money($this->payAmount).' · '.$this->payMethod,
-        );
-    }
-
     public function askCancel(int $admissionId): void { $this->cancelAdmId = $admissionId; $this->cancelReason = ''; $this->cancelError = ''; }
 
     public function confirmCancel(): void
     {
         $this->cancelError = '';
+        if ($this->cancelAdmId === null) { return; }
         if (! auth()->user()->can('registrations.create')) { abort(403); }
         $admission = Admission::visibleTo(auth()->user())->find($this->cancelAdmId);
         if (! $admission) { abort(404); }
@@ -91,7 +68,15 @@ new class extends Component {
         $this->dispatch('bbt-toast', tone: 'warn', title: 'Registration cancelled', msg: 'Soft-deleted and recoverable');
     }
 
-    private function scopedChallans()
+    /**
+     * Supplies CollectsPayments.
+     *
+     * Deliberately NOT `Ledger::scopedChallans()`, which the Challans screen
+     * uses: this list is about registrations rather than money, so it shows
+     * cancelled ones too. The trait takes the query rather than assuming one
+     * for exactly this reason.
+     */
+    protected function scopedChallans(): Builder
     {
         return Challan::query()->whereHas('admission', fn ($a) => $a->visibleTo(auth()->user()));
     }
@@ -142,6 +127,10 @@ new class extends Component {
         $this->mode = 'new';
         $this->genChallans = true;
         $this->wizardOpen = true;
+        // A token for this run through the wizard. It survives every step, so
+        // the two clicks a double-submit produces on the final screen both
+        // carry it. See GuardsDoubleSubmit.
+        $this->freshOperationKey('enrol');
     }
 
     public function closeWizard(): void { $this->wizardOpen = false; }
@@ -490,13 +479,28 @@ new class extends Component {
             ];
         }
         try {
-            $result = app(RegistrationService::class)->register(auth()->user(), $data);
+            // Guarded because the new-student path has no natural key to fall
+            // back on. An existing student is caught by the unique live
+            // enrolment index (BUG-17), but a brand new one is a brand new row
+            // every time: submitted twice it produced two people, two
+            // admissions and two challans, billing the family double.
+            $op = app(Operations::class)->once($this->operationKey('enrol'), 'registration.create',
+                fn () => app(RegistrationService::class)->register(auth()->user(), $data));
         } catch (\Throwable $e) {
             $this->dispatch('bbt-toast', tone: 'err', title: 'Registration failed', msg: $e->getMessage());
             return;
         }
-        $n = count($result['admissions']);
         $this->wizardOpen = false;
+        $this->freshOperationKey('enrol');
+
+        if ($op->replayed) {
+            $this->dispatch('bbt-toast', tone: 'ok', title: 'Student enrolled',
+                msg: 'Already recorded', note: 'Duplicate submission ignored');
+
+            return;
+        }
+
+        $n = count($op->value['admissions']);
         $this->dispatch('bbt-toast', tone: 'ok', title: 'Student enrolled', msg: $n.' admission'.($n === 1 ? '' : 's').' created');
     }
 

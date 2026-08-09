@@ -6,12 +6,14 @@
 **Companion:** [PROJECT-TRACKER.md](PROJECT-TRACKER.md) for the trackable map and
 the per-bug register
 
-> **Superseded in part — see [§9, the 2026-08-08 round](#9-update-2026-08-08)
-> and [§10, the 2026-08-09 round](#10-update-2026-08-09-the-roll-importer), at
-> the end of this document.** Sections 1 to 8 are left as written, because the
+> **Superseded in part — see [§9, the 2026-08-08 round](#9-update-2026-08-08),
+> [§10, the roll importer](#10-update-2026-08-09-the-roll-importer) and
+> [§11, the double-submit guard](#11-update-2026-08-09-the-double-submit-guard),
+> at the end of this document.** Sections 1 to 8 are left as written, because the
 > reasoning behind each fix is still the record of why the code looks the way it
-> does. Four claims below have since changed: GAP-03 is closed, GAP-04 is closed,
-> the suite is 228 tests rather than 158, and the servers in §8 are long stopped.
+> does. Four claims below have since changed: GAP-03 and GAP-04 are closed, so is
+> GAP-08, the suite is 262 tests rather than 158, and the servers in §8 are long
+> stopped.
 
 ---
 
@@ -565,3 +567,83 @@ should not be until those answers exist and a backup has been taken.
 One detail worth carrying into that day: all 93 currently-importable rows are
 fully paid, so the first import will create no installments whatsoever. A clean
 first run is therefore not evidence that the schedule works. The 39 tests are.
+
+---
+
+## 11. Update: 2026-08-09, the double-submit guard
+
+**Suite:** 262 passed, 760 assertions. GAP-08 closed; BUG-27 and BUG-28 found and
+fixed along the way.
+
+### 11.1 A lock cannot tell two requests apart
+
+BUG-08 fixed two officers colliding on one challan. This was one officer clicking
+twice, and `lockForUpdate()` handles that case perfectly badly — it serialises
+the two writes so cleanly that each passes its own balance check and both commit.
+A lock enforces order. It cannot know that two requests were meant to be one.
+
+I reproduced it before designing anything. A student handing over Rs 10,000
+against a Rs 20,000 fee came out recorded as having paid the lot, challan flipped
+to **paid**, balance zero.
+
+The part that makes it dangerous is that it produces a *plausible* record. Every
+screen agrees with itself. The ledger reconciles — a phantom payment reduces the
+outstanding balance by exactly the amount it invents, so `billed = received +
+outstanding` still holds. The only party that disagrees is the cash drawer, which
+is short, with nothing in the system to explain why.
+
+Settling in full was accidentally safe: the second click hit "already paid". Only
+part payments were exposed, which per the institute's own roll — an Advance and a
+Second Installment on every row — is the common transaction.
+
+### 11.2 The fix, and the two ways it was wrong first
+
+A token minted when a form *opens*, so both halves of a double-click carry the
+same one, and a UNIQUE index rejects the second. That much is standard. Two
+things about it were wrong in my first version, and both were worse than the bug:
+
+**The marker and the work shared one `try`.** So a unique violation from *inside*
+the work — `students.student_code`, `challans.challan_no`, the live-enrolment
+index — was reported as "already done". A student whose creation had genuinely
+failed produced "already on file" and no student. A hard failure dressed as a
+success is the one thing a guard must never do.
+
+**The token was stored verbatim.** It has to be client-supplied to survive the
+round trip, which made one global namespace out of every operation in the system.
+A token burnt on `student.create` then satisfied a payment: nothing written, no
+audit row, and a green "Part payment received · Rs 5,000 · Cash" on screen. It is
+now stored as `sha256(operation | actor | token)`, so a token can only ever
+replay the exact operation, by the same person, that minted it.
+
+Both came out of the review pass, and I verified each with a probe before
+believing it.
+
+### 11.3 Two defects that were already there
+
+**Money could be collected against a cancelled registration.** `cancel()` refuses
+once money is collected; nothing refused the reverse. Because every money query
+requires a live admission, such a payment is banked and audited and then absent
+from `billed`, `received`, `outstanding` and every report. Verified: `received`
+stayed at 119,000 with the payment sitting in the table.
+
+**A double-click showed "You do not have access to this screen."** When the first
+response landed before the second click, the dialog had closed, `payId` was null,
+and that fell through to `abort(403)` — which Livewire renders full-screen, over
+a payment that had just succeeded correctly.
+
+Only a browser could find the second one. The suite asserted `assertStatus(403)`
+and read as the guard working.
+
+### 11.4 Where the guard was deliberately not used
+
+Two cheaper mechanisms come first. Make the write idempotent — `setActive($id,
+$to)` instead of a flip, because two clicks on a flip cancel out and leave the
+course as it was while both toasts claim a change. Or let a natural unique key
+reject the second row, which already covers courses, staff, cohorts, attendance
+and re-enrolment. Only payments, new students and new-student registrations have
+no natural key, and those are the only three places a token is used.
+
+An architecture test now fails if a new screen writes one of those three records
+without going through the guard — including a count of the call sites, so it
+cannot pass by matching nothing. It caught its own staleness once already, when
+the payment logic moved into a shared trait.

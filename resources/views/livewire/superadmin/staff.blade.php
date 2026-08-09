@@ -32,6 +32,9 @@ new #[Layout('components.layouts.super')] class extends Component {
 
     public string $issuedFor = '';
 
+    /** The active state the open toggle dialog was opened against. */
+    public bool $toggleFrom = false;
+
     private function actor(): User|\App\Models\SuperAdmin
     {
         return auth()->guard('superadmin')->user();
@@ -94,6 +97,21 @@ new #[Layout('components.layouts.super')] class extends Component {
     {
         $u = User::withTrashed()->findOrFail($id);
         $on = ! $u->is_active;
+
+        // The state we are acting against, so the confirm step can tell whether
+        // the row moved underneath it.
+        //
+        // `doToggleActive` flips whatever it finds, so two confirmations
+        // landing together flipped twice and left the account exactly as it
+        // started, while the toast and the audit row both said it had changed.
+        // Step-up hides that for anyone on TOTP because the accepted timestep
+        // is burned; an actor falling back to password re-entry got the bug.
+        //
+        // Recording the state we came FROM rather than the state we want keeps
+        // the audit row's old_value derived from the row instead of asserted by
+        // the client, and makes tampering with this property a refusal rather
+        // than a way to steer the outcome.
+        $this->toggleFrom = (bool) $u->is_active;
 
         $this->askDanger([
             'kind' => 'toggle-active',
@@ -258,6 +276,14 @@ new #[Layout('components.layouts.super')] class extends Component {
 
     private function doToggleActive(User $u): void
     {
+        // The row moved since the dialog was opened — a second confirmation of
+        // the same dialog, or another superadmin who got there first. Flipping
+        // again would undo their work and append an audit row for a transition
+        // that never happened.
+        if ((bool) $u->is_active !== $this->toggleFrom) {
+            return;
+        }
+
         $on = ! $u->is_active;
 
         $u->forceFill([

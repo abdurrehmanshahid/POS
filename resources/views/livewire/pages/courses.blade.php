@@ -37,7 +37,20 @@ new class extends Component {
 
     // ---- Toggle active -----------------------------------------------------
 
-    public function toggleActive(int $id): void
+    /**
+     * Set the course's active state to `$to`, rather than flipping it.
+     *
+     * A flip is not idempotent, and the button is one click away from proving
+     * it: two clicks landing before the first response returns flip twice and
+     * land back where they started, while both toasts cheerfully report the
+     * change. The officer walks away believing a course is live when it is not,
+     * and the registration wizard quietly refuses to offer it.
+     *
+     * The caller sends the state it wants, so a repeat writes the same value
+     * and no token is needed. This is the same reason the payment guard exists,
+     * fixed the cheaper way because the operation genuinely can be idempotent.
+     */
+    public function setActive(int $id, bool $to): void
     {
         if (! auth()->user()->can('courses.manage')) {
             return;
@@ -46,9 +59,9 @@ new class extends Component {
         if (! $course) {
             return;
         }
-        $course->update(['is_active' => ! $course->is_active]);
+        $course->update(['is_active' => $to]);
         $this->dispatch('bbt-toast', tone: 'info',
-            title: $course->is_active ? 'Course activated' : 'Course deactivated',
+            title: $to ? 'Course activated' : 'Course deactivated',
             msg: $course->code);
     }
 
@@ -288,7 +301,16 @@ new class extends Component {
                         @if ($canManage)
                             @php $toggleLabel = $c->is_active ? 'Deactivate course' : 'Activate course'; @endphp
                             <div class="card-foot-actions">
-                                <button class="btn-icon btn-icon-plain" wire:click.stop="toggleActive({{ $c->id }})"
+                                {{-- The state to move TO, not "flip". Two clicks
+                                     on a flip cancel out; two clicks on this
+                                     write the same value twice. --}}
+                                <button class="btn-icon btn-icon-plain"
+                                        wire:click.stop="setActive({{ $c->id }}, {{ $c->is_active ? 'false' : 'true' }})"
+                                        {{-- Targeted at this course's call, not the bare method name:
+                                             `wire:target="setActive"` matches every card and would grey
+                                             out the whole catalogue for one toggle's round trip. --}}
+                                        wire:loading.attr="disabled"
+                                        wire:target="setActive({{ $c->id }}, {{ $c->is_active ? 'false' : 'true' }})"
                                         title="{{ $toggleLabel }}" aria-label="{{ $toggleLabel }}">
                                     <x-icon :name="$c->is_active ? 'minus-circle' : 'check-circle'" :size="17" />
                                 </button>

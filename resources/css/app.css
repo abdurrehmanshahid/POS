@@ -297,6 +297,11 @@ td.tnum, th.tnum { white-space: nowrap; }
 .toast-info { border-left-color:var(--info); } .toast-info .ico { background:var(--info); }
 .toast-warn { border-left-color:var(--due); } .toast-warn .ico { background:var(--due); }
 .toast-err { border-left-color:var(--over); } .toast-err .ico { background:var(--over); }
+/* Quiet third line: "Duplicate submission ignored". Deliberately the smallest
+   step on the scale and dimmer than the message, because it explains what did
+   NOT happen. The officer's action succeeded; this is a footnote, not a
+   warning, and dressing it as one would send them looking for a problem. */
+.toast-note { font-size:var(--fs-2xs); color:var(--muted); opacity:.72; margin-top:4px; font-style:italic; }
 
 /* ---- Progress / capacity bars ---------------------------------------- */
 .bar { height:8px; background:var(--surface3); border-radius:6px; overflow:hidden; }

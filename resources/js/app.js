@@ -97,7 +97,14 @@ window.bbtToasts = function () {
         items: [],
         push(d) {
             const id = Date.now() + Math.random();
-            this.items.push({ id, tone: d.tone || 'info', icon: icons[d.tone] || 'i', title: d.title || '', msg: d.msg || '' });
+            // `note` is the quiet third line, used to say a duplicate
+            // submission was ignored. Deliberately not an error tone: the
+            // officer did nothing wrong, and the thing they asked for did
+            // happen — just once rather than twice.
+            this.items.push({
+                id, tone: d.tone || 'info', icon: icons[d.tone] || 'i',
+                title: d.title || '', msg: d.msg || '', note: d.note || '',
+            });
             setTimeout(() => { this.items = this.items.filter((t) => t.id !== id); }, 3400);
         },
     };

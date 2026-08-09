@@ -115,6 +115,7 @@
                 <div style="flex:1">
                     <div style="font-size:var(--fs-sm);font-weight:700;color:var(--ink)" x-text="t.title"></div>
                     <template x-if="t.msg"><div style="font-size:var(--fs-xs);color:var(--muted);margin-top:1px" x-text="t.msg"></div></template>
+                    <template x-if="t.note"><div class="toast-note" x-text="t.note"></div></template>
                 </div>
             </div>
         </template>

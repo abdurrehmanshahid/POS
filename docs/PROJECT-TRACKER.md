@@ -5,9 +5,9 @@ still open. Built by reading every service, model, migration and screen in the
 repository, running the suite, querying the live SQLite database, and driving the
 running app in a browser.
 
-- Branch: `main`, post-merge from squash commit `c336fc3` (importer, PR #33)
+- Branch: `main`, plus the double-submit guard (GAP-08)
 - Date: 2026-08-09 (previous audit 2026-08-08 from `281601f`)
-- Suite: **228 passed, 687 assertions, 0 failed** (189 at the previous audit)
+- Suite: **262 passed, 760 assertions, 0 failed** (189 at the previous audit)
 - Style: `vendor/bin/pint` clean
 - Build: `npm run build` clean
 - Companion document: [STATUS-REPORT.md](STATUS-REPORT.md) for the narrative
@@ -35,23 +35,39 @@ Every bug carries an ID. Use it in commits and branches, for example
 
 | | Cumulative | 2026-08-09 round |
 | --- | --- | --- |
-| Defects found | 26 | 0 |
-| Defects fixed | 26 | 0 |
+| Defects found | 28 | 2 (BUG-27, BUG-28) |
+| Defects fixed | 28 | 2 |
 | Defects still open | 0 | 0 |
 | Feature gaps found | 10 | 1 (GAP-03a, split out) |
-| Feature gaps closed | 4 | 2 (GAP-03, GAP-04) |
-| Feature gaps open | 6 (GAP-03a, GAP-05 … GAP-09) | 5 from the benchmark |
+| Feature gaps closed | 5 | 3 (GAP-03, GAP-04, GAP-08) |
+| Feature gaps open | 5 (GAP-03a, GAP-05 … GAP-07, GAP-09) | — |
 | Open production risks | 1 (RISK-01) | 1 |
-| Open data decisions | 1 (DATA-01, blocking) | 1 |
-| Tests added | 73 | 39 |
+| Open data decisions | 2 (DATA-01 blocking, DATA-02) | 2 |
+| Tests added | 107 | 73 |
 
-The 2026-08-09 round built the roll importer and the schedule caller. It found no
-new defects because it added new code rather than auditing old code — but ten
-findings from `/simplify` and `/code-review` were fixed before the commit, one of
-which (`admissions.status => 'active'`, a value absent from
-`enum('validated','pending','cancelled')`) would have made **every row fail on
-MySQL and pass on SQLite**. It is recorded here rather than in the bug register
-because it never reached `main`.
+**The 2026-08-09 round ran in two parts.** The first built the roll importer and
+the schedule caller (GAP-03, GAP-04). The second closed GAP-08, the double-submit
+guard, and turned up two pre-existing defects on the way — BUG-27, money
+collectable against a cancelled registration and then invisible to every report,
+and BUG-28, a double-click showing "You do not have access to this screen" over a
+payment that had just succeeded.
+
+**Three defects were caught by review before reaching `main` and are recorded
+here rather than in the bug register**, because they were never shipped. Each is
+worth knowing about:
+
+- `admissions.status => 'active'`, a value absent from
+  `enum('validated','pending','cancelled')` — would have failed **every** import
+  row on MySQL while passing on SQLite.
+- `Operations::once()` wrapping the marker and the work in one `try`, so a unique
+  violation from inside the work was reported as a replay: a hard failure
+  presented to the officer as success.
+- The idempotency token stored verbatim, making one global namespace of every
+  operation, so a token burnt on one operation silenced another.
+
+The pattern across all three is the same, and it is worth stating plainly: the
+suite is good at proving that intended behaviour works and poor at noticing that
+a failure has been dressed up as a success.
 
 Of the 9 defects in the 2026-08-08 round, 4 came from driving the app in a browser
 and 5 from the review pass over the diff. **None of the 9 was caught by the
@@ -140,7 +156,8 @@ document says code was verified, it was verified on the date given.
 | Challan list filters and row actions | FE | `pages/challans.blade.php` | SHIPPED |
 | Three copy voucher PDF | FE+BE | `challans/pdf.blade.php`, `ChallanController.php` | SHIPPED |
 | Concurrency safety on collection | BE | `Services/ChallanActions.php` | SHIPPED, unproven by test (RISK-01) |
-| Idempotent collection (retry safety) | — | — | **MISSING (GAP-08, open)** |
+| Collection refused on a cancelled registration | BE | `Services/ChallanActions.php` | SHIPPED (was BUG-27) |
+| Idempotent collection (double-submit safety) | FE+BE+DB | `Services/Operations.php`, `Support/Concerns/CollectsPayments.php`, `create_operations_table` | SHIPPED (was GAP-08) |
 | Receipt for a collection | — | — | **MISSING (GAP-05, open)** |
 | Refund / reversal / correction | — | — | **MISSING (GAP-07, open)** |
 | Cashier shift and cash reconciliation | — | — | **MISSING (GAP-06, open)** |
@@ -211,7 +228,7 @@ Landed in `281601f` and previously unmapped.
 
 ### 1.8 Database
 
-26 migrations. Verified against the live SQLite file.
+27 migrations. Verified against the live SQLite file.
 
 | Table | Notes | Stage |
 | --- | --- | --- |
@@ -231,6 +248,18 @@ Landed in `281601f` and previously unmapped.
 | `settings` | holds `next_challan_serial` under a row lock | SHIPPED |
 | `app_notifications` | | SHIPPED |
 | `counters` | one row per series | SHIPPED |
+| `operations` | one row per completed write, keyed by `sha256(name\|actor\|token)`. Nothing reads it; the UNIQUE index rejecting the second insert IS the mechanism | SHIPPED |
+
+### 1.8a Double-submit safety
+
+Landed 2026-08-09. Which mechanism applies is a hierarchy, cheapest first, and
+reaching for the last one where an earlier one works is a mistake:
+
+| Tier | Mechanism | Used by |
+| --- | --- | --- |
+| 1 | Make the write idempotent — send the state to move **to**, never "flip" | `courses.setActive`, cohort open/close, the superadmin account toggle |
+| 2 | Let a natural unique key reject the second row | courses (`code`), staff (`username`), cohorts (`course_id,name`), attendance, re-enrolment (BUG-17) |
+| 3 | A client-minted token in `operations` | payments, new students, new-student registrations — the only three writes with no natural key |
 
 ### 1.9 Importing the existing roll
 
@@ -272,8 +301,48 @@ checking the roll rather than by preference:
 ## Part 2: Bug register
 
 All reproduced before fixing and verified after. Ordered by severity within each
-round. BUG-18 to BUG-21 are the 2026-08-08 round; BUG-01 to BUG-17 are the
-2026-08-03 round and are kept for the reasoning, not because they are open.
+round. BUG-27 to BUG-28 are the 2026-08-09 round; BUG-18 to BUG-21 are the
+2026-08-08 round; BUG-01 to BUG-17 are the 2026-08-03 round and are kept for the
+reasoning, not because they are open.
+
+### BUG-27 Money could be collected against a cancelled registration, and no report would show it
+
+- **Layer:** BE **Severity:** High **Status:** FIXED (2026-08-09)
+- **Where:** `app/Services/ChallanActions.php::recordPayment`
+- **What:** `cancel()` refuses once money has been collected. Nothing refused the
+  reverse. `recordPayment()` checked only `status !== 'paid'` and
+  `amount <= balance`, so a payment against a cancelled registration was written,
+  audited and notified as normal.
+- **Why it matters more than it looks:** every money query in `Ledger` requires
+  at least one live admission, so that payment is then absent from `billed`,
+  `received`, `outstanding`, `revenueByCourse`, `revenueTrend` and all of
+  `Reporting`. Verified: `received` stayed at 119,000 with the payment sitting in
+  the table. Cash in the drawer that no total in the system knows about — the
+  exact failure `Ledger::scopedChallans`'s own docblock warns of.
+- **Fix:** refuse when no admission on the invoice is live. Checked on
+  `admissions`, not the anchor `admission`, so a grouped invoice stays
+  collectable while any one of its courses lives; there is a test for that too.
+- **Found by the security review of the GAP-08 diff, not by the change itself.**
+  It was pre-existing. It surfaced because that diff promoted the two screens'
+  list queries into a shared `scopedChallans()` contract described as "the
+  challans this viewer may collect against", which made the gap between the two
+  meanings visible.
+
+### BUG-28 A double-click on Confirm payment showed "You do not have access to this screen"
+
+- **Layer:** FE + BE **Severity:** Medium **Status:** FIXED (2026-08-09)
+- **Where:** `confirmPay` and `confirmCancel` on Challans and Registrations
+- **What:** When the first response landed before the second click — a fast
+  connection, which is most of them — the dialog had already closed and `payId`
+  was null. That fell through to `abort(403)`, and Livewire renders a 403 as a
+  full-screen error dialog. The officer was told they lacked permission for a
+  payment that had just succeeded correctly.
+- **Fix:** a null id means there is nothing to confirm, so return quietly. A
+  non-null id for a record outside the viewer's scope is still a 403, and there
+  is a test for each.
+- **Only a browser could find this.** The suite asserted `assertStatus(403)` and
+  read as the guard working; the modal is client-side. Same lesson as the four
+  browser-only defects in the 2026-08-08 round.
 
 ### BUG-18 The PDF icon threw a JS error and opened the drawer anyway
 
@@ -858,6 +927,16 @@ absence confirmed by search, not assumed from the map.
   one open session per cashier; expected = opening + cash collections + cash in
   − refunds − cash out; counted cash entered at close; a variance requires a
   reason and a permission; a closed session is immutable.
+- **GAP-08 made the case for this concrete, added 2026-08-09.** The phantom
+  payment a double-click used to create was invisible to every check the database
+  can perform: it reduced the outstanding balance by exactly the amount it
+  invented, so `billed = received + outstanding` still held and every report
+  stayed internally consistent. Two of the three near-misses caught in review
+  had the same property — a failure the system reported as a success, with no
+  internal witness. `Ledger::outstanding()` is `billed − received`, so that
+  invariant is an identity and can never catch this class of thing at all. **A
+  counted drawer is the only external witness the system could have**, and it is
+  the one thing not built.
 
 ### GAP-07 No refund, reversal or payment correction: OPEN
 
@@ -876,22 +955,70 @@ absence confirmed by search, not assumed from the map.
   status from the ledger rather than maintaining it alongside. The same two
   ideas are exactly what a reversal needs.
 
-### GAP-08 Collection has no idempotency boundary: OPEN
+### GAP-08 Collection has no idempotency boundary: CLOSED
 
-- **Layer:** FE + BE + DB **Size:** Small **Status:** OPEN
-- **Confirmed absent:** `payments` carries `id, challan_id, amount, method,
-  received_by, received_at, note, created_at, updated_at` — no operation key —
-  and `ChallanActions::recordPayment()` has a `lockForUpdate()` and nothing else.
-- **What:** BUG-08 fixed a real race: two officers collecting at once can no
-  longer both pass the balance check. That is a different problem from **one**
-  officer's request arriving twice. A double-click, a browser retry, a proxy
-  retry or a future gateway retry each produce two requests that are individually
-  valid, and the row lock serialises them rather than rejecting the second — so
-  two payments land while the balance still allows it.
-- **Required shape:** a client-generated operation UUID carried on the request, a
-  UNIQUE constraint on it, a replay returning the first result instead of
-  inserting, the submit control disabled while in flight, and a test that fires
-  the identical request twice and asserts one payment row.
+- **Layer:** FE + BE + DB **Size:** Small **Status:** CLOSED 2026-08-09
+- **What it was.** BUG-08 fixed two officers colliding on one challan. This was
+  **one** officer's request arriving twice, and `lockForUpdate()` made it worse
+  rather than better: the lock serialises the two writes so cleanly that each
+  passes its own balance check and both commit. Reproduced before any fix — a
+  student handing over Rs 10,000 against a Rs 20,000 fee was recorded as having
+  paid the lot, with the challan flipped to **paid** and the balance at zero.
+- **The exposure was precisely part payments.** Settling in full was accidentally
+  safe, because the second click hit `status === 'paid'` and threw. Only amounts
+  at or below half the balance got through — which, per the institute's own roll
+  (an Advance and a Second Installment on every row), is the common transaction.
+- **What was built:** `operations`, one row per completed write keyed by a token
+  the form mints when it opens, so both halves of a double-click carry the same
+  one and the second loses on a UNIQUE index. `App\Services\Operations::once()`,
+  `App\Support\Concerns\GuardsDoubleSubmit` and `CollectsPayments`, 34 tests in
+  `tests/Feature/DoubleSubmitTest.php`.
+- **Three properties that took some getting right**, each now pinned by a test:
+  - The marker and the work share one transaction, so a **failed** operation
+    rolls the token back. Persisting it on failure would be worse than the bug —
+    one dropped connection would lock an officer out of recording a payment that
+    never happened.
+  - Only a clash on the **marker** counts as a replay. The first version wrapped
+    the marker and the work in one `try`, so a collision on `students.student_code`
+    came back as "already on file" with no student created: a hard failure
+    reported as success.
+  - The stored key is `sha256(name | actor | token)`, not the token. The token
+    has to be client-supplied to survive the round trip, and storing it raw made
+    one global namespace of every operation — a token burnt on `student.create`
+    then made `once()` report a payment as recorded, writing nothing while the
+    screen said "Part payment received · Rs 5,000 · Cash".
+- **`toggleActive` was a different failure with the same cause** and is now
+  `setActive($id, $to)`: two clicks on a flip cancel out and leave the course as
+  it was, while both toasts report a change. The superadmin account toggle had
+  the same shape and now refuses if the row moved since the dialog opened.
+- **Where the guard was NOT needed, and why.** Cohorts, courses, staff users and
+  roles are all protected by user-supplied unique columns; attendance by
+  `(course_id, student_id, session_date)`; an existing student's re-enrolment by
+  BUG-17's live-enrolment index. Only payments, new students and new-student
+  registrations had no natural key. Confirmed by probe, not assumed.
+- **What the ledger could not tell us.** `billed = received + outstanding` holds
+  perfectly with a phantom payment in place, because the phantom reduces the
+  balance by exactly the amount it invents. `Ledger::outstanding()` is defined as
+  `billed − received`, so the invariant is an identity and can never witness
+  this. The only disagreeing party is the cash drawer — which is what GAP-06 is
+  for, and the strongest argument yet for building it.
+
+### DATA-02 Records an earlier double-click may already have created
+
+- **Layer:** Data **Size:** Small **Status:** OPEN, nothing found so far
+- `php artisan records:duplicates [--seconds=15]` reports payments, students and
+  admissions written within seconds of an identical one. Run against the
+  development database on 2026-08-09: **nothing found**, which is expected of a
+  seeded database and proves nothing about production.
+- **It reports and never deletes, deliberately.** Removing a collected payment is
+  exactly what the rest of this system refuses to do — `payments` is append-only
+  and `cancel()` will not touch a challan with money against it. A row that turns
+  out to be phantom is corrected by an offsetting reversal, which is GAP-07's
+  job, with a reason and a trail. A `--fix` that quietly deleted money rows would
+  be a worse bug than the one it cleaned up after.
+- **The output is candidates, not verdicts.** A student really can pay the same
+  amount twice in a minute. Run it against production after deploying, and check
+  each hit against what was actually collected.
 
 ### GAP-09 Backups are generated; restore is barely specified: OPEN
 
@@ -1067,6 +1194,18 @@ reached a commit. `.playwright-mcp/` still holds ~8.5 MB of screenshots and
 downloaded PDFs from browser QA; it is gitignored tool output and safe to delete
 whenever the space is wanted.
 
+**2026-08-09, second part (GAP-08).** One migration ran,
+`create_operations_table`. The browser verification for the double-submit guard
+writes real payments, so the SQLite file was copied to a scratch directory
+beforehand and **restored from that copy afterwards** rather than the rows being
+deleted — which also puts `audit_logs` back, a table that cannot be cleaned up
+any other way. Verified after restoring: 12 students, 11 admissions, 11 challans,
+6 payments, 40 audit rows, 0 operations, and 214,000 = 119,000 + 95,000.
+
+`php artisan records:duplicates` was run against the development database and
+found nothing. That is what a seeded database should say and is not evidence
+about production; see DATA-02.
+
 ### Worth exercising by hand
 
 | What | How | Expect |
@@ -1081,3 +1220,8 @@ whenever the space is wanted.
 | GAP-04 | `php artisan roll:import "student_details_report (45).xlsx"` | 93 ready, 385 refused, and the counts in §Part 5 unchanged afterwards |
 | GAP-04 | Add `--rejects=/tmp/r.csv` and open the file | One line per refused row, carrying the Excel line number |
 | DATA-01 | Read the rejection CSV's `reasons` column | Only the ten categories in DATA-01, nothing unexplained |
+| GAP-08 | Double-click **Confirm payment** on a part payment | One payment row, no error dialog, and the toast's amount matches what you typed |
+| GAP-08 | Do it again on the same challan, deliberately, from a reopened dialog | A second payment lands — the guard must not eat a real collection |
+| BUG-27 | Cancel a registration, then try to collect against its challan | Refused, with a message naming the cancellation |
+| BUG-28 | Double-click **Confirm payment** and watch for a full-screen error | No "You do not have access to this screen" |
+| DATA-02 | `php artisan records:duplicates` after deploying | Candidates listed, nothing deleted |

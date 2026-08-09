@@ -4,19 +4,21 @@ use App\Models\Admission;
 use App\Models\Challan;
 use App\Services\ChallanActions;
 use App\Services\Ledger;
+use App\Support\Concerns\CollectsPayments;
+use App\Support\Concerns\GuardsDoubleSubmit;
 use App\Support\Matcher;
+use Illuminate\Database\Eloquent\Builder;
 use Livewire\Volt\Component;
 
 new class extends Component {
+    use CollectsPayments, GuardsDoubleSubmit;
+
     public string $q = '';
 
     /** all | paid | unpaid | overdue. Status was only reachable by typing it. */
     public string $state = 'all';
 
     public ?int $drawerId = null;
-    public ?int $payId = null;
-    public string $payMethod = '';
-    public int $payAmount = 0;
     public ?int $cancelAdmId = null;
     public string $cancelReason = '';
     public string $cancelError = '';
@@ -38,40 +40,6 @@ new class extends Component {
         $this->drawerId = null;
     }
 
-    public function askPay(int $id): void
-    {
-        $this->payId = $id;
-        $this->payMethod = '';
-        // Defaults to settling in full, which is the common case; the officer
-        // edits it down when the student is paying an advance.
-        $this->payAmount = (int) ($this->scoped()->find($id)?->balance() ?? 0);
-    }
-
-    public function confirmPay(): void
-    {
-        $challan = $this->scoped()->find($this->payId);
-        if (! $challan || ! auth()->user()->can('challans.pay')) {
-            abort(403);
-        }
-        try {
-            app(ChallanActions::class)->recordPayment($challan, auth()->user(), $this->payAmount, $this->payMethod);
-        } catch (\Throwable $e) {
-            $this->dispatch('bbt-toast', tone: 'err', title: 'Could not record payment', msg: $e->getMessage());
-
-            return;
-        }
-        $this->payId = null;
-        $settled = $challan->fresh()->isPaid();
-        $this->dispatch('bbt-toast',
-            tone: 'ok',
-            title: $settled ? 'Payment recorded' : 'Part payment received',
-            // Fully qualified: the template below already imports Format, and
-            // Volt compiles both blocks into one file where a second `use` of
-            // the same name is a fatal error.
-            msg: $challan->challan_no.' · '.\App\Support\Format::money($this->payAmount).' · '.$this->payMethod,
-        );
-    }
-
     public function askCancel(int $admissionId): void
     {
         $this->cancelAdmId = $admissionId;
@@ -82,6 +50,11 @@ new class extends Component {
     public function confirmCancel(): void
     {
         $this->cancelError = '';
+        // Same as confirmPay: the dialog is already gone, so this is a repeat
+        // click rather than a permission problem.
+        if ($this->cancelAdmId === null) {
+            return;
+        }
         if (! auth()->user()->can('registrations.create')) {
             abort(403);
         }
@@ -101,7 +74,8 @@ new class extends Component {
         $this->dispatch('bbt-toast', tone: 'warn', title: 'Registration cancelled', msg: 'Soft-deleted and recoverable');
     }
 
-    private function scoped()
+    /** Supplies CollectsPayments; also the source for every list below. */
+    protected function scopedChallans(): Builder
     {
         return app(Ledger::class)->scopedChallans(auth()->user());
     }
@@ -116,7 +90,7 @@ new class extends Component {
         // paymentState(), and on a split plan that consults the schedule to see
         // whether an earlier installment has been missed. Without this the
         // list fires one query per challan.
-        $all = $this->scoped()->with(['admission.student', 'admission.course', 'installments'])->get();
+        $all = $this->scopedChallans()->with(['admission.student', 'admission.course', 'installments'])->get();
 
         // Counts come from the unfiltered set, so a chip always shows how many
         // it would reveal rather than how many survived the current filter.
@@ -155,9 +129,9 @@ new class extends Component {
             'rows' => $rows,
             'counts' => $counts,
             'selected' => $this->drawerId
-                ? $this->scoped()->with(['admission.student', 'admission.course.trainer', 'admission.cohort', 'admission.enroller', 'discountApprover', 'auditLogs.actor', 'installments', 'payments.receiver'])->find($this->drawerId)
+                ? $this->scopedChallans()->with(['admission.student', 'admission.course.trainer', 'admission.cohort', 'admission.enroller', 'discountApprover', 'auditLogs.actor', 'installments', 'payments.receiver'])->find($this->drawerId)
                 : null,
-            'payChallan' => $this->payId ? $this->scoped()->with(['admission.student', 'payments'])->find($this->payId) : null,
+            'payChallan' => $this->payId ? $this->scopedChallans()->with(['admission.student', 'payments'])->find($this->payId) : null,
         ];
     }
 }; ?>

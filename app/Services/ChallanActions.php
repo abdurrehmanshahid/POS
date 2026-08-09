@@ -60,6 +60,23 @@ class ChallanActions
                 throw new RuntimeException('Challan is already paid.');
             }
 
+            // The mirror of cancel()'s guard, and it was missing.
+            //
+            // cancel() refuses once money has been collected. Nothing refused
+            // the reverse: collecting against an invoice whose enrolments are
+            // all cancelled. Every money query in Ledger requires at least one
+            // live admission, so such a payment is banked, audited, and then
+            // absent from billed, received, outstanding and every report — the
+            // cash is in the drawer and no total in the system knows about it.
+            // Only the drawer count would ever disagree.
+            //
+            // Checked on `admissions`, not on the anchor `admission`: a grouped
+            // invoice stays collectable while any one of its enrolments lives,
+            // which is the same test Ledger::scopedChallans applies.
+            if ($locked->admissions()->where('status', '!=', 'cancelled')->doesntExist()) {
+                throw new RuntimeException('This registration is cancelled. Money cannot be collected against it.');
+            }
+
             $balance = $locked->balance();
 
             if ($amount > $balance) {

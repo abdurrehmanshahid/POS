@@ -145,7 +145,16 @@
                 </div>
                 <div style="display:flex;gap:10px;justify-content:flex-end">
                     <button class="btn btn-ghost" wire:click="$set('payId', null)">Cancel</button>
-                    <button class="btn btn-primary" wire:click="confirmPay" @disabled(! $payMethod || $payAmount < 1 || $payAmount > $payChallan->balance())>Confirm payment</button>
+                    {{-- wire:loading disables the button for the round trip, which
+                         narrows the double-click window but does not close it: a
+                         request already on the wire has already committed by the
+                         time the browser could cancel it. The server-side token
+                         in Operations::once() is the actual guard; this only
+                         stops the officer from generating the second request in
+                         the first place. --}}
+                    <button class="btn btn-primary" wire:click="confirmPay"
+                            wire:loading.attr="disabled" wire:target="confirmPay"
+                            @disabled(! $payMethod || $payAmount < 1 || $payAmount > $payChallan->balance())>Confirm payment</button>
                 </div>
             </div>
         </div>

@@ -1,14 +1,18 @@
 <?php
 
 use App\Models\Student;
+use App\Services\Operations;
 use App\Services\Sequences;
 use App\Services\StudentService;
 use App\Support\Format;
+use App\Support\Concerns\GuardsDoubleSubmit;
 use App\Support\Matcher;
 use Illuminate\Validation\ValidationException;
 use Livewire\Volt\Component;
 
 new class extends Component {
+    use GuardsDoubleSubmit;
+
     public string $q = '';
 
     public ?int $selectedId = null;
@@ -77,6 +81,7 @@ new class extends Component {
         $this->reset('editingId', 'fType', 'fName', 'fGuardian', 'fPhone', 'fCnic');
         $this->resetValidation();
         $this->formOpen = true;
+        $this->freshOperationKey('student');
     }
 
     public function editStudent(int $id): void
@@ -99,6 +104,7 @@ new class extends Component {
         $this->fCnic = $student->cnic ?? '';
         $this->resetValidation();
         $this->formOpen = true;
+        $this->freshOperationKey('student');
     }
 
     public function saveStudent(): void
@@ -112,16 +118,30 @@ new class extends Component {
             'cnic' => $this->fCnic,
         ];
 
+        $student = null;
+        $replayed = false;
+
         try {
             if ($this->editingId) {
                 abort_unless(auth()->user()->can('students.manage'), 403);
                 $student = Student::visibleTo(auth()->user())->findOrFail($this->editingId);
+                // Not guarded: an update writes the same values whichever click
+                // wins, so a repeat is harmless. Creating is the dangerous one.
                 $service->update(auth()->user(), $student, $payload);
                 $msg = $student->student_code.' updated.';
             } else {
                 abort_unless(auth()->user()->can('registrations.create'), 403);
-                $student = $service->create(auth()->user(), $payload);
-                $msg = $student->name.' added as '.$student->student_code.'.';
+                // Guarded because nothing else catches this. `student_code` is
+                // freshly allocated on every call and `cnic` became optional in
+                // BUG-23, so a double-click produced two people with the same
+                // name and no constraint objected.
+                $op = app(Operations::class)->once($this->operationKey('student'), 'student.create',
+                    fn () => $service->create(auth()->user(), $payload));
+                $replayed = $op->replayed;
+                $student = $op->value;
+                $msg = $replayed
+                    ? trim($this->fName).' is already on file.'
+                    : $student->name.' added as '.$student->student_code.'.';
             }
         } catch (ValidationException $e) {
             foreach ($e->errors() as $field => $messages) {
@@ -130,12 +150,30 @@ new class extends Component {
             $this->dispatch('bbt-toast', tone: 'err', title: 'Cannot save student', msg: 'Please fix the highlighted fields.');
 
             return;
+        } catch (\Throwable $e) {
+            // Broadened to match the other two write paths, which both catch
+            // Throwable. A request arriving without an operation token makes
+            // Operations::once() throw, and with only the ValidationException
+            // arm above that surfaced as a 500 instead of a message.
+            $this->dispatch('bbt-toast', tone: 'err', title: 'Cannot save student', msg: $e->getMessage());
+
+            return;
         }
 
         $this->formOpen = false;
-        $this->selectedId = $student->id;
-        $this->dispatch('bbt-toast', tone: 'ok', title: $this->editingId ? 'Student updated' : 'Student added', msg: $msg);
+        // Null on a replay, and selecting nothing would close the drawer on a
+        // student who is perfectly fine. Leave the selection where it was.
+        if ($student) {
+            $this->selectedId = $student->id;
+        }
+        $this->dispatch('bbt-toast',
+            tone: 'ok',
+            title: $this->editingId ? 'Student updated' : 'Student added',
+            msg: $msg,
+            note: $replayed ? 'Duplicate submission ignored' : null,
+        );
         $this->reset('editingId', 'fType', 'fName', 'fGuardian', 'fPhone', 'fCnic');
+        $this->freshOperationKey('student');
     }
 
     public function with(): array
@@ -421,7 +459,10 @@ new class extends Component {
 
                             <div style="display:flex;gap:10px;margin-top:24px">
                                 <button type="button" class="btn btn-ghost" style="flex:0 0 auto" @click="open=false">Cancel</button>
-                                <button type="submit" class="btn btn-accent" style="flex:1">
+                                {{-- Narrows the double-click window; the token in
+                                     Operations::once() is what actually closes it. --}}
+                                <button type="submit" class="btn btn-accent" style="flex:1"
+                                        wire:loading.attr="disabled" wire:target="saveStudent">
                                     {{ $editingId ? 'Save changes' : 'Add student' }}
                                 </button>
                             </div>
