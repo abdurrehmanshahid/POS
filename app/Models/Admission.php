@@ -18,7 +18,7 @@ class Admission extends Model
 
     protected $fillable = [
         'reg_no', 'student_id', 'course_id', 'cohort_id', 'enrolled_by', 'status', 'rejection_reason',
-        'challan_id', 'billed_amount',
+        'challan_id', 'billed_amount', 'import_key',
     ];
 
     protected $casts = [
