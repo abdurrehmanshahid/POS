@@ -1,0 +1,195 @@
+# ---------------------------------------------------------------------------
+# Azure Pipelines mirror of .github/workflows/ci.yml
+#
+# The repository pushes to GitHub and Azure DevOps on the same `git push`, so
+# both need to be able to prove a commit is good. This file is a translation of
+# the GitHub workflow, not a second opinion: the same PHP versions, the same two
+# drivers, the same steps in the same order. When one changes, change both. If
+# they are ever allowed to drift, the one nobody reads becomes a check that
+# cannot fail, which is worse than no check because it is still trusted.
+#
+# The matrix is the point. Production runs MySQL and the suite runs SQLite,
+# and this codebase hand-writes driver-specific SQL in four services. The MySQL
+# leg has already earned its place once: it caught `admissions.status =>
+# 'active'`, a value absent from the column's enum, which would have failed
+# every one of the 478 roll-import rows on MySQL while passing on SQLite —
+# because the CHECK constraint was lost when a later migration rebuilt the
+# table. SQLite alone could never have told us.
+# ---------------------------------------------------------------------------
+
+trigger:
+  branches:
+    include: [main]
+
+pr:
+  branches:
+    include: [main]
+
+# Supersede an in-flight run when a newer commit lands on the same branch.
+# Equivalent to the GitHub workflow's `concurrency` block.
+name: $(Build.SourceBranchName)-$(Build.BuildId)
+
+stages:
+  - stage: verify
+    displayName: Verify
+    jobs:
+      # -------------------------------------------------------------------
+      - job: tests
+        displayName: Tests
+        timeoutInMinutes: 15
+        pool:
+          vmImage: ubuntu-latest
+
+        strategy:
+          # Report every broken combination in one run rather than stopping at
+          # the first. "php and mysql both fail" is a different diagnosis from
+          # "php fails".
+          #
+          # dbName is carried in the matrix rather than derived from dbDriver
+          # further down. A `${{ if eq(variables['dbDriver'], ...) }}` is
+          # evaluated at compile time, before the matrix exists, so it would
+          # have resolved to nothing on every leg and handed the suite an empty
+          # database name.
+          matrix:
+            php84_sqlite:
+              phpVersion: '8.4'
+              dbDriver: sqlite
+              dbName: ':memory:'
+            php85_sqlite:
+              phpVersion: '8.5'
+              dbDriver: sqlite
+              dbName: ':memory:'
+            php84_mysql:
+              phpVersion: '8.4'
+              dbDriver: mysql
+              dbName: institute_testing
+
+        steps:
+          - script: |
+              sudo update-alternatives --set php /usr/bin/php$(phpVersion) || true
+              sudo add-apt-repository -y ppa:ondrej/php
+              sudo apt-get update -qq
+              sudo apt-get install -y --no-install-recommends \
+                php$(phpVersion)-cli php$(phpVersion)-mbstring php$(phpVersion)-xml \
+                php$(phpVersion)-curl php$(phpVersion)-zip php$(phpVersion)-bcmath \
+                php$(phpVersion)-intl php$(phpVersion)-gd php$(phpVersion)-sqlite3 \
+                php$(phpVersion)-mysql
+              sudo update-alternatives --set php /usr/bin/php$(phpVersion)
+              php -v
+            displayName: Set up PHP $(phpVersion)
+            # Extensions listed explicitly rather than trusting the image's
+            # defaults: gd and zip for dompdf and phpspreadsheet, sqlite3 and
+            # mysql for the two legs. sodium ships in the ondrej cli package.
+
+          - task: Cache@2
+            displayName: Cache Composer packages
+            inputs:
+              key: 'composer | "$(Agent.OS)" | $(phpVersion) | composer.lock'
+              restoreKeys: |
+                composer | "$(Agent.OS)" | $(phpVersion)
+              path: $(HOME)/.cache/composer/files
+
+          - script: composer validate --strict --no-check-publish
+            displayName: Validate composer.json against composer.lock
+            # Catches a manifest edited without re-locking, which otherwise
+            # surfaces as a mystery dependency difference between machines.
+
+          - script: composer install --prefer-dist --no-interaction --no-progress --no-ansi
+            displayName: Install dependencies
+
+          - script: |
+              cp .env.example .env
+              php artisan key:generate
+            displayName: Prepare environment
+            # phpunit.xml supplies the test database. This exists for APP_KEY,
+            # which the encrypted two-factor casts genuinely require and which
+            # .env.example deliberately ships blank.
+
+          - script: vendor/bin/pint --test
+            displayName: Check code style
+            # Its own step so a style failure is never mistaken for broken
+            # behaviour, or the other way round.
+
+          - script: |
+              docker run -d --name mysql -p 3306:3306 \
+                -e MYSQL_ROOT_PASSWORD=root \
+                -e MYSQL_DATABASE=institute_testing \
+                mysql:8.4
+              for i in $(seq 1 30); do
+                if docker exec mysql mysqladmin ping -h 127.0.0.1 -uroot -proot --silent 2>/dev/null; then
+                  echo "MySQL is up"; exit 0
+                fi
+                sleep 2
+              done
+              echo "MySQL did not become ready within 60s"; exit 1
+            displayName: Start and wait for MySQL
+            condition: eq(variables['dbDriver'], 'mysql')
+            # Started only on the leg that needs it. GitHub Actions declares the
+            # service for every leg because it cannot condition on a matrix
+            # value; here we can, so we do.
+
+          - script: php artisan test
+            displayName: Run the test suite
+            env:
+              DB_CONNECTION: $(dbDriver)
+              DB_HOST: 127.0.0.1
+              DB_PORT: 3306
+              DB_DATABASE: $(dbName)
+              DB_USERNAME: root
+              DB_PASSWORD: root
+            # DB_* is set here rather than in phpunit.xml because PHPUnit's
+            # <env> entries do not overwrite a variable that already exists in
+            # the environment. That is what lets one suite run against both
+            # drivers without a second config file to keep in step.
+
+      # -------------------------------------------------------------------
+      - job: assets
+        displayName: Frontend build
+        timeoutInMinutes: 10
+        pool:
+          vmImage: ubuntu-latest
+
+        steps:
+          - task: NodeTool@0
+            displayName: Set up Node
+            inputs:
+              versionSpec: '20'
+
+          - task: Cache@2
+            displayName: Cache npm
+            inputs:
+              key: 'npm | "$(Agent.OS)" | package-lock.json'
+              restoreKeys: 'npm | "$(Agent.OS)"'
+              path: $(HOME)/.npm
+
+          - script: npm ci
+            displayName: Install dependencies
+
+          - script: npm run build
+            displayName: Build
+            # A real gate: the production bundle has to compile. There is no
+            # npm test script in this project, so none is pretended at here.
+
+      # -------------------------------------------------------------------
+      - job: CI
+        displayName: CI
+        dependsOn: [tests, assets]
+        # Runs even when something upstream failed, which is precisely when its
+        # verdict matters. A skipped gate can read as "not failing".
+        condition: always()
+        pool:
+          vmImage: ubuntu-latest
+
+        steps:
+          - script: |
+              echo "tests:  $(Agent.JobStatus)"
+              if [ "$(dependencies.tests.result)" != "Succeeded" ] || \
+                 [ "$(dependencies.assets.result)" != "Succeeded" ]; then
+                echo "##vso[task.logissue type=error]One or more required checks did not pass."
+                exit 1
+              fi
+              echo "All checks passed."
+            displayName: Verify every check passed
+            # Set this job as the required check in the branch policy for main,
+            # the same way the GitHub job named "CI" is the required check
+            # there. Everything real runs in the jobs above; this is the gate.
