@@ -62,8 +62,10 @@ new class extends Component {
         foreach ($L->overdueChallans($user) as $ch) {
             $attention[] = [
                 'kind' => 'overdue', 'badge' => '!', 'bg' => 'var(--over-bg)', 'col' => 'var(--over)',
-                'title' => $ch->admission->student->name,
-                'sub' => $ch->challan_no.' · '.$ch->admission->course->title,
+                // Through the invoice, not through its admission. An overdue
+                // charge has none, and reaching for it 500s the whole dashboard.
+                'title' => $ch->student->name,
+                'sub' => $ch->challan_no.' · '.$ch->subject(),
                 'meta' => Format::money($ch->net_amount), 'metaColor' => 'var(--over)',
                 'href' => route('challans', ['open' => $ch->id]),
             ];

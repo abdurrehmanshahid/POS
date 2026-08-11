@@ -90,7 +90,7 @@ new class extends Component {
         // paymentState(), and on a split plan that consults the schedule to see
         // whether an earlier installment has been missed. Without this the
         // list fires one query per challan.
-        $all = $this->scopedChallans()->with(['admission.student', 'admission.course', 'installments'])->get();
+        $all = $this->scopedChallans()->with(['student', 'admission.student', 'admission.course', 'admissions.course', 'installments'])->get();
 
         // Counts come from the unfiltered set, so a chip always shows how many
         // it would reveal rather than how many survived the current filter.
@@ -105,14 +105,20 @@ new class extends Component {
             ->when($this->state !== 'all', fn ($rows) => $rows->filter(
                 fn (Challan $c) => $c->paymentState() === $this->state
             ))
+            // Asked of the invoice, never of `admission->student`. A charge has
+            // no admission, so reaching through it threw "Attempt to read
+            // property student on null" and took the whole screen down with a
+            // 500 — not for the charge's row, for everybody's.
             ->filter(function (Challan $c) use ($matcher) {
-                $a = $c->admission;
+                $subject = $c->subject();
+                $codes = $c->courseCodes();
+                $name = $c->student->name;
 
                 return $matcher->matches([
-                    '_all' => "{$c->challan_no} {$a->student->name} {$a->course->title} {$a->course->code} {$c->status} {$c->paymentState()}",
+                    '_all' => "{$c->challan_no} {$name} {$subject} {$codes} {$c->status} {$c->paymentState()}",
                     'no' => $c->challan_no,
-                    'name' => $a->student->name,
-                    'course' => $a->course->title.' '.$a->course->code,
+                    'name' => $name,
+                    'course' => trim($subject.' '.$codes),
                     'status' => $c->paymentState(),
                 ]);
             })
@@ -129,9 +135,9 @@ new class extends Component {
             'rows' => $rows,
             'counts' => $counts,
             'selected' => $this->drawerId
-                ? $this->scopedChallans()->with(['admission.student', 'admission.course.trainer', 'admission.cohort', 'admission.enroller', 'discountApprover', 'auditLogs.actor', 'installments', 'payments.receiver'])->find($this->drawerId)
+                ? $this->scopedChallans()->with(['student', 'raiser', 'admission.student', 'admission.course.trainer', 'admission.cohort', 'admission.enroller', 'admissions.course', 'discountApprover', 'auditLogs.actor', 'installments', 'payments.receiver'])->find($this->drawerId)
                 : null,
-            'payChallan' => $this->payId ? $this->scopedChallans()->with(['admission.student', 'payments'])->find($this->payId) : null,
+            'payChallan' => $this->payId ? $this->scopedChallans()->with(['student', 'admission.student', 'payments'])->find($this->payId) : null,
         ];
     }
 }; ?>
@@ -183,11 +189,11 @@ new class extends Component {
                         <td class="tnum rec-id" data-label="Challan #" style="font-weight:700;color:var(--iris)">{{ $c->challan_no }}</td>
                         <td data-label="Student">
                             <div style="display:flex;align-items:center;gap:10px">
-                                <x-ui.avatar :name="$c->admission->student->name" :size="30" />
-                                <div><div style="font-size:var(--fs-sm);font-weight:600;color:var(--ink)">{{ $c->admission->student->name }}</div><div class="tnum rec-id" style="font-size:var(--fs-2xs);font-weight:700;color:var(--iris)">{{ $c->admission->student->student_code }}</div></div>
+                                <x-ui.avatar :name="$c->student->name" :size="30" />
+                                <div><div style="font-size:var(--fs-sm);font-weight:600;color:var(--ink)">{{ $c->student->name }}</div><div class="tnum rec-id" style="font-size:var(--fs-2xs);font-weight:700;color:var(--iris)">{{ $c->student->student_code }}</div></div>
                             </div>
                         </td>
-                        <td data-label="Course"><span class="clamp-2" title="{{ $c->admission->course->title }}">{{ $c->admission->course->title }}</span></td>
+                        <td data-label="Course"><span class="clamp-2" title="{{ $c->subject() }}">{{ $c->subject() }}</span></td>
                         <td class="tnum" data-label="Due / paid via" style="color:var(--muted)">{{-- An imported legacy balance can have no due date; Format::date() renders
                              NULL as '', which would print a bare "due " with nothing after it. --}}
                         {{ $c->isPaid() ? 'via '.$c->paid_via : ($c->due_date ? 'due '.Format::date($c->due_date) : 'no due date') }}</td>
@@ -208,8 +214,12 @@ new class extends Component {
                                      drawer opened behind the PDF. Stopping propagation is a
                                      browser concern with no server round trip, so it is Alpine's
                                      job, not Livewire's. --}}
-                                <a class="btn-icon btn-icon-plain" href="{{ route('challans.pdf', $c) }}" target="_blank"
-                                   @click.stop title="View challan PDF" aria-label="View challan PDF">
+                                {{-- Points at `view`, not `pdf`. This said "View challan
+                                     PDF" while handing you a file download, which is a
+                                     different thing from viewing and the reason the
+                                     button read as broken. --}}
+                                <a class="btn-icon btn-icon-plain" href="{{ route('challans.view', $c) }}" target="_blank"
+                                   @click.stop title="View &amp; print challan" aria-label="View and print challan">
                                     <x-icon name="eye" :size="16" />
                                 </a>
                             </div>

@@ -10,7 +10,11 @@ use App\Models\Installment;
 use App\Models\Payment;
 use App\Models\Student;
 use App\Models\User;
+use App\Services\Analytics;
+use App\Services\Attendances;
 use App\Services\Ledger;
+use App\Services\RecordRemoval;
+use App\Services\RegistrationService;
 use App\Services\Reporting;
 use App\Support\Contact;
 use Database\Seeders\DatabaseSeeder;
@@ -132,8 +136,15 @@ class RollImportTest extends TestCase
 
     /**
      * An alias must never name a value the config also calls "not a course",
-     * because `resolveCourses()` checks `not_courses` FIRST and would reject a
-     * row the alias was written to rescue.
+     * because `resolveCourses()` checks `not_courses` FIRST and would bill a row
+     * the alias was written to enrol.
+     *
+     * The consequence changed when charges arrived and got quieter, which makes
+     * this check matter more rather than less. It used to be a rejection the
+     * operator could see; now the row imports as a service charge, so a student
+     * would be billed the right money for a course they are not enrolled on, not
+     * counted against its capacity and absent from its register — and nothing
+     * about the import would say so.
      */
     public function test_no_alias_contradicts_the_not_a_course_list(): void
     {
@@ -141,7 +152,7 @@ class RollImportTest extends TestCase
 
         foreach (array_keys(config('roll-import.course_aliases')) as $text) {
             $this->assertNotContains(mb_strtolower((string) $text), $notCourses,
-                "\"{$text}\" is both an alias and a not-a-course; the rejection wins and the alias is dead.");
+                "\"{$text}\" is both an alias and a not-a-course; the charge wins and the alias is dead.");
         }
     }
 
@@ -906,11 +917,348 @@ class RollImportTest extends TestCase
             'A phoneless row was imported twice; its fallback fingerprint is not stable.');
     }
 
+    /**
+     * The person is dated by the day they joined, like their admission already
+     * was.
+     *
+     * Everything else on an imported line is backdated and the person was
+     * quietly left out, so all 445 records read "Joined 11 Aug 2026" — the
+     * afternoon the file was loaded — for students who walked in a year
+     * earlier. The roll knows the real date on every row.
+     */
+    public function test_an_imported_student_is_dated_by_when_they_joined(): void
+    {
+        $row = $this->goodRow(['Registration Date' => '2025-07-03', 'Pending Payment Due Date' => '2025-07-03']);
+
+        $this->artisan('roll:import', ['file' => $this->sheet([$row]), '--commit' => true])
+            ->assertSuccessful();
+
+        $student = Admission::whereNotNull('import_key')->sole()->student;
+
+        $this->assertSame('2025-07-03', $student->created_at->toDateString(),
+            'The student record is dated by the import, not by when they joined.');
+    }
+
+    /**
+     * A person on several lines starts on the EARLIEST of them.
+     *
+     * The file is not in date order, so a later line must not be able to move
+     * the institute's first sight of someone forwards.
+     */
+    public function test_a_person_on_several_lines_is_dated_by_the_first(): void
+    {
+        $rows = [
+            $this->chargeRow(['Registration Date' => '2026-05-12', 'Pending Payment Due Date' => '2026-05-12']),
+            $this->chargeRow(['Registration Date' => '2025-10-14', 'Pending Payment Due Date' => '2025-10-14']),
+        ];
+
+        $this->artisan('roll:import', ['file' => $this->sheet($rows), '--commit' => true])
+            ->assertSuccessful();
+
+        $this->assertSame('2025-10-14', $this->importedContact()->created_at->toDateString(),
+            'A later line moved the joining date forwards.');
+    }
+
+    // ---- Charges: the 32 rows nobody enrols on ------------------------------
+
+    /** A row buying a service rather than teaching. */
+    private function chargeRow(array $overrides = []): array
+    {
+        return $this->goodRow($overrides + [
+            'Course' => 'Co-working Space',
+            'Name' => 'Azeem',
+            // Every one of the institute's 32 charge rows is phoneless, so the
+            // fixture is too — testing this path with a phone would exercise a
+            // key the real data can never produce.
+            'Phone' => '',
+            'Batch' => '',
+        ]);
+    }
+
+    /**
+     * The one charge this file imported, whatever the demo seeder left behind.
+     *
+     * Every test here runs against a seeded institute, so `sole()` on the bare
+     * table would be asserting about the seeder rather than the importer.
+     */
+    private function importedCharge(): Challan
+    {
+        return Challan::whereNotNull('import_key')->sole();
+    }
+
+    private function importedContact(): Student
+    {
+        return Student::query()->contacts()->sole();
+    }
+
+    public function test_a_charge_becomes_an_invoice_with_no_enrolment(): void
+    {
+        $before = $this->counts();
+
+        $this->artisan('roll:import', ['file' => $this->sheet([$this->chargeRow()]), '--commit' => true])
+            ->assertSuccessful();
+
+        $challan = $this->importedCharge();
+
+        $this->assertNull($challan->admission_id, 'A charge must not invent an enrolment.');
+        $this->assertTrue($challan->isCharge());
+        $this->assertSame('Co-working Space', $challan->description);
+        $this->assertSame(25000, $challan->net_amount);
+        $this->assertSame($before['admissions'], Admission::count(),
+            'A charge must not take a seat on any course.');
+
+        // The money still has to be reachable, which is the whole point of the
+        // `student_id` / `raised_by` pair: without them the invoice exists and
+        // no report can see it.
+        $this->assertSame($this->importedContact()->id, $challan->student_id);
+        $this->assertSame(25000, (int) Payment::whereBelongsTo($challan)->sum('amount'));
+    }
+
+    public function test_the_person_behind_a_charge_is_a_contact_not_a_student(): void
+    {
+        $taught = app(Analytics::class)->counts()['students'];
+
+        $this->artisan('roll:import', ['file' => $this->sheet([$this->chargeRow()]), '--commit' => true])
+            ->assertSuccessful();
+
+        $person = $this->importedContact();
+
+        $this->assertTrue($person->isContact());
+        $this->assertSame('Contact', $person->typeLabel());
+        $this->assertSame($taught, app(Analytics::class)->counts()['students'],
+            'A room tenant must not be counted among the people the institute teaches.');
+        $this->assertSame(1, app(Analytics::class)->counts()['contacts']);
+    }
+
+    /**
+     * Azeem rents one desk and pays for it monthly. Six lines, one tenant.
+     *
+     * The failure this pins is six Azeems, each holding one month, none of them
+     * findable as the person who has been renting all year.
+     */
+    public function test_one_person_buying_the_same_service_monthly_is_one_contact(): void
+    {
+        $months = ['2025-10-14', '2025-12-17', '2026-01-29', '2026-02-21', '2026-04-10', '2026-05-12'];
+
+        $rows = array_map(fn ($on) => $this->chargeRow([
+            'Registration Date' => $on, 'Pending Payment Due Date' => $on,
+        ]), $months);
+
+        $this->artisan('roll:import', ['file' => $this->sheet($rows), '--commit' => true])
+            ->assertSuccessful();
+
+        $this->assertSame(1, Student::query()->contacts()->count(),
+            'Six monthly bookings became six people.');
+        $this->assertSame(6, Challan::whereNotNull('import_key')->count(),
+            'Six monthly bookings collapsed into one.');
+        $this->assertSame(150000, $this->chargeMoney());
+    }
+
+    /** Everything collected against a charge this file imported. */
+    private function chargeMoney(): int
+    {
+        return (int) Payment::whereIn(
+            'challan_id', Challan::whereNotNull('import_key')->select('id')
+        )->sum('amount');
+    }
+
+    /**
+     * Amna Imran appears twice on 2025-07-16 for the same Rs 7,500, and both are
+     * real payments. Nothing in the content separates them, so the occurrence
+     * index has to.
+     */
+    public function test_two_identical_charge_lines_are_two_payments(): void
+    {
+        $row = $this->chargeRow(['Name' => 'Amna Imran', 'Course' => 'Recovery (Batch 4)']);
+
+        $this->artisan('roll:import', ['file' => $this->sheet([$row, $row]), '--commit' => true])
+            ->assertSuccessful();
+
+        $this->assertSame(1, Student::query()->contacts()->count());
+        $this->assertSame(2, Challan::whereNotNull('import_key')->count(),
+            'Byte-identical charge lines are two real payments, not one.');
+        $this->assertSame(50000, $this->chargeMoney());
+    }
+
+    /**
+     * The guarantee that makes `--commit` safe to run twice.
+     *
+     * Without `challans.import_key` a re-run books every charge again, and
+     * because charges arrive already settled the ledger simply grows by money
+     * that never arrived, with nothing out of place to notice.
+     */
+    public function test_re_running_does_not_bill_a_charge_twice(): void
+    {
+        $rows = [
+            $this->chargeRow(['Registration Date' => '2025-10-14', 'Pending Payment Due Date' => '2025-10-14']),
+            $this->chargeRow(['Registration Date' => '2025-12-17', 'Pending Payment Due Date' => '2025-12-17']),
+            // Identical to the line above it: the occurrence index has to land
+            // on the same pair of keys on the second run as on the first.
+            $this->chargeRow(['Registration Date' => '2025-12-17', 'Pending Payment Due Date' => '2025-12-17']),
+        ];
+        $file = $this->sheet($rows);
+
+        $this->artisan('roll:import', ['file' => $file, '--commit' => true])->assertSuccessful();
+        $after = $this->counts();
+
+        $this->artisan('roll:import', ['file' => $file, '--commit' => true])->assertSuccessful();
+
+        $this->assertSame($after, $this->counts(), 'A second run billed the same charges again.');
+        $this->assertSame(3, Challan::whereNotNull('import_key')->count());
+    }
+
+    /**
+     * A contact who enrols is a student from that moment (the promotion rule).
+     *
+     * Enforced inside `RegistrationService::register()` rather than offered as a
+     * button, because a genuinely enrolled student sitting outside the student
+     * count until somebody remembers to convert them is the same wrong number
+     * `kind` was added to fix.
+     */
+    public function test_a_contact_who_enrols_becomes_a_student(): void
+    {
+        $this->artisan('roll:import', ['file' => $this->sheet([$this->chargeRow()]), '--commit' => true])
+            ->assertSuccessful();
+
+        $contact = $this->importedContact();
+        $officer = User::where('username', 'aliraza')->sole();
+        $course = Course::where('is_active', true)->first();
+        $taught = Student::query()->students()->count();
+
+        app(RegistrationService::class)->register($officer, [
+            'student_id' => $contact->id,
+            'course_ids' => [$course->id],
+        ]);
+
+        $this->assertFalse($contact->fresh()->isContact());
+        $this->assertSame($taught + 1, Student::query()->students()->count());
+        $this->assertSame(0, Student::query()->contacts()->count());
+
+        // The code does not change with the kind. A contact who enrols keeps
+        // the number already printed on their receipts.
+        $this->assertSame($contact->student_code, $contact->fresh()->student_code);
+    }
+
+    /**
+     * The guardrail that stops a purge destroying a contact's collections.
+     *
+     * `purgeBlocker` reached the student through `challan.admission`, which a
+     * charge does not have, so it returned zero and stayed silent — while the
+     * purge cascaded through the challan and took every payment row with it.
+     * That is BUG-04 exactly, reappearing through a relation that changed.
+     */
+    public function test_a_contact_carrying_collections_cannot_be_purged(): void
+    {
+        $this->artisan('roll:import', ['file' => $this->sheet([$this->chargeRow()]), '--commit' => true])
+            ->assertSuccessful();
+
+        $blocker = app(RecordRemoval::class)->purgeBlocker($this->importedContact());
+
+        $this->assertNotNull($blocker, 'Purging a contact would have destroyed Rs 25,000 of collections.');
+        $this->assertStringContainsString('25,000', $blocker);
+    }
+
+    /**
+     * An officer must be able to find the person they just billed.
+     *
+     * `Student::visibleTo()` matched only through admissions, so a contact was
+     * invisible to the officer who created them: billed, collected from, and
+     * then unfindable on the screen they would go to for the rest of it.
+     */
+    public function test_an_officer_can_see_the_contact_they_billed(): void
+    {
+        $this->artisan('roll:import', ['file' => $this->sheet([$this->chargeRow()]), '--commit' => true])
+            ->assertSuccessful();
+
+        $officer = User::where('username', 'aliraza')->sole();
+        $contact = $this->importedContact();
+
+        $this->assertFalse($officer->can('scope.all'), 'This test is meaningless if the officer sees everything.');
+        $this->assertTrue(
+            Student::visibleTo($officer)->whereKey($contact->id)->exists(),
+            'The officer who raised the charge cannot see who they raised it against.'
+        );
+    }
+
+    /**
+     * The owner's console must report every rupee the institute billed.
+     *
+     * `Analytics::ledger()` reached invoices through `whereHas('admissions')`,
+     * so all 32 charges were absent from BOTH the billed total and the received
+     * total. That is the worst shape this defect takes: `outstanding =
+     * billed − received` is an identity, so the console's own "Ledger
+     * reconciles" self-check went on reporting true while the institute's
+     * revenue read Rs 289,950 short. Nothing inside the number could witness
+     * it, which is exactly why it needs a test that looks from outside.
+     */
+    public function test_the_owner_console_counts_charges_in_the_institutes_revenue(): void
+    {
+        $before = app(Analytics::class)->ledger();
+
+        $this->artisan('roll:import', ['file' => $this->sheet([$this->chargeRow()]), '--commit' => true])
+            ->assertSuccessful();
+
+        $after = app(Analytics::class)->ledger();
+
+        $this->assertSame($before['billed'] + 25000, $after['billed'],
+            'A charge was billed and the owner console did not see it.');
+        $this->assertSame($before['received'] + 25000, $after['received'],
+            'A charge was collected and the owner console did not see it.');
+        $this->assertSame($before['challans'] + 1, $after['challans']);
+        $this->assertTrue($after['reconciles']);
+    }
+
+    /** A charge's balance must reach the person, or nobody chases it. */
+    public function test_a_contacts_unpaid_charge_shows_as_outstanding(): void
+    {
+        $row = $this->chargeRow([
+            'Status' => 'Pending', 'Discounted Price' => 25000, 'Advance Payment' => 10000,
+            'Second Installment' => 15000, 'Balance' => 15000, 'Total Amount' => 10000,
+        ]);
+
+        $this->artisan('roll:import', ['file' => $this->sheet([$row]), '--commit' => true])
+            ->assertSuccessful();
+
+        $contact = Student::query()->contacts()->withCharges()->sole();
+
+        $this->assertSame(15000, $contact->outstanding(),
+            'A contact owing money read as a clean slate, because outstanding() only looked at admissions.');
+    }
+
+    /**
+     * Contacts belong to nobody's register.
+     *
+     * True by construction — the roster is built from admissions and a contact
+     * has none — which is exactly why it is worth a test: the property is
+     * accidental until something asserts it, and a future roster built from
+     * `students` instead would put a room tenant in a trainer's class list.
+     */
+    public function test_a_contact_never_appears_on_a_class_roster(): void
+    {
+        $this->artisan('roll:import', ['file' => $this->sheet([$this->chargeRow()]), '--commit' => true])
+            ->assertSuccessful();
+
+        $contact = $this->importedContact();
+
+        foreach (Course::all() as $course) {
+            $this->assertFalse(
+                app(Attendances::class)->roster($course)->contains('id', $contact->id),
+                "A contact appeared on the register for {$course->code}."
+            );
+        }
+    }
+
     public static function rejections(): array
     {
         return [
             'unknown course' => [['Course' => 'Underwater Basket Weaving'], 'unknown course'],
-            'not a course' => [['Course' => 'Co-working Space'], 'not a course'],
+            // "not a course" was a rejection here and is now a charge — see the
+            // charge tests below. What replaced it as a refusal is a line that
+            // names a course AND a charge, which cannot be billed as either.
+            'a course and a charge on one line' => [
+                ['Course' => 'Web Development, Co-working Space'],
+                'names a course and a charge on one line',
+            ],
             'no course' => [['Course' => ''], 'no course named'],
             'unknown CSR' => [['CSR' => 'Someone Else'], 'unknown CSR'],
             // Neither a blank phone nor an unusable one is here any more: both

@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\Payment;
 use App\Models\Setting;
+use App\Support\Download;
 use Barryvdh\DomPDF\Facade\Pdf;
 use Illuminate\Http\Request;
 use Symfony\Component\HttpFoundation\Response;
@@ -24,10 +25,51 @@ use Symfony\Component\HttpFoundation\Response;
  */
 class ReceiptController extends Controller
 {
+    /**
+     * The receipt as a page, with a Print button.
+     *
+     * HTML rather than an inline PDF, for the reason set out in
+     * {@see ChallanController::view()}: "inline" is a
+     * request the browser may decline, and a receipt the student is standing
+     * there waiting for is the worst place to discover that.
+     */
+    public function view(Request $request, Payment $payment): Response
+    {
+        $payment = $this->authorised($request, $payment);
+
+        return response()->view('receipts.pdf', [
+            'payment' => $payment,
+            'challan' => $payment->challan,
+            'settings' => Setting::current(),
+            'balanceAfter' => $this->balanceAfter($payment),
+            'forScreen' => true,
+        ]);
+    }
+
+    /** Save the file, for sending on. */
     public function download(Request $request, Payment $payment): Response
+    {
+        $payment = $this->authorised($request, $payment);
+
+        $name = 'receipt-'.$payment->receiptNo().'.pdf';
+
+        return Download::named(
+            Pdf::loadView('receipts.pdf', [
+                'payment' => $payment,
+                'challan' => $payment->challan,
+                'settings' => Setting::current(),
+                'balanceAfter' => $this->balanceAfter($payment),
+            ])->setPaper('a5', 'landscape')->download($name),
+            $name,
+        );
+    }
+
+    private function authorised(Request $request, Payment $payment): Payment
     {
         $payment->load([
             'receiver',
+            'challan.student',
+            'challan.raiser',
             'challan.admission.student',
             'challan.admission.course',
             'challan.admissions.course',
@@ -42,19 +84,14 @@ class ReceiptController extends Controller
             abort(403);
         }
 
-        if (! $request->user()->can('scope.all')
-            && $challan->admission->enrolled_by !== $request->user()->id) {
+        // Asked of the invoice, so a receipt for a non-course charge is a
+        // permission decision rather than a server error. The officer who
+        // collected the money is the one who may reprint the proof of it.
+        if (! $challan->isVisibleTo($request->user())) {
             abort(403);
         }
 
-        $pdf = Pdf::loadView('receipts.pdf', [
-            'payment' => $payment,
-            'challan' => $challan,
-            'settings' => Setting::current(),
-            'balanceAfter' => $this->balanceAfter($payment),
-        ])->setPaper('a5', 'landscape');
-
-        return $pdf->download('receipt-'.$payment->receiptNo().'.pdf');
+        return $payment;
     }
 
     /**

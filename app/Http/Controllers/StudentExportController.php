@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\Student;
+use App\Support\Download;
 use App\Support\Format;
 use Illuminate\Http\Request;
 use Symfony\Component\HttpFoundation\StreamedResponse;
@@ -26,15 +27,22 @@ class StudentExportController extends Controller
                     // answers from memory instead of firing a query per row.
                     ->with(['course', 'enroller', 'challan.payments']);
             }])
+            // Charges are not scoped down the way admissions are above: an
+            // officer's own charges are already all `visibleTo` lets through,
+            // and narrowing them again would drop a contact's balance from
+            // their own row.
+            ->withCharges()
             ->orderBy('student_code')
             ->get();
 
-        $headers = [
-            'Content-Type' => 'text/csv; charset=UTF-8',
-            'Content-Disposition' => 'attachment; filename="BBT Students.csv"',
-        ];
+        $filename = 'BBT Students.csv';
 
-        return response()->streamDownload(function () use ($students) {
+        $headers = ['Content-Type' => 'text/csv; charset=UTF-8'];
+
+        // Named through the helper, which states the quoted and the RFC 5987
+        // forms rather than relying on either being inferred. This filename has
+        // a space in it, so an unquoted disposition cannot express it at all.
+        return Download::named(response()->streamDownload(function () use ($students) {
             $out = fopen('php://output', 'w');
             fwrite($out, "\xEF\xBB\xBF"); // UTF-8 BOM
             $this->putRow($out, [
@@ -63,7 +71,7 @@ class StudentExportController extends Controller
                 ]);
             }
             fclose($out);
-        }, 'BBT Students.csv', $headers);
+        }, $filename, $headers), $filename);
     }
 
     private function putRow($out, array $fields): void

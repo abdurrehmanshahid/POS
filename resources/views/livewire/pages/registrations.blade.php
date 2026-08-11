@@ -39,6 +39,16 @@ new class extends Component {
     public array $courseIds = [];
     public int $discountPct = 0;
     public string $discountReason = '';
+
+    /**
+     * How the fee is meant to be paid — printed on the voucher.
+     *
+     * Empty is a real answer, not an unset one: an officer who has not agreed a
+     * method yet leaves it blank and the voucher prints a dash. Distinct from
+     * `paid_via`, which records what actually happened when the money arrived.
+     */
+    public string $paymentMethod = '';
+
     public bool $genChallans = true;
     public array $wizErrors = [];
 
@@ -121,7 +131,7 @@ new class extends Component {
     public function openWizard(): void
     {
         $this->reset(['step', 'mode', 'studentSearch', 'pickedStudentId', 'newType', 'newName',
-            'newGuardian', 'newPhone', 'newCnic', 'courseIds', 'discountPct', 'discountReason',
+            'newGuardian', 'newPhone', 'newCnic', 'courseIds', 'discountPct', 'discountReason', 'paymentMethod',
             'wizErrors', 'wizTouched']);
         $this->step = 1;
         $this->mode = 'new';
@@ -454,6 +464,15 @@ new class extends Component {
             if (! $this->courseIds) { $this->wizErrors['courses'] = 'Select at least one course.'; $this->dispatch('bbt-toast', tone: 'err', title: 'Select at least one course'); return; }
             if ($this->discountPct < 0 || $this->discountPct > 100) { $this->wizErrors['discount'] = 'Discount must be between 0 and 100%.'; return; }
             if ($this->discountPct > 0 && ! trim($this->discountReason)) { $this->wizErrors['discount'] = 'A discount requires a reason (recorded in the audit trail).'; return; }
+            // Checked here as well as in the service, because the value arrives
+            // from the client: the buttons offer only the configured list, and
+            // a crafted request could put anything in this column and print it
+            // on a voucher as though the institute had agreed to it.
+            if ($this->paymentMethod !== '' && ! in_array($this->paymentMethod, config('institute.payment_methods'), true)) {
+                $this->wizErrors['method'] = 'That is not a payment method the institute accepts.';
+
+                return;
+            }
         }
         if ($this->step < 3) { $this->step++; }
     }
@@ -480,6 +499,7 @@ new class extends Component {
             'course_ids' => $this->courseIds,
             'discount_pct' => $this->discountPct,
             'discount_reason' => $this->discountReason,
+            'payment_method' => $this->paymentMethod,
             // Actually honoured now. The review step has always shown this
             // checkbox; until it was passed through, unticking it still raised
             // a challan and the label was simply untrue.

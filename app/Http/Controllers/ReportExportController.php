@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Services\Reporting;
+use App\Support\Download;
 use App\Support\Format;
 use App\Support\Period;
 use Illuminate\Http\Request;
@@ -62,12 +63,18 @@ class ReportExportController extends Controller
         $book->setActiveSheetIndex(0);
         $filename = 'BBT Report '.$period->from->format('Y-m-d').' to '.$period->to->format('Y-m-d').'.xlsx';
 
-        return response()->streamDownload(function () use ($book) {
-            (new Xlsx($book))->save('php://output');
-        }, $filename, [
-            'Content-Type' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-            'Cache-Control' => 'no-store, no-cache',
-        ]);
+        // Named through the helper: this filename carries SPACES, which is
+        // exactly the case an unquoted disposition cannot express, so it is the
+        // most likely of all of them to arrive as an unnamed blob.
+        return Download::named(
+            response()->streamDownload(function () use ($book) {
+                (new Xlsx($book))->save('php://output');
+            }, $filename, [
+                'Content-Type' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                'Cache-Control' => 'no-store, no-cache',
+            ]),
+            $filename,
+        );
     }
 
     // ---- Sheets --------------------------------------------------------------

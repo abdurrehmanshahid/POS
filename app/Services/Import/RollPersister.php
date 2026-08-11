@@ -122,23 +122,99 @@ class RollPersister
 
     private function one(RollRow $row): void
     {
-        $student = $this->student($row);
-        $challan = $this->challan($row, $student);
+        // Two shapes, one lifecycle. A charge skips the enrolment half entirely
+        // — no admission, no batch, no apportionment, because there is no course
+        // — and rejoins at the money, which is identical for both: the same
+        // payments, the same schedule, the same audit trail.
+        $student = $row->isCharge() ? $this->contact($row) : $this->student($row);
+        $challan = $row->isCharge()
+            ? $this->charge($row, $student)
+            : $this->challan($row, $student);
 
         $this->collect($row, $challan);
         $this->schedule($row, $challan);
 
-        Audit::record('Student imported', $row->officer, [
+        Audit::record($row->isCharge() ? 'Charge imported' : 'Student imported', $row->officer, [
             'subject' => $student,
             'subject_label' => $student->student_code.' · '.$student->name,
             'field' => 'import',
             'new_value' => $challan->challan_no,
             'context' => [
                 'line' => $row->line,
-                'courses' => implode(', ', array_map(fn ($c) => $c->code, $row->courses)),
+                'courses' => $row->isCharge()
+                    ? $row->chargeDescription()
+                    : implode(', ', array_map(fn ($c) => $c->code, $row->courses)),
                 'received' => $row->totalReceived,
                 'outstanding' => $row->balance,
             ],
+        ]);
+    }
+
+    /**
+     * The person who bought a service, found or created once.
+     *
+     * Keyed on `students.import_key`, which is what makes Azeem's six co-working
+     * months one tenant with six invoices rather than six tenants with one each.
+     * Each row commits its own transaction, so the second row genuinely finds
+     * what the first wrote; there is no run-scoped memo to go stale.
+     *
+     * `withTrashed()` for the same reason `ensureBatches()` uses it: the unique
+     * index counts soft-deleted rows, so a contact somebody removed would make
+     * `create()` collide with a tombstone. Restoring is right — the institute is
+     * re-importing the person it deleted.
+     *
+     * Created as `kind = 'contact'`, which keeps them out of the student counts
+     * and every roster while leaving them fully present in the ledger. If they
+     * ever enrol, `RegistrationService::register()` promotes them.
+     */
+    private function contact(RollRow $row): Student
+    {
+        $existing = Student::withTrashed()->where('import_key', $row->personKey)->first();
+
+        if ($existing) {
+            if ($existing->trashed()) {
+                $existing->restore();
+            }
+
+            return $this->joined($existing, $row);
+        }
+
+        return $this->joined(Student::create([
+            // The same BBT-R.. series as everyone else, deliberately. A separate
+            // series would read more honestly right up to the moment a contact
+            // enrols, and then they would carry a code that says "not a student"
+            // for the rest of their life — or be renumbered, invalidating every
+            // document already printed with the old one.
+            'student_code' => $this->sequences->nextStudentCode('R'),
+            'type' => 'R',
+            'kind' => 'contact',
+            'name' => $row->name,
+            'guardian_name' => null,
+            'cnic' => null,
+            'phone' => Contact::normalizePhone($row->phone),
+            'created_by' => $row->officer->id,
+            'import_key' => $row->personKey,
+        ]), $row);
+    }
+
+    /**
+     * An invoice for something nobody enrols on.
+     *
+     * Everything the enrolment path does about courses — batches, admissions,
+     * apportioning the gross across them — is absent rather than skipped,
+     * because none of it has a meaning here. What remains is the invoice
+     * itself, and it is created with exactly the money rules
+     * {@see Challan()} uses, through the same helper, so a charge and a fee
+     * cannot come to disagree about what a discount is.
+     */
+    private function charge(RollRow $row, Student $student): Challan
+    {
+        return $this->raise($row, $student->id, null, [
+            'description' => $row->chargeDescription(),
+            // What makes a second run recognise this exact booking. Without it
+            // re-running would bill Azeem's October desk again, and the ledger
+            // would show money that never arrived.
+            'import_key' => $row->chargeKey,
         ]);
     }
 
@@ -162,10 +238,10 @@ class RollPersister
             ->first();
 
         if ($existing?->student) {
-            return $existing->student;
+            return $this->joined($existing->student, $row);
         }
 
-        return Student::create([
+        return $this->joined(Student::create([
             'student_code' => $this->sequences->nextStudentCode('R'),
             'type' => 'R',
             'name' => $row->name,
@@ -173,7 +249,47 @@ class RollPersister
             'cnic' => null,
             'phone' => Contact::normalizePhone($row->phone),
             'created_by' => $row->officer->id,
-        ]);
+        ]), $row);
+    }
+
+    /**
+     * Date the person by the day they actually joined, not the day of the import.
+     *
+     * The admission and the invoice have always been backdated — the same event
+     * has to land in the same period, or `Reporting::summary()` reads billed and
+     * collected a whole roll apart — and the person was quietly left out of it.
+     * The result was 445 records whose drawer read "Joined 11 Aug 2026", the
+     * afternoon the file was loaded, for students who walked in during July
+     * 2025. The roll knows better on every row.
+     *
+     * PULLED BACK rather than simply set, because a person can appear on several
+     * lines and the file is not in date order. Their record should start on the
+     * earliest day they appear, so a later line cannot move the institute's
+     * first sight of them forwards. Azeem's six co-working months come in
+     * ascending order in this roll and would have been right either way; that is
+     * luck, not a property of the export.
+     */
+    private function joined(Student $student, RollRow $row): Student
+    {
+        if ($row->registeredOn === null) {
+            return $student;
+        }
+
+        $joined = Carbon::parse($row->registeredOn);
+
+        if ($student->created_at !== null && $student->created_at->lte($joined)) {
+            return $student;
+        }
+
+        // timestamps off, or Eloquent stamps `updated_at` with now() on the way
+        // out — the same reason `backdate()` does it.
+        $student->timestamps = false;
+        $student->created_at = $joined;
+        $student->updated_at = $joined;
+        $student->save();
+        $student->timestamps = true;
+
+        return $student;
     }
 
     /**
@@ -192,8 +308,6 @@ class RollPersister
     private function challan(RollRow $row, Student $student): Challan
     {
         $base = $row->originalPrice;
-        $net = $row->discountedPrice;
-        $discount = max(0, $base - $net);
 
         // Enrolments first. `challans.admission_id` is NOT NULL — the column
         // predates grouped invoicing, when an invoice could only ever belong to
@@ -233,12 +347,42 @@ class RollPersister
             $admissions[] = $admission;
         }
 
-        $challan = Challan::create([
+        $challan = $this->raise($row, $admissions[0]->student_id, $admissions[0]->id);
+
+        foreach ($admissions as $admission) {
+            $admission->update(['challan_id' => $challan->id]);
+            $this->backdate($admission, $row);
+        }
+
+        return $challan;
+    }
+
+    /**
+     * Write the invoice itself — the part a fee and a charge have in common.
+     *
+     * One implementation, because the two differ only in what they point at:
+     * a fee names an anchor admission, a charge names a description and carries
+     * its own import key. Everything else — how the roll's Original Price
+     * becomes the base, how the gap to the agreed price becomes a discount with
+     * a named approver, when a due date is left NULL, the backdating, the audit
+     * trail — is the same fact stated once. Written twice, the second copy is
+     * where the discount rule or the due-date fallback would quietly diverge.
+     *
+     * @param  array<string, mixed>  $extra
+     */
+    private function raise(RollRow $row, int $studentId, ?int $admissionId, array $extra = []): Challan
+    {
+        $base = $row->originalPrice;
+        $net = $row->discountedPrice;
+        $discount = max(0, $base - $net);
+
+        $challan = Challan::create($extra + [
             'challan_no' => $this->sequences->nextChallanNo(),
             // The anchor is the first enrolment, for every caller that still
             // reads challans.admission_id rather than the admissions relation.
-            'admission_id' => $admissions[0]->id,
-            'student_id' => $admissions[0]->student_id,
+            // NULL for a charge, which is what `Challan::isCharge()` reads.
+            'admission_id' => $admissionId,
+            'student_id' => $studentId,
             'raised_by' => $row->officer->id,
             'base_amount' => $base,
             'discount_amount' => $discount,
@@ -254,11 +398,6 @@ class RollPersister
             'due_date' => $row->secondDueOn ?? ($row->balance > 0 ? null : $row->registeredOn),
             'status' => 'unpaid',
         ]);
-
-        foreach ($admissions as $admission) {
-            $admission->update(['challan_id' => $challan->id]);
-            $this->backdate($admission, $row);
-        }
 
         $this->backdate($challan, $row);
 

@@ -18,6 +18,19 @@
         </include>
     </source>
     <php>
+        <!--
+            One dompdf render peaks around 56 MB, because it loads the DejaVu
+            font family to typeset with. A web request does exactly one and then
+            the process ends, so PHP's 128M default is ample in production; the
+            suite renders a dozen vouchers and receipts inside a SINGLE process
+            and walked off the end of it, which surfaces as "Premature end of PHP
+            process" with no failing assertion to point at.
+
+            Raised here rather than trimming the PDF tests: those tests are the
+            only thing standing between a change to the voucher and a counter
+            discovering it cannot print.
+        -->
+        <ini name="memory_limit" value="512M"/>
         <env name="APP_ENV" value="testing"/>
         <env name="APP_MAINTENANCE_DRIVER" value="file"/>
         <env name="BCRYPT_ROUNDS" value="4"/>

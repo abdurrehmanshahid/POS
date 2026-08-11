@@ -39,6 +39,15 @@ Route::middleware('auth')->group(function () {
     // First-login password reset (spec §2.1 must_reset_password).
     Volt::route('set-password', 'pages.auth.set-password')->name('password.set');
 
+    // Rotating your own password, voluntarily. Deliberately in this group and
+    // not behind `RequirePasswordReset`: somebody who has just been issued a
+    // temporary password is pushed to `set-password` above, and both doors
+    // leading to the same forced screen would be a redirect loop. No permission
+    // is required — every account may change its own credential, and gating
+    // that behind a role would leave the least-privileged staff the least able
+    // to secure themselves.
+    Volt::route('change-password', 'pages.auth.change-password')->name('password.change');
+
     // TOTP enrolment. Outside the RequirePasswordReset/2fa group because it is
     // the one place an un-enrolled user is allowed to reach.
     Volt::route('two-factor/setup', 'pages.auth.two-factor-setup')->name('two-factor.setup');
@@ -59,11 +68,20 @@ Route::middleware('auth')->group(function () {
         Volt::route('datamodel', 'pages.datamodel')->middleware('permission:datamodel.view')->name('datamodel');
         Volt::route('settings', 'pages.settings')->middleware('permission:settings.manage')->name('settings');
 
+        // Two routes per document, same permission, same renderer. `view` opens
+        // it in the browser's PDF viewer, which is what somebody printing a
+        // voucher at the counter actually wants; `pdf` saves the file, for
+        // sending it on. Offering only the second made printing a five-step
+        // errand through the Downloads folder.
+        Route::get('challans/{challan}/view', [ChallanController::class, 'view'])
+            ->middleware('permission:challans.view')->name('challans.view');
         Route::get('challans/{challan}/pdf', [ChallanController::class, 'download'])
             ->middleware('permission:challans.view')->name('challans.pdf');
         // Evidence that a collection happened, as opposed to the voucher above,
         // which is a demand for one. Keyed by the payment rather than the
         // challan: a challan settled in three instalments has three receipts.
+        Route::get('payments/{payment}/receipt/view', [ReceiptController::class, 'view'])
+            ->middleware('permission:challans.view')->name('payments.receipt.view');
         Route::get('payments/{payment}/receipt', [ReceiptController::class, 'download'])
             ->middleware('permission:challans.view')->name('payments.receipt');
         Route::get('students/export', [StudentExportController::class, 'export'])

@@ -7,6 +7,7 @@ use App\Models\Challan;
 use App\Models\Course;
 use App\Models\Payment;
 use App\Models\Setting;
+use App\Models\Student;
 use App\Models\User;
 use App\Services\ChallanActions;
 use App\Support\Format;
@@ -14,6 +15,7 @@ use Database\Seeders\DatabaseSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
 use Livewire\Livewire;
+use PHPUnit\Framework\Attributes\DataProvider;
 use Tests\TestCase;
 
 /** End-to-end render + auth + scoping smoke tests for the screens and controllers. */
@@ -307,5 +309,200 @@ class ScreensTest extends TestCase
             ->call('save');
 
         $this->assertDatabaseHas('courses', ['code' => 'TEST-900', 'fee' => 15000]);
+    }
+
+    // ---- Downloading and viewing --------------------------------------------
+
+    /**
+     * Every download names its file in both forms the web has for saying so.
+     *
+     * The shortest legal disposition — `filename=x.pdf`, unquoted — is valid and
+     * is what Laravel emits by default, but it has to be re-parsed correctly by
+     * the browser, any download manager behind it and any proxy between, and
+     * where one of them declines the file arrives as an unnamed blob. A voucher
+     * saved as a bare UUID is one nobody can find again or attach to an email.
+     *
+     * Two filenames here carry SPACES, which an unquoted disposition cannot
+     * express at all, so this is not hypothetical for the exports.
+     *
+     * @return list<array{0:string,1:string}>
+     */
+    public static function downloads(): array
+    {
+        return [
+            'challan PDF' => ['challan', 'challan-BBT-CH-2026-1076.pdf'],
+            'students CSV' => ['students', 'BBT Students.csv'],
+            'report XLSX' => ['report', 'BBT Report'],
+        ];
+    }
+
+    #[DataProvider('downloads')]
+    public function test_a_download_states_its_filename_unambiguously(string $kind, string $expected): void
+    {
+        $url = match ($kind) {
+            'challan' => route('challans.pdf', Challan::where('challan_no', 'BBT-CH-2026-1076')->firstOrFail()),
+            'students' => route('students.export'),
+            'report' => route('reports.export'),
+        };
+
+        $disposition = $this->actingAs($this->admin())->get($url)
+            ->assertOk()
+            ->headers->get('Content-Disposition');
+
+        $this->assertStringContainsString('attachment;', $disposition);
+
+        // Quoted, for everything that reads RFC 6266 the old way...
+        $this->assertMatchesRegularExpression('/filename="[^"]*'.preg_quote($expected, '/').'/', $disposition,
+            "The quoted filename is missing or wrong: {$disposition}");
+
+        // ...and RFC 5987, which wins wherever it is understood.
+        $this->assertStringContainsString("filename*=UTF-8''", $disposition,
+            "The RFC 5987 filename is missing: {$disposition}");
+    }
+
+    /**
+     * The view routes are HTML pages, not PDFs, and carry no disposition.
+     *
+     * `inline` is a request the browser may decline — where there is no PDF
+     * viewer it downloads instead, so the button labelled "view" was the one
+     * whose promise the browser could refuse. A page has no such dependency,
+     * which is the whole reason these routes render the same Blade template
+     * rather than typesetting it.
+     */
+    public function test_the_view_routes_serve_a_printable_page_not_a_download(): void
+    {
+        $challan = Challan::where('challan_no', 'BBT-CH-2026-1076')->firstOrFail();
+
+        $res = $this->actingAs($this->admin())->get(route('challans.view', $challan))->assertOk();
+
+        $this->assertStringContainsString('text/html', $res->headers->get('Content-Type'));
+        $this->assertNull($res->headers->get('Content-Disposition'),
+            'The view route is a page; a disposition would make the browser save it instead.');
+
+        $res->assertSee('window.print()', false)
+            ->assertSee($challan->challan_no)
+            // The logo has to be a URL on screen. As a filesystem path — which
+            // is what dompdf needs — it 404s and the voucher prints with a
+            // broken image where the institute's mark belongs.
+            ->assertSee('/assets/bbt-logo-print.png', false)
+            ->assertDontSee(public_path('assets'), false);
+    }
+
+    public function test_the_view_routes_are_scoped_like_the_downloads(): void
+    {
+        $challan = Challan::where('challan_no', 'BBT-CH-2026-1076')->firstOrFail(); // admin's
+
+        $this->actingAs($this->officer())
+            ->get(route('challans.view', $challan))
+            ->assertForbidden();
+    }
+
+    // ---- Invoices that bill no enrolment ------------------------------------
+
+    /**
+     * An invoice for a service — a desk, a certificate — with no admission.
+     *
+     * Built directly rather than imported, so these tests pin the SHAPE rather
+     * than the importer that happens to produce it today. The counter will
+     * raise these too.
+     */
+    private function charge(array $overrides = []): Challan
+    {
+        $officer = $this->officer();
+
+        $challan = Challan::create($overrides + [
+            'challan_no' => 'BBT-CH-2026-9001',
+            'admission_id' => null,
+            'student_id' => Student::first()->id,
+            'raised_by' => $officer->id,
+            'description' => 'Co-working Space',
+            'base_amount' => 15000,
+            'discount_amount' => 0,
+            'net_amount' => 15000,
+            'plan' => 'full',
+            'due_date' => '2026-07-30',
+            'status' => 'unpaid',
+        ]);
+
+        Payment::create([
+            'challan_id' => $challan->id,
+            'amount' => 15000,
+            'method' => 'Cash',
+            'received_by' => $officer->id,
+            'received_at' => '2026-07-15',
+        ]);
+
+        return $challan->refresh();
+    }
+
+    /**
+     * Every screen that lists invoices must survive one with no admission.
+     *
+     * The regression for a hard 500 on `/challans`: the list read
+     * `$c->admission->student->name`, a charge has no admission, and the whole
+     * screen died — not that row, everybody's. The same chain was written in
+     * six places, so this walks all of them rather than only the one reported.
+     *
+     * Rendered rather than unit-tested, because the fault was never inside a
+     * method anything called directly. It was the assumption, held in Blade,
+     * that `admission` is always there.
+     */
+    public function test_every_screen_survives_an_invoice_with_no_enrolment(): void
+    {
+        $charge = $this->charge();
+        $admin = $this->admin();
+
+        foreach (['/dashboard', '/challans', '/students', '/reports'] as $screen) {
+            $this->actingAs($admin)->get($screen)->assertOk();
+        }
+
+        // The drawer, where most of the `admission->` chains lived.
+        $this->actingAs($admin)->get('/challans?open='.$charge->id)->assertOk();
+    }
+
+    /**
+     * Both PDFs, whose controllers tested `admission->enrolled_by` directly —
+     * a 500 rather than a permission decision on an invoice with no admission.
+     */
+    public function test_a_charge_prints_a_voucher_and_a_receipt(): void
+    {
+        $charge = $this->charge();
+
+        $this->actingAs($this->admin())
+            ->get(route('challans.pdf', $charge))
+            ->assertOk()
+            ->assertHeader('content-type', 'application/pdf');
+
+        $this->actingAs($this->admin())
+            ->get(route('payments.receipt', $charge->payments->sole()))
+            ->assertOk()
+            ->assertHeader('content-type', 'application/pdf');
+    }
+
+    /**
+     * The officer who raised a charge may reach it; another officer may not.
+     *
+     * A charge has no `enrolled_by`, so the scope rule has to fall back to
+     * `raised_by`. Without this the answer was an exception, which fails
+     * *open* in the sense that matters: it tells you nothing about who is
+     * allowed.
+     */
+    public function test_a_charge_is_scoped_to_the_officer_who_raised_it(): void
+    {
+        $charge = $this->charge();
+        $other = User::where('username', 'fatimanoor')->firstOrFail();
+
+        $this->actingAs($this->officer())->get(route('challans.pdf', $charge))->assertOk();
+        $this->actingAs($other)->get(route('challans.pdf', $charge))->assertForbidden();
+    }
+
+    /** An overdue charge belongs on the dashboard beside an overdue fee. */
+    public function test_an_overdue_charge_reaches_the_dashboard(): void
+    {
+        $this->charge(['due_date' => '2026-06-01', 'challan_no' => 'BBT-CH-2026-9002']);
+
+        $this->actingAs($this->admin())->get('/dashboard')
+            ->assertOk()
+            ->assertSee('Co-working Space');
     }
 }

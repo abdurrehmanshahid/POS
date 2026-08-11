@@ -3,6 +3,7 @@
 namespace App\Services\Import;
 
 use App\Models\Admission;
+use App\Models\Challan;
 use App\Models\Cohort;
 use App\Models\Course;
 use App\Models\User;
@@ -76,6 +77,7 @@ class RollResolver
             $this->fingerprint($row, $existingKeys);
         }
 
+        $this->fingerprintCharges($rows);
         $this->rejectDuplicatesWithinTheFile($rows);
     }
 
@@ -98,8 +100,14 @@ class RollResolver
 
             $needle = mb_strtolower($part);
 
+            // Not a course, and no longer a refusal. These are the things the
+            // institute sells that nobody enrols on, and they are billed as
+            // charges — an invoice with a description and no admission. Kept as
+            // the sheet's own words: there is no catalogue to resolve them
+            // against, and inventing courses named "Co-working Space" would put
+            // room bookings in the trainer's register and the capacity counts.
             if (in_array($needle, $this->notCourses, true)) {
-                $row->reject("not a course: \"{$part}\"");
+                $row->charges[] = $part;
 
                 continue;
             }
@@ -125,6 +133,22 @@ class RollResolver
         $codes = array_map(fn (Course $c) => $c->code, $row->courses);
         if (count($codes) !== count(array_unique($codes))) {
             $row->reject('the same course is named twice');
+        }
+
+        // One line, one kind. A course row becomes admissions carrying a
+        // per-course share of the invoice; a charge row becomes an invoice with
+        // no admission at all. A line naming both would have to be half of each,
+        // and the apportionment has no share to give the charge — so it would
+        // either swallow the charge's money into the courses or bill it twice.
+        //
+        // Refusing rather than guessing costs nothing here: no line in the
+        // institute's roll mixes them, so this guards a case that does not
+        // exist yet rather than one being papered over.
+        if ($row->charges !== [] && $row->courses !== []) {
+            $row->reject(
+                'names a course and a charge on one line ("'
+                .implode(', ', $row->charges).'"), which have to be billed separately'
+            );
         }
     }
 
@@ -497,7 +521,10 @@ class RollResolver
         $person = Contact::normalizePhone($row->phone);
 
         if ($row->courses === []) {
-            return; // Already rejected; there is nothing stable to key on.
+            // Either rejected, or a charge — which is keyed by
+            // {@see fingerprintCharges()} instead, because there is no course
+            // and no admission to hang a key on.
+            return;
         }
 
         // A phoneless row still needs an identity, or it could not be imported
@@ -554,5 +581,129 @@ class RollResolver
             $row->reject('already imported, but '.implode(', ', $codes)
                 .' on this line is new and re-running cannot add it');
         }
+    }
+
+    /**
+     * Two keys for a charge line, because it carries two identities.
+     *
+     * `personKey` is WHO, and it has to be blind to the date, or Azeem's six
+     * monthly co-working bookings become six Azeems. `chargeKey` is WHAT
+     * HAPPENED, and it has to be sharper than the person, or those same six
+     * bookings collapse into one and Rs 75,000 of collections never lands.
+     *
+     * THE PERSON is keyed on the phone where there is one and the name where
+     * there is not — the same order as {@see fingerprint()}. In this roll it is
+     * always the name: not one of the 32 charge lines carries a dialable
+     * number. Several carry the course typed into the phone column ("Shopify",
+     * "Digital Media", "Summer kids") and one carries a ten-digit number where
+     * a PK mobile needs eleven. So the weakest form of the key is the only form
+     * available, and its two consequences are both visible in this data and
+     * both handled by warning rather than guessing:
+     *
+     *   - "Azeem" and "M Azeem" are almost certainly one man renting one desk,
+     *     and they import as two contacts. Merging them would mean deciding
+     *     that "M" is an initial rather than a different person, which is the
+     *     fuzzy match this importer refuses everywhere else.
+     *   - "Abdullah IFtikhar" and "Noor fatima" appear BOTH as charge lines and
+     *     as course students, and import as a contact beside their student
+     *     record rather than onto it.
+     *
+     * Both are the safe direction: `php artisan records:duplicates` finds them
+     * and a person can merge two records, whereas one record fusing two people
+     * cannot be unpicked once money has landed on it.
+     *
+     * THE CHARGE is keyed on the person, the description and the date, plus an
+     * occurrence index among lines identical in all three. The index exists for
+     * Amna Imran and Fahad Ali, who each appear twice on 2025-07-16 for the same
+     * Rs 7,500 recovery — byte-identical lines that are two real payments, so
+     * no content-based hash can separate them and something outside the content
+     * has to. The index is stable across re-runs precisely BECAUSE the lines are
+     * identical: re-sorting the sheet cannot change which line gets #0 in any
+     * way that matters, since the two are interchangeable.
+     *
+     * It is assigned to every charge line in file order including rejected ones.
+     * Skipping the rejected would be the subtle bug here: fix a rejected line,
+     * re-run, and it takes an index that shifts every later identical line onto
+     * a fresh key — which re-imports money already in the ledger.
+     *
+     * The amount is deliberately NOT in the key. It is the field most likely to
+     * be corrected between exports, and the occurrence index already separates
+     * everything the amount would.
+     *
+     * @param  list<RollRow>  $rows
+     */
+    private function fingerprintCharges(array $rows): void
+    {
+        $charges = array_values(array_filter($rows, fn (RollRow $r) => $r->isCharge()));
+
+        if ($charges === []) {
+            return;
+        }
+
+        $alreadyHere = Challan::query()->whereNotNull('import_key')->pluck('import_key')->flip();
+
+        // Names on the course lines of this same file, so a charge that shares
+        // one can say so. Built from the sheet rather than the database because
+        // the two may be imported in either order.
+        $courseNames = [];
+        foreach ($rows as $row) {
+            if (! $row->isCharge() && $row->name !== '') {
+                $courseNames[self::personName($row->name)] = $row->line;
+            }
+        }
+
+        $occurrences = [];
+        $firstSeenAt = [];
+
+        foreach ($charges as $row) {
+            $person = Contact::normalizePhone($row->phone);
+            $who = self::personName($row->name);
+
+            $identity = $person !== null ? 'phone:'.$person.'|'.$who : 'name:'.$who;
+            $row->personKey = sha1('contact:'.$identity);
+
+            $event = $identity.'|'.mb_strtolower($row->chargeDescription()).'|'.$row->registeredOn;
+            $n = $occurrences[$event] = ($occurrences[$event] ?? -1) + 1;
+
+            $row->chargeKey = sha1($event.'#'.$n);
+
+            if ($alreadyHere->has($row->chargeKey)) {
+                $row->alreadyImported = true;
+            }
+
+            // Say out loud what the weak key just decided, both ways round.
+            // Silence here is what would let a merge that should not have
+            // happened, or a split that should not have happened, pass for a
+            // clean import.
+            if (isset($firstSeenAt[$identity])) {
+                $row->warn(
+                    'billed to the same person as line '.$firstSeenAt[$identity]
+                    .', matched on the name "'.trim($row->name).'" because no phone number is recorded'
+                );
+            } else {
+                $firstSeenAt[$identity] = $row->line;
+            }
+
+            if (isset($courseNames[$who])) {
+                $row->warn(
+                    'line '.$courseNames[$who].' enrols a student of the same name; this charge is '
+                    .'imported as a separate contact because there is no phone number to confirm '
+                    .'they are one person. Merge them afterwards if they are.'
+                );
+            }
+        }
+    }
+
+    /**
+     * A name reduced to what two spellings of one person have in common.
+     *
+     * Lowercased and trimmed, exactly as {@see fingerprint()} has always done
+     * it — shared so the two keys cannot drift into normalising differently,
+     * and deliberately no more aggressive than the original, because widening
+     * it would change every existing course key.
+     */
+    private static function personName(string $name): string
+    {
+        return mb_strtolower(trim($name));
     }
 }

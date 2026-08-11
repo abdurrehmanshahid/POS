@@ -15,30 +15,43 @@
 @endphp
 
 @if ($selected)
-    @php $a = $selected->admission; [$tone, $label] = $pill($selected->paymentState()); @endphp
+    {{-- `$a` is NULL for a charge — an invoice for a room booking or a
+         certificate, which bills no enrolment. Every `$a->` below is therefore
+         guarded, and the identity card has two branches rather than one with
+         holes in it: a charge has no course, no trainer, no batch and no
+         registration number, and printing those labels with dashes beside them
+         would suggest a broken record rather than a different kind of one. --}}
+    @php $a = $selected->admission; $isCharge = $selected->isCharge(); [$tone, $label] = $pill($selected->paymentState()); @endphp
     <div class="drawer-backdrop" wire:click="closeDrawer"></div>
     <div class="drawer">
         <div class="drawer-head">
             <div style="flex:1">
-                <div style="display:flex;align-items:center;gap:10px"><span class="tnum" style="font-size:var(--fs-md);font-weight:800;color:var(--ink)">{{ $selected->challan_no }}</span><x-ui.pill :tone="$tone" :dot="true">{{ $label }}</x-ui.pill>@if ($a->status === 'cancelled')<x-ui.pill tone="cancelled">Cancelled</x-ui.pill>@endif</div>
-                <div style="font-size:var(--fs-xs);color:var(--muted);margin-top:3px">Registration &amp; fee ledger</div>
+                <div style="display:flex;align-items:center;gap:10px"><span class="tnum" style="font-size:var(--fs-md);font-weight:800;color:var(--ink)">{{ $selected->challan_no }}</span><x-ui.pill :tone="$tone" :dot="true">{{ $label }}</x-ui.pill>@if ($a?->status === 'cancelled')<x-ui.pill tone="cancelled">Cancelled</x-ui.pill>@endif</div>
+                <div style="font-size:var(--fs-xs);color:var(--muted);margin-top:3px">{{ $isCharge ? 'Charge & fee ledger' : 'Registration & fee ledger' }}</div>
             </div>
             <button class="btn-icon" wire:click="closeDrawer"><x-icon name="x" :size="18" /></button>
         </div>
         <div class="drawer-body">
             <div class="card" style="padding:16px;margin-bottom:16px">
                 <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px">
-                    <x-ui.avatar :name="$a->student->name" variant="orange" :size="40" />
-                    <div><div style="font-size:var(--fs-md);font-weight:700;color:var(--ink)">{{ $a->student->name }}</div><div class="tnum" style="font-size:var(--fs-xs);font-weight:700;color:var(--iris)">{{ $a->student->student_code }} · {{ $a->reg_no }}</div></div>
+                    <x-ui.avatar :name="$selected->student->name" variant="orange" :size="40" />
+                    <div><div style="font-size:var(--fs-md);font-weight:700;color:var(--ink)">{{ $selected->student->name }}</div><div class="tnum" style="font-size:var(--fs-xs);font-weight:700;color:var(--iris)">{{ $selected->student->student_code }}@if ($a) · {{ $a->reg_no }}@endif</div></div>
                 </div>
                 <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;font-size:var(--fs-xs)">
-                    <div><div style="color:var(--faint)">Course</div><div style="color:var(--ink);font-weight:600">{{ $a->course->title }} ({{ $a->course->code }})</div></div>
-                    <div><div style="color:var(--faint)">Trainer</div><div style="color:var(--ink);font-weight:600">{{ $a->course->trainer?->name ?? 'None' }}</div></div>
-                    <div><div style="color:var(--faint)">Enrolled by</div><div style="color:var(--ink);font-weight:600">{{ $a->enroller->name }}</div></div>
-                    <div><div style="color:var(--faint)">Due date</div><div class="tnum" style="color:var(--ink);font-weight:600">{{ $selected->due_date ? Format::date($selected->due_date) : 'Not scheduled' }}</div></div>
-                    <div><div style="color:var(--faint)">Batch</div><div style="color:{{ $a->cohort ? 'var(--ink)' : 'var(--faint)' }};font-weight:600">{{ $a->cohort?->name ?? 'No batch' }}</div></div>
+                    @if ($isCharge)
+                        <div><div style="color:var(--faint)">Charge for</div><div style="color:var(--ink);font-weight:600">{{ $selected->subject() }}</div></div>
+                        <div><div style="color:var(--faint)">Raised by</div><div style="color:var(--ink);font-weight:600">{{ $selected->raiser?->name ?? 'Unknown' }}</div></div>
+                        <div><div style="color:var(--faint)">Due date</div><div class="tnum" style="color:var(--ink);font-weight:600">{{ $selected->due_date ? Format::date($selected->due_date) : 'Not scheduled' }}</div></div>
+                        <div><div style="color:var(--faint)">Enrolment</div><div style="color:var(--faint);font-weight:600">None — this is a service, not a course</div></div>
+                    @else
+                        <div><div style="color:var(--faint)">Course</div><div style="color:var(--ink);font-weight:600">{{ $a->course->title }} ({{ $a->course->code }})</div></div>
+                        <div><div style="color:var(--faint)">Trainer</div><div style="color:var(--ink);font-weight:600">{{ $a->course->trainer?->name ?? 'None' }}</div></div>
+                        <div><div style="color:var(--faint)">Enrolled by</div><div style="color:var(--ink);font-weight:600">{{ $a->enroller->name }}</div></div>
+                        <div><div style="color:var(--faint)">Due date</div><div class="tnum" style="color:var(--ink);font-weight:600">{{ $selected->due_date ? Format::date($selected->due_date) : 'Not scheduled' }}</div></div>
+                        <div><div style="color:var(--faint)">Batch</div><div style="color:{{ $a->cohort ? 'var(--ink)' : 'var(--faint)' }};font-weight:600">{{ $a->cohort?->name ?? 'No batch' }}</div></div>
+                    @endif
                 </div>
-                @if ($a->status === 'cancelled' && $a->rejection_reason)
+                @if ($a?->status === 'cancelled' && $a->rejection_reason)
                     <div style="margin-top:12px;padding:10px 12px;background:var(--over-bg);border:1px solid var(--over-br);border-radius:10px;font-size:var(--fs-xs);color:var(--over)">Cancelled · {{ $a->rejection_reason }}</div>
                 @endif
             </div>
@@ -61,9 +74,14 @@
                                 {{-- One receipt per handover of money, not one per challan: a
                                      fee settled in three instalments is three receipts, and the
                                      student is entitled to the one for the money they just paid.
-                                     `wire:navigate` is deliberately absent — this is a file
-                                     download, and Livewire would try to render the PDF bytes
+                                     `wire:navigate` is deliberately absent on both — these are
+                                     PDF responses, and Livewire would try to render the bytes
                                      into the page. --}}
+                                <a href="{{ route('payments.receipt.view', $p) }}" target="_blank"
+                                   class="btn-icon" title="Open receipt {{ $p->receiptNo() }} to read or print"
+                                   style="text-decoration:none">
+                                    <x-icon name="eye" :size="15" />
+                                </a>
                                 <a href="{{ route('payments.receipt', $p) }}"
                                    class="btn-icon" title="Download receipt {{ $p->receiptNo() }}"
                                    style="text-decoration:none">
@@ -100,13 +118,20 @@
             </div>
         </div>
         <div class="drawer-foot">
-            @if ($canPay && ! $selected->isPaid() && $a->status !== 'cancelled')
+            @if ($canPay && ! $selected->isPaid() && $a?->status !== 'cancelled')
                 <button class="btn btn-accent" wire:click="askPay({{ $selected->id }})"><x-icon name="check" :size="16" /> Mark paid</button>
             @endif
-            <a class="btn btn-ghost" href="{{ route('challans.pdf', $selected) }}" target="_blank"><x-icon name="download" :size="16" /> Challan PDF</a>
+            {{-- Print first, save second. Printing a voucher is the common act
+                 at a counter, and it used to mean download → find the file →
+                 open → print → delete. This opens it in the browser's viewer,
+                 where Ctrl+P is one key away and nothing lands in Downloads. --}}
+            <a class="btn btn-ghost" href="{{ route('challans.view', $selected) }}" target="_blank"><x-icon name="printer" :size="16" /> View &amp; print</a>
+            <a class="btn btn-ghost" href="{{ route('challans.pdf', $selected) }}"><x-icon name="download" :size="16" /> Download</a>
             {{-- Same predicate the server enforces in ChallanActions::cancel(), so
-                 the button is never offered for an action that can only fail. --}}
-            @if ($canCancel && $a->status !== 'cancelled' && ! $selected->hasCollections())
+                 the button is never offered for an action that can only fail.
+                 Absent entirely on a charge: cancelling means cancelling an
+                 ENROLMENT, and a charge has none to cancel. --}}
+            @if ($canCancel && $a && $a->status !== 'cancelled' && ! $selected->hasCollections())
                 <button class="btn btn-danger" style="margin-left:auto" wire:click="askCancel({{ $a->id }})">Cancel</button>
             @endif
         </div>

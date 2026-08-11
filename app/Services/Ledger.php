@@ -148,7 +148,10 @@ class Ledger
     public function overdueChallans(User $user): Collection
     {
         return $this->overdueChallansQuery($user)
-            ->with(['admission.student', 'admission.course'])
+            // `student` and `admissions.course` directly, because the dashboard
+            // reads both through the invoice now — an overdue charge has no
+            // admission to reach the student through.
+            ->with(['student', 'admission.student', 'admission.course', 'admissions.course'])
             ->orderBy('due_date')
             ->get();
     }

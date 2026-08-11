@@ -56,9 +56,23 @@ class RegistrationService
             throw new InvalidArgumentException('A discount requires a reason.');
         }
 
+        // The method the institute expects, printed on the voucher. Blank is a
+        // real answer — not every registration has agreed one yet — but a value
+        // that is not on the list is not, for the same reason the discount is
+        // bounded here: the wizard's buttons are a suggestion, and this value
+        // arrives over the wire and ends up printed on a document a parent acts
+        // on. `ChallanActions` applies the identical rule to `paid_via`, so the
+        // two halves of the same question cannot come to disagree about what
+        // the institute accepts.
+        $method = trim((string) ($data['payment_method'] ?? '')) ?: null;
+
+        if ($method !== null && ! in_array($method, config('institute.payment_methods'), true)) {
+            throw new InvalidArgumentException('That is not a payment method the institute accepts.');
+        }
+
         $issueChallans = (bool) ($data['generate_challans'] ?? true);
 
-        return DB::transaction(function () use ($actor, $data, $courseIds, $pct, $reason, $issueChallans) {
+        return DB::transaction(function () use ($actor, $data, $courseIds, $pct, $reason, $method, $issueChallans) {
             // Resolve and validate the courses BEFORE creating the student, so a
             // registration that cannot proceed does not leave a person behind.
             //
@@ -85,6 +99,8 @@ class RegistrationService
             $student = $this->resolveStudent($actor, $data);
 
             $this->assertNotAlreadyEnrolled($student, $courses);
+
+            $this->promoteIfContact($student, $actor);
 
             $due = Clock::today()->copy()->addDays(7)->toDateString();
 
@@ -133,6 +149,9 @@ class RegistrationService
                     'discount_approved_by' => $discount > 0 ? $actor->id : null,
                     'net_amount' => $base - $discount,
                     'plan' => 'full',
+                    // What was AGREED. `paid_via` records what happened, and
+                    // the voucher prefers that once money has arrived.
+                    'payment_method' => $method,
                     'due_date' => $due,
                     'status' => 'unpaid',
                 ]);
@@ -244,6 +263,41 @@ class RegistrationService
             $student->name.' is already enrolled on '.$clash
             .'. Cancel the existing registration first if this one is meant to replace it.'
         );
+    }
+
+    /**
+     * A contact who enrols stops being a contact, here and nowhere else.
+     *
+     * This is the whole conversion lifecycle, and it is deliberately three
+     * lines inside the transaction that creates the admissions rather than a
+     * button somewhere. `kind` answers one question — "is this person someone we
+     * teach?" — and an enrolment settles it. Leaving the decision to an operator
+     * would mean a genuinely enrolled student sitting outside every student
+     * count until somebody remembered, which is the same wrong number the column
+     * was added to fix, only harder to notice because the record looks complete.
+     *
+     * There is no route back. A student who later rents a desk is still a
+     * student; demoting them would erase the enrolment from the headline count
+     * while the enrolment itself carries on existing.
+     *
+     * Audited, because it changes which reports a person appears in and there
+     * would otherwise be no record that they were ever anything else.
+     */
+    private function promoteIfContact(Student $student, User $actor): void
+    {
+        if (! $student->isContact()) {
+            return;
+        }
+
+        $student->update(['kind' => 'student']);
+
+        Audit::record('Contact enrolled as a student', $actor, [
+            'subject' => $student,
+            'subject_label' => $student->student_code.' · '.$student->name,
+            'field' => 'kind',
+            'old_value' => 'contact',
+            'new_value' => 'student',
+        ]);
     }
 
     private function resolveStudent(User $actor, array $data): Student

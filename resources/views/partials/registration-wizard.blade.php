@@ -171,7 +171,34 @@
             <h2 style="font-size:var(--fs-lg);font-weight:800;color:var(--ink);margin:0 0 4px">Choose courses &amp; fee</h2>
             <p style="font-size:var(--fs-sm);color:var(--muted);margin:0 0 18px">Select one or more active courses. One admission &amp; challan is created per course.</p>
             @if ($wizErrors['courses'] ?? false)<div class="field-error" style="margin-bottom:10px">{{ $wizErrors['courses'] }}</div>@endif
-            <div class="grid-2" style="margin-bottom:20px">
+
+            {{-- A filter, because the catalogue is 30 courses now rather than
+                 the handful it held when this screen was built. Scanning
+                 "Digital Media Marketing (Level-2 Part-B)" out of thirty
+                 near-identical titles by eye is the slowest part of taking a
+                 registration. Client-side on purpose: the list is already in the
+                 DOM, and a server round trip per keystroke would make the fast
+                 case slower to spare a query that never runs. --}}
+            <div class="search" style="margin-bottom:12px" x-data
+                 @input="
+                    const q = $event.target.value.trim().toLowerCase();
+                    $refs.list.querySelectorAll('[data-course]').forEach(el => {
+                        el.style.display = !q || el.dataset.course.includes(q) ? '' : 'none';
+                    });
+                 ">
+                <x-icon name="search" :size="15" />
+                <input class="input" placeholder="Filter by code or title…">
+            </div>
+
+            {{-- Bounded height, and this is not cosmetic. With 30 courses the
+                 list ran ~2,300px, so the discount slider and everything below
+                 it sat far off the bottom of the screen: the fee controls were
+                 present, reachable only by scrolling past the entire catalogue,
+                 and therefore invisible to anyone who did not know they existed.
+                 Capping the list keeps the money controls on the same screen as
+                 the courses they price. --}}
+            <div class="grid-2" x-ref="list"
+                 style="margin-bottom:20px;max-height:46vh;overflow-y:auto;padding-right:4px">
                 @foreach ($activeCourses as $c)
                     @php
                         $sel = in_array($c->id, $courseIds);
@@ -183,7 +210,9 @@
                         $already = in_array($c->id, $enrolledCourseIds, true);
                         $blocked = $full || $already;
                     @endphp
-                    <div wire:click="toggleCourse({{ $c->id }})" style="padding:14px;border:1.5px solid {{ $sel ? 'var(--iris)' : 'var(--border2)' }};background:{{ $sel ? 'var(--iris-bg)' : 'var(--surface)' }};border-radius:12px;cursor:{{ $blocked ? 'not-allowed' : 'pointer' }};opacity:{{ $blocked ? '.55' : '1' }}">
+                    <div wire:click="toggleCourse({{ $c->id }})"
+                         data-course="{{ Str::lower($c->code.' '.$c->title.' '.$c->trainer?->name) }}"
+                         style="padding:14px;border:1.5px solid {{ $sel ? 'var(--iris)' : 'var(--border2)' }};background:{{ $sel ? 'var(--iris-bg)' : 'var(--surface)' }};border-radius:12px;cursor:{{ $blocked ? 'not-allowed' : 'pointer' }};opacity:{{ $blocked ? '.55' : '1' }}">
                         <div style="display:flex;justify-content:space-between;align-items:flex-start">
                             <div><div class="tnum" style="font-size:var(--fs-2xs);font-weight:700;color:var(--iris)">{{ $c->code }}</div><div style="font-size:var(--fs-sm);font-weight:700;color:var(--ink);margin-top:2px">{{ $c->title }}</div></div>
                             @if ($sel)<x-icon name="check-circle" :size="18" style="color:var(--iris)" />@endif
@@ -217,6 +246,25 @@
                         @if ($wizErrors['discount'] ?? false)<span class="field-error">{{ $wizErrors['discount'] }}</span>@endif
                     </div>
                 @endif
+
+                {{-- How the fee is meant to be paid. The voucher has always had
+                     a "Payment Method" line and nothing ever filled it before
+                     money arrived, so every challan handed over the counter
+                     asked a parent for money without saying how to hand it over.
+                     Optional: an officer who does not know yet leaves it, and
+                     the voucher prints a dash rather than a guess. --}}
+                <div style="margin-top:14px">
+                    <label class="label">Payment method (optional · printed on the voucher)</label>
+                    <div style="display:flex;gap:8px;flex-wrap:wrap">
+                        @foreach (array_merge([''], config('institute.payment_methods')) as $m)
+                            <button type="button" wire:click="$set('paymentMethod', '{{ $m }}')"
+                                    class="btn btn-sm {{ $paymentMethod === $m ? 'btn-primary' : 'btn-ghost' }}">
+                                {{ $m ?: 'Not decided' }}
+                            </button>
+                        @endforeach
+                    </div>
+                    @if ($wizErrors['method'] ?? false)<span class="field-error">{{ $wizErrors['method'] }}</span>@endif
+                </div>
             </div>
         @endif
 
