@@ -105,6 +105,44 @@ class RollImportTest extends TestCase
 
     // ---- The write barrier ---------------------------------------------------
 
+    /**
+     * Every alias must point at a course that exists.
+     *
+     * The resolver treats an alias whose code is missing exactly like an
+     * unknown course: it rejects the row. So a typo in `course_aliases`, or a
+     * course later renamed or removed, silently sends rows back to the
+     * rejection pile with a message blaming the spreadsheet. That is precisely
+     * the failure the 27 catalogue entries were added to end, and it would look
+     * identical to never having added them.
+     */
+    public function test_every_course_alias_resolves_to_a_real_course(): void
+    {
+        $codes = Course::pluck('code')->map(fn ($c) => mb_strtolower($c))->all();
+
+        $this->assertNotEmpty(config('roll-import.course_aliases'));
+
+        foreach (config('roll-import.course_aliases') as $text => $code) {
+            $this->assertContains(mb_strtolower($code), $codes,
+                "Alias \"{$text}\" points at course code \"{$code}\", which does not exist. "
+                .'Every row naming it will be rejected as an unknown course.');
+        }
+    }
+
+    /**
+     * An alias must never name a value the config also calls "not a course",
+     * because `resolveCourses()` checks `not_courses` FIRST and would reject a
+     * row the alias was written to rescue.
+     */
+    public function test_no_alias_contradicts_the_not_a_course_list(): void
+    {
+        $notCourses = array_map('mb_strtolower', config('roll-import.not_courses'));
+
+        foreach (array_keys(config('roll-import.course_aliases')) as $text) {
+            $this->assertNotContains(mb_strtolower((string) $text), $notCourses,
+                "\"{$text}\" is both an alias and a not-a-course; the rejection wins and the alias is dead.");
+        }
+    }
+
     public function test_a_dry_run_writes_nothing(): void
     {
         $before = $this->counts();

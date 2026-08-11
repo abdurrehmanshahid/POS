@@ -41,6 +41,40 @@ return [
         'web development' => 'WD-101',
         'stem robotics' => 'ROB-101',
         'dmm (level-1 part-a)' => 'DMM-101',
+
+        // The 27 courses added by
+        // 2026_08_11_000001_add_the_courses_the_institutes_roll_actually_sells.
+        // The roll's text is mapped here rather than used as the course title,
+        // so the catalogue can read "Digital Media Marketing (6 Months)" while
+        // still resolving the sheet's "DMM -6 Months." exactly. Every key below
+        // is the raw spreadsheet text, lowercased; none is a guess.
+        'basic to advance computer skills 2months' => 'BCS-101',
+        'dmm (level-1 part-b)' => 'DMM-102',
+        'dmm (level-2 part-a)' => 'DMM-201',
+        'dmm (level-2 part-b)' => 'DMM-202',
+        'dmm (level -3)' => 'DMM-301',
+        'dmm -6 months.' => 'DMM-601',
+        'artificial intelligence (level-1 part-b)' => 'AI-202',
+        'artificial intelligence (level-2 part-a)' => 'AI-203',
+        'artificial intelligence (level-2 part-b)' => 'AI-204',
+        'ai for professional' => 'AIP-101',
+        'ai for children + python' => 'AIC-101',
+        'gen a.i 6-months' => 'GAI-601',
+        'web development (level-1 part-b)' => 'WD-102',
+        'web development (level-2 part-a)' => 'WD-201',
+        'graphic designing (level-1 part-a)' => 'GD-102',
+        'graphic designing (level-1 part-b)' => 'GD-103',
+        'graphic designing (level-2 part-a)' => 'GD-201',
+        'graphic designing (level-2 part-b)' => 'GD-202',
+        'shopify (level-1 part a)' => 'SHOP-102',
+        'shopify (level-1 part-b)' => 'SHOP-103',
+        'devops' => 'DO-101',
+        'cyber security' => 'CS-101',
+        'cyber security (3-months)' => 'CS-102',
+        'cyber security (level-1 part-b)' => 'CS-103',
+        'ui/ux designing' => 'UX-101',
+        'chinese language' => 'CHI-101',
+        'public speaking' => 'PS-101',
     ],
 
     /*
