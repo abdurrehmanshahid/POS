@@ -18,7 +18,8 @@ class Challan extends Model
     use HasFactory;
 
     protected $fillable = [
-        'challan_no', 'admission_id', 'base_amount', 'discount_amount',
+        'challan_no', 'admission_id', 'student_id', 'raised_by', 'description',
+        'base_amount', 'discount_amount',
         'discount_reason', 'discount_approved_by', 'net_amount', 'plan',
         'due_date', 'status', 'paid_via', 'paid_at',
     ];
@@ -43,6 +44,48 @@ class Challan extends Model
     public function admission(): BelongsTo
     {
         return $this->belongsTo(Admission::class);
+    }
+
+    /**
+     * Who this invoice is for, stated directly.
+     *
+     * Every challan belongs to a student, whether or not it bills an enrolment.
+     * That was always true and was simply reached through `admission->student`,
+     * a chain that exists only because an anchor admission happened to be
+     * there. A non-course charge has no admission, so prefer this relation over
+     * the chain in new code — it is the fact, not a route to it.
+     */
+    public function student(): BelongsTo
+    {
+        return $this->belongsTo(Student::class);
+    }
+
+    /** The officer who raised this invoice; drives scoping for a charge. */
+    public function raiser(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'raised_by');
+    }
+
+    /**
+     * Is this money for something nobody enrols on?
+     *
+     * A room booking, a certificate fee, a recovery batch. `description` says
+     * what it is, because the courses cannot.
+     */
+    public function isCharge(): bool
+    {
+        return $this->admission_id === null;
+    }
+
+    /** What this invoice is for, whichever kind it is. */
+    public function subject(): string
+    {
+        if ($this->isCharge()) {
+            return $this->description ?: 'Charge';
+        }
+
+        return $this->admissions->map(fn ($a) => $a->course?->title)->filter()->implode(', ')
+            ?: ($this->admission?->course?->title ?? '—');
     }
 
     /**

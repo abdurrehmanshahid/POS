@@ -238,6 +238,8 @@ class RollPersister
             // The anchor is the first enrolment, for every caller that still
             // reads challans.admission_id rather than the admissions relation.
             'admission_id' => $admissions[0]->id,
+            'student_id' => $admissions[0]->student_id,
+            'raised_by' => $row->officer->id,
             'base_amount' => $base,
             'discount_amount' => $discount,
             'discount_reason' => $discount > 0 ? 'Imported from the institute roll' : null,

@@ -73,7 +73,13 @@ class ChallanActions
             // Checked on `admissions`, not on the anchor `admission`: a grouped
             // invoice stays collectable while any one of its enrolments lives,
             // which is the same test Ledger::scopedChallans applies.
-            if ($locked->admissions()->where('status', '!=', 'cancelled')->doesntExist()) {
+            // A non-course charge has no enrolment to cancel, so this guard does
+            // not apply to it. Without the isCharge() exemption the test reads
+            // "no live admission" as "all cancelled", and a room booking or a
+            // certificate fee could never be collected at all — refused with a
+            // message about a registration it does not have.
+            if (! $locked->isCharge()
+                && $locked->admissions()->where('status', '!=', 'cancelled')->doesntExist()) {
                 throw new RuntimeException('This registration is cancelled. Money cannot be collected against it.');
             }
 
@@ -136,9 +142,13 @@ class ChallanActions
             AppNotification::create([
                 'type' => 'payment',
                 'title' => $settled ? 'Payment recorded' : 'Part payment received',
-                'sub' => $challan->admission->student->name.', '.Format::money($amount).' ('.$via.')'
+                // `challans.student_id` rather than the admission chain: a
+                // non-course charge has no admission, and this notification
+                // fired before the ledger was ever reached, so the chain threw
+                // on the first certificate fee anyone collected.
+                'sub' => $challan->student->name.', '.Format::money($amount).' ('.$via.')'
                     .($settled ? '' : ', '.Format::money($stillDue).' still due'),
-                'student_id' => $challan->admission->student_id,
+                'student_id' => $challan->student_id,
                 'challan_id' => $challan->id,
                 'is_revenue' => true,
             ]);
