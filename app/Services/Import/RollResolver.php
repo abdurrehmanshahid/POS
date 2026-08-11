@@ -235,10 +235,76 @@ class RollResolver
             }
 
             $lines = implode(', ', array_map(fn (RollRow $r) => $r->line, $sharing));
+
+            // A group whose lines agree on WHO and on HOW MUCH is the same line
+            // typed twice. The first is imported and the rest are collapsed, so
+            // the export's own repetition does not cost the institute 19 rows
+            // of history. 19 of the 21 groups in this roll are of this kind.
+            if ($this->areTheSameClaim($sharing)) {
+                foreach (array_slice($sharing, 1) as $repeat) {
+                    $repeat->collapsed = true;
+                }
+
+                continue;
+            }
+
+            // Anything else is refused, and the reason now says what actually
+            // disagrees rather than only that the lines collide.
+            //
+            // "Keep the line with the most money" was considered for these and
+            // is NOT safe here, because they are usually not duplicates at all.
+            // The fingerprint is (phone, course) and deliberately not the name,
+            // so siblings on one course sharing a parent's number collide: lines
+            // 200 and 206 of this roll are "Farah Atif" and "Riyan Bin Atif",
+            // two people, and keeping the larger would have deleted a real
+            // student along with the Rs 20,000 he had paid. Which of two
+            // disagreeing claims is true is not the importer's call.
             foreach ($sharing as $row) {
-                $row->reject("lines {$lines} claim the same student on the same course");
+                $row->reject(
+                    "lines {$lines} claim the same student on the same course, and disagree: "
+                    .$this->describeConflict($sharing)
+                );
             }
         }
+    }
+
+    /**
+     * Do these lines make one claim, or several?
+     *
+     * Compared on the person AND the money. Name alone would collapse two
+     * siblings; money alone would collapse two different people who happened to
+     * pay the same fee for the same course.
+     *
+     * @param  list<RollRow>  $rows
+     */
+    private function areTheSameClaim(array $rows): bool
+    {
+        $signature = fn (RollRow $r) => mb_strtolower(trim($r->name))
+            .'|'.$r->discountedPrice.'|'.$r->totalReceived.'|'.$r->balance;
+
+        return count(array_unique(array_map($signature, $rows))) === 1;
+    }
+
+    /**
+     * Name the disagreement, so the operator can act on the rejection CSV
+     * without opening the spreadsheet to work out what differs.
+     *
+     * @param  list<RollRow>  $rows
+     */
+    private function describeConflict(array $rows): string
+    {
+        $names = array_unique(array_map(fn (RollRow $r) => trim($r->name), $rows));
+
+        if (count($names) > 1) {
+            return 'different people ('.implode(' vs ', $names).') sharing one phone number';
+        }
+
+        $money = array_unique(array_map(
+            fn (RollRow $r) => 'fee '.$r->discountedPrice.'/received '.$r->totalReceived,
+            $rows
+        ));
+
+        return 'same person, different money ('.implode(' vs ', $money).')';
     }
 
     // ---- Stage 4: identity and money ---------------------------------------
@@ -249,13 +315,29 @@ class RollResolver
             $row->reject('no student name');
         }
 
-        // `students.phone` is NOT NULL and is the only channel a fee reminder
-        // travels down, so a row without one cannot become a student. 72 rows
-        // in the institute's own roll carry "-" here.
-        if ($row->phone === '') {
-            $row->reject('no phone number');
-        } elseif (! Contact::normalizePhone($row->phone)) {
-            $row->reject("phone is not a PK mobile: \"{$row->phone}\"");
+        // A missing phone is no longer a rejection. `students.phone` became
+        // nullable so the 72 rows of legacy history that carry "-" here can be
+        // loaded as what they are — students whose number nobody recorded —
+        // rather than dropped or given an invented one.
+        //
+        // A phone that is present but unusable no longer stops the row either.
+        // The column holds what can be dialled, so an undiallable value becomes
+        // NULL — the same "we do not have a number" the 72 blank rows get —
+        // and the row imports.
+        //
+        // These are two different faults wearing one message, and both end the
+        // same way. Some are not numbers at all: ".", "--", "Digital Media",
+        // "Shopify" — the course name typed into the wrong column. Others are
+        // real attempts with the wrong digit count: "0316842216" is ten digits
+        // where a PK mobile needs eleven, "032177634459" is twelve. A missing
+        // digit cannot be guessed and an invented one would be worse than none.
+        //
+        // It is a WARNING rather than silence, because the typed text is the
+        // only clue to what the number should have been. `--warnings=` writes
+        // them out so the institute can chase them; discarding them quietly
+        // would throw that away and nobody would know to look.
+        if ($row->phone !== '' && ! Contact::normalizePhone($row->phone)) {
+            $row->warn("phone \"{$row->phone}\" cannot be dialled, imported without a number");
         }
 
         if ($row->registeredOn === null) {
@@ -346,9 +428,17 @@ class RollResolver
             $row->reject("status says {$row->status} but nothing is outstanding");
         }
 
-        if ($row->needsSchedule() && $row->secondDueOn === null) {
-            $row->reject('an instalment is outstanding but the roll gives no due date for it');
-        }
+        // An outstanding balance with no due date is no longer a rejection. The
+        // balance is imported UNSCHEDULED: the challan carries a NULL due date,
+        // no installment plan is created, and `Reporting::duesAgeing()` reports
+        // it under "Unscheduled".
+        //
+        // The rejected alternative was to fall back to the registration date, as
+        // this importer does for dated rows. That would have made all 33 of
+        // these balances overdue by months the instant they landed, and the
+        // institute would have begun chasing parents over a deadline nobody ever
+        // set. Owing money on no particular date is the truth here, and it is
+        // representable.
 
         // `Installments::schedule()` refuses parts that fall due out of order,
         // and it refuses them at write time — so without this the dry run calls
@@ -369,17 +459,36 @@ class RollResolver
      * the export, so it renumbers the moment anyone filters or re-sorts before
      * exporting again, and two different files would claim the same identity.
      *
-     * Hashed from the normalised phone and the course code, and deliberately
-     * NOT from the name or the registration date. The whole workflow this
-     * importer is built around is *correct a cell and run it again*, so every
-     * component of the key has to survive that. An earlier version included
-     * both: fixing one typo'd digit in a phone, or a misspelled name, produced
-     * a second student, a second invoice and the same money booked twice.
+     * Hashed from the normalised phone, the NAME, and the course code.
      *
-     * Phone rather than name because the roll has 59 names shared by more than
-     * one row and no CNIC to tell them apart, while `normalizePhone` gives one
-     * canonical form for every way a number can be written — and a row whose
-     * phone will not normalise has already been rejected before this runs.
+     * The name was deliberately excluded at first, and the reasoning was sound:
+     * this importer is built around *correct a cell and run it again*, so every
+     * component of the key has to survive an edit, and a name that gets
+     * re-typed between exports produces a second student, a second invoice and
+     * the same money booked twice.
+     *
+     * It was added anyway, because leaving it out was worse. (phone, course)
+     * cannot tell two members of one family apart, and in this roll that is not
+     * an edge case — 40 rows carrying Rs 670,000 are siblings sharing a parent's
+     * number, three deep in places:
+     *
+     *     lines  10, 11, 12   Iram, Afsheen, Sofia Rajut
+     *     lines 145, 146, 147 Huzaifa Amjad, Yahya Amjad, Zainab Tariq
+     *
+     * With the phone alone those collide, and the safe response to a collision
+     * is to refuse both — so the strong key's price was 40 real students, and
+     * their money, staying outside the system permanently. A key that cannot
+     * represent a family is not strong, it is wrong.
+     *
+     * The cost is real and worth stating: correcting "Muhamad" to "Muhammad"
+     * between two runs makes that row look new, and re-running would import it
+     * twice. Three things bound that risk — the load is essentially one-time,
+     * the name is lowercased and trimmed so casing and stray spaces do not
+     * count as edits, and `php artisan records:duplicates` exists precisely to
+     * find a pair that slips through.
+     *
+     * The registration date is still excluded, for the original reason: it is
+     * re-typed as often as anything else and carries no identity.
      *
      * @param  Collection<string, int>  $existingKeys  flipped: key => position
      */
@@ -387,12 +496,40 @@ class RollResolver
     {
         $person = Contact::normalizePhone($row->phone);
 
-        if ($person === null || $row->courses === []) {
+        if ($row->courses === []) {
             return; // Already rejected; there is nothing stable to key on.
         }
 
+        // A phoneless row still needs an identity, or it could not be imported
+        // at all: without a key it can be neither recognised on a second run nor
+        // caught by the within-file duplicate check, so re-running the importer
+        // would load all 72 of them again as new people.
+        //
+        // The fallback is the name and the registration date, and it is
+        // deliberately NAMESPACED away from the phone key. Without the prefix a
+        // phoneless row and a phoned row could in principle hash to the same
+        // value and one would silently claim the other had already been
+        // imported.
+        //
+        // The fallback is weaker than the phone, and it is worth being honest
+        // about how: the roll has 59 names shared by more than one row, so two
+        // different people with the same name enrolling on the same course on
+        // the same day collide — the within-file duplicate check then refuses
+        // both, which is the safe direction to fail. And unlike a phone, a name
+        // gets re-typed between exports, so fixing a spelling mistake makes the
+        // row look new. Both are acceptable for 72 rows of dead history; neither
+        // would be acceptable as the primary key for the whole file, which is
+        // why the phone is still used wherever there is one.
+        // Lowercased and trimmed, so "  Ali Raza" and "ali raza" are one person
+        // and neither casing nor a stray space counts as an edit.
+        $who = mb_strtolower(trim($row->name));
+
+        $identity = $person !== null
+            ? 'phone:'.$person.'|'.$who
+            : 'name:'.$who.'|'.$row->registeredOn;
+
         foreach ($row->courses as $course) {
-            $row->importKeys[$course->id] = sha1($person.'|'.$course->code);
+            $row->importKeys[$course->id] = sha1($identity.'|'.$course->code);
         }
 
         $matched = array_filter($row->importKeys, fn ($k) => $existingKeys->has($k));

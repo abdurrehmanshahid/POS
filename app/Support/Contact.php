@@ -13,17 +13,45 @@ final class Contact
      */
     public static function normalizePhone(string $raw): ?string
     {
-        $d = preg_replace('/\D+/', '', $raw);
-        if (str_starts_with($d, '92')) {
-            $d = substr($d, 2);
-        } elseif (str_starts_with($d, '0')) {
-            $d = substr($d, 1);
-        }
-        if (strlen($d) !== 10 || $d[0] !== '3') {
-            return null;
+        $raw = trim($raw);
+        $d = preg_replace('/\D+/', '', $raw) ?? '';
+
+        // Pakistan first, in every way the roll writes it: 03xx, 3xx, 92 3xx,
+        // 0092 3xx. One canonical form out, whichever went in, because the
+        // import fingerprint depends on two spellings of one number hashing the
+        // same.
+        $pk = $d;
+        if (str_starts_with($pk, '0092')) {
+            $pk = substr($pk, 4);
+        } elseif (str_starts_with($pk, '92')) {
+            $pk = substr($pk, 2);
+        } elseif (str_starts_with($pk, '0')) {
+            $pk = substr($pk, 1);
         }
 
-        return '+92 '.substr($d, 0, 3).' '.substr($d, 3);
+        if (strlen($pk) === 10 && $pk[0] === '3') {
+            return '+92 '.substr($pk, 0, 3).' '.substr($pk, 3);
+        }
+
+        // Any other country, but ONLY when it was written as international.
+        // The institute's roll carries genuine students abroad — +90 (Turkey),
+        // +971 (UAE), +968 (Oman) — and refusing them lost reachable people
+        // over a rule about which country they happened to be in.
+        //
+        // The leading "+" is required rather than inferred, and that is the
+        // whole safety of this branch. Without it, "0316842216" — a PK mobile
+        // somebody typed one digit short — would fall through here and be
+        // stored as a valid foreign number, turning a typo nobody can dial into
+        // a number the system believes is fine. A missing digit must stay
+        // unusable, and it does, because nobody writes a local number with a +.
+        //
+        // 8 to 15 digits is E.164: the shortest national numbers run to about
+        // eight digits and the standard caps the whole thing at fifteen.
+        if (str_starts_with($raw, '+') && strlen($d) >= 8 && strlen($d) <= 15) {
+            return '+'.$d;
+        }
+
+        return null;
     }
 
     public static function validCnic(string $cnic): bool

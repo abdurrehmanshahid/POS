@@ -461,6 +461,21 @@ new class extends Component {
     public function submit(): void
     {
         if (! auth()->user()->can('registrations.create')) { abort(403); }
+        // The wizard has already been submitted and closed, so there is nothing
+        // left to register. This is what the second half of a double-click looks
+        // like, and the token alone does NOT catch it: Livewire bundles two
+        // clicks fired in one tick into a single request as two calls, and the
+        // first call's success path re-mints the token in memory (below), so the
+        // second call arrives holding a *fresh* key and passes `once()` cleanly.
+        // Verified in a browser: a double-click on Register produced two
+        // students, two admissions and two challans, with two operations rows
+        // carrying different keys. `wire:loading.attr="disabled"` cannot help
+        // either, because both clicks land before the first request is issued.
+        //
+        // `confirmPay()` has survived this all along by returning early on
+        // `payId === null`; this is the same guard the enrolment path was
+        // missing. See CollectsPayments::confirmPay().
+        if (! $this->wizardOpen) { return; }
         $data = [
             'course_ids' => $this->courseIds,
             'discount_pct' => $this->discountPct,

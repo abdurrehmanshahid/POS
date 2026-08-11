@@ -37,27 +37,12 @@ new #[Layout('components.layouts.guest')] class extends Component {
     public bool $remember = false;
     public string $error = '';
 
-    /**
-     * Demo credential helpers. Gated to the local environment because the
-     * prototype shipped real seeded passwords rendered into the page and
-     * callable from the client, convenient for a demo, an open door in
-     * production. `app()->environment('local')` is checked on the SERVER here,
-     * not merely in the Blade template, so hiding the buttons is not the only
-     * thing standing between an attacker and an admin session.
-     */
-    public function fillAdmin(): void
-    {
-        abort_unless(app()->environment('local'), 404);
-        $this->user = 'adminansar';
-        $this->password = 'Bbt@Admin1';
-    }
-
-    public function fillOfficer(): void
-    {
-        abort_unless(app()->environment('local'), 404);
-        $this->user = 'aliraza';
-        $this->password = 'Bbt@Officer1';
-    }
+    // The click-to-fill demo credential helpers were removed outright. They were
+    // gated to the local environment on the server, so production was never
+    // exposed by them — but a login screen that can print a working password at
+    // all is one misread config away from printing it to everyone, and no
+    // gate is safer than a correct gate. Credentials for a local database now
+    // come from whoever seeded it.
 
     public function login()
     {
@@ -102,8 +87,13 @@ new #[Layout('components.layouts.guest')] class extends Component {
 
         $throttle->clear();
 
-        // Second factor confirmed → withhold the session until a code arrives.
-        if ($u->hasTwoFactorEnabled()) {
+        // Second factor confirmed AND switched on → withhold the session until a
+        // code arrives. The `enabled()` half matters: this used to test only
+        // whether a secret existed, so turning the factor off left everyone who
+        // had already enrolled still being challenged, with the Settings switch
+        // appearing to do nothing. Enrolment is what you HAVE; `enabled()` is
+        // whether the institute is asking for it.
+        if ($u->hasTwoFactorEnabled() && \App\Services\TwoFactor::enabled()) {
             app(TwoFactorChallenge::class)->start($u, 'web', $this->remember);
 
             return $this->redirect(route('two-factor.challenge'), navigate: false);
@@ -208,24 +198,6 @@ new #[Layout('components.layouts.guest')] class extends Component {
                     <x-icon name="signin" :size="18" /> Sign in
                 </button>
             </form>
-
-            {{-- Local-development convenience only. Never rendered outside the
-                 local environment, and the fill actions abort server-side too. --}}
-            @if (app()->environment('local'))
-            <div style="padding:14px 16px;border:1px dashed var(--border2);border-radius:12px;background:var(--surface2);margin-bottom:14px">
-                <div style="font-size:var(--fs-2xs);font-weight:700;color:var(--faint);letter-spacing:.06em;text-transform:uppercase;margin-bottom:10px">Local dev · demo accounts (click to fill)</div>
-                <div style="display:flex;flex-direction:column;gap:8px">
-                    <button wire:click="fillAdmin" style="display:flex;align-items:center;gap:10px;width:100%;height:44px;padding:0 12px;border:1.5px solid var(--border2);background:var(--surface);border-radius:10px;cursor:pointer;text-align:left">
-                        <span class="avatar avatar-navy" style="width:28px;height:28px;font-size:var(--fs-2xs)">AA</span>
-                        <span style="flex:1"><span style="display:block;font-size:var(--fs-xs);font-weight:700;color:var(--ink)">Administrator</span><span class="tnum" style="display:block;font-size:var(--fs-2xs);color:var(--muted)">adminansar · Bbt@Admin1</span></span>
-                    </button>
-                    <button wire:click="fillOfficer" style="display:flex;align-items:center;gap:10px;width:100%;height:44px;padding:0 12px;border:1.5px solid var(--border2);background:var(--surface);border-radius:10px;cursor:pointer;text-align:left">
-                        <span class="avatar avatar-orange" style="width:28px;height:28px;font-size:var(--fs-2xs)">AR</span>
-                        <span style="flex:1"><span style="display:block;font-size:var(--fs-xs);font-weight:700;color:var(--ink)">Admission Officer</span><span class="tnum" style="display:block;font-size:var(--fs-2xs);color:var(--muted)">aliraza · Bbt@Officer1</span></span>
-                    </button>
-                </div>
-            </div>
-            @endif
 
             <div style="display:flex;align-items:center;gap:8px;justify-content:center;font-size:var(--fs-xs);color:var(--faint)">
                 <x-icon name="lock" :size="13" /> 256-bit TLS · role &amp; permission scoped

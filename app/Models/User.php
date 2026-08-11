@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use App\Models\Concerns\HasTwoFactorAuth;
+use App\Services\TwoFactor;
 use App\Support\Format;
 use Database\Factories\UserFactory;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
@@ -86,7 +87,7 @@ class User extends Authenticatable
      */
     public function requiresTwoFactor(): bool
     {
-        return (bool) $this->role?->requires_2fa;
+        return TwoFactor::enabled() && (bool) $this->role?->requires_2fa;
     }
 
     // ---- Display -----------------------------------------------------------

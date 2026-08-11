@@ -167,6 +167,8 @@ class DemoDataSeeder extends Seeder
             $challan = Challan::create([
                 'challan_no' => $prefix.$chNo,
                 'admission_id' => $admission->id,
+                'student_id' => $admission->student_id,
+                'raised_by' => $enroller->id,
                 'base_amount' => $base,
                 'discount_amount' => $disc,
                 'discount_reason' => $disc > 0 ? $reason : null,

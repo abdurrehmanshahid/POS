@@ -2,8 +2,10 @@
 
 namespace Tests\Feature;
 
+use App\Http\Controllers\ReceiptController;
 use App\Models\Challan;
 use App\Models\Course;
+use App\Models\Payment;
 use App\Models\Setting;
 use App\Models\User;
 use App\Services\ChallanActions;
@@ -92,6 +94,90 @@ class ScreensTest extends TestCase
         $this->actingAs($officer)->get('/registrations')->assertOk();
         $this->actingAs($officer)->get('/challans')->assertOk();
         $this->actingAs($officer)->get('/students')->assertOk();
+    }
+
+    // ---- Receipts (GAP-05) --------------------------------------------------
+
+    /**
+     * The rule the whole receipt exists for: a reprint must not contradict the
+     * copy the student is already holding.
+     *
+     * A student pays Rs 10,000 of Rs 25,000 and is handed a receipt saying
+     * Rs 15,000 remains. They pay the rest next week. Reprinting the FIRST
+     * receipt must still say Rs 15,000 — computing the balance from today's
+     * ledger would reprint it as Rs 0, and two documents describing one payment
+     * would disagree about what happened.
+     */
+    public function test_a_reprinted_receipt_still_shows_the_balance_as_at_that_payment(): void
+    {
+        $challan = Challan::where('challan_no', 'BBT-CH-2026-1076')->firstOrFail(); // unpaid, net 25000
+        $actions = app(ChallanActions::class);
+
+        $first = $actions->recordPayment($challan, $this->admin(), 10000, 'Cash');
+        $first = $challan->fresh()->payments()->orderBy('id')->first();
+
+        $balanceAfterFirst = $this->receiptBalance($first);
+        $this->assertSame(15000, $balanceAfterFirst);
+
+        // The rest is collected later.
+        $actions->recordPayment($challan->fresh(), $this->admin(), 15000, 'Cash');
+
+        $this->assertSame(15000, $this->receiptBalance($first->fresh()),
+            'Reprinting the first receipt must reproduce the original facts, not recompute them.');
+    }
+
+    /** The balance a receipt would print for a given payment. */
+    private function receiptBalance(Payment $payment): int
+    {
+        $method = new \ReflectionMethod(ReceiptController::class, 'balanceAfter');
+
+        return $method->invoke(app(ReceiptController::class), $payment->load('challan.payments'));
+    }
+
+    /**
+     * The receipt number is derived from the payment id, not allocated, so
+     * printing twice cannot produce two different numbers for one payment.
+     */
+    public function test_a_receipt_number_is_stable_across_reprints(): void
+    {
+        $challan = Challan::where('challan_no', 'BBT-CH-2026-1076')->firstOrFail();
+        app(ChallanActions::class)->recordPayment($challan, $this->admin(), 5000, 'Cash');
+
+        $payment = $challan->fresh()->payments()->orderBy('id')->first();
+
+        $this->assertSame($payment->receiptNo(), $payment->fresh()->receiptNo());
+        $this->assertStringContainsString('RC-', $payment->receiptNo());
+    }
+
+    public function test_a_receipt_renders_as_a_pdf_and_is_scoped_like_the_voucher(): void
+    {
+        $challan = Challan::where('challan_no', 'BBT-CH-2026-1076')->firstOrFail(); // enrolled_by admin
+        app(ChallanActions::class)->recordPayment($challan, $this->admin(), 10000, 'Cash');
+        $payment = $challan->fresh()->payments()->orderBy('id')->first();
+
+        $this->actingAs($this->admin())
+            ->get(route('payments.receipt', $payment))
+            ->assertOk()
+            ->assertHeader('content-type', 'application/pdf');
+
+        // The receipt names the student, so it cannot be laxer than the voucher.
+        $this->actingAs($this->officer())
+            ->get(route('payments.receipt', $payment))
+            ->assertForbidden();
+    }
+
+    /** Printing a receipt must never write anything; it reports the ledger. */
+    public function test_printing_a_receipt_changes_nothing(): void
+    {
+        $challan = Challan::where('challan_no', 'BBT-CH-2026-1076')->firstOrFail();
+        app(ChallanActions::class)->recordPayment($challan, $this->admin(), 10000, 'Cash');
+        $payment = $challan->fresh()->payments()->orderBy('id')->first();
+
+        $before = [Payment::count(), Challan::count(), $challan->fresh()->balance()];
+
+        $this->actingAs($this->admin())->get(route('payments.receipt', $payment))->assertOk();
+
+        $this->assertSame($before, [Payment::count(), Challan::count(), $challan->fresh()->balance()]);
     }
 
     public function test_challan_pdf_is_permission_gated_and_scoped(): void

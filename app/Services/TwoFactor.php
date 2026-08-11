@@ -2,6 +2,8 @@
 
 namespace App\Services;
 
+use App\Models\Setting;
+use App\Models\User;
 use BaconQrCode\Renderer\Image\SvgImageBackEnd;
 use BaconQrCode\Renderer\ImageRenderer;
 use BaconQrCode\Renderer\RendererStyle\RendererStyle;
@@ -44,7 +46,38 @@ final class TwoFactor
 
     private const RECOVERY_CODE_COUNT = 8;
 
+    /** Memoised per request; this is consulted on every sign-in. */
+    private static ?bool $enabled = null;
+
     public function __construct(private readonly Google2FA $engine) {}
+
+    /**
+     * The institute-wide switch for the whole second factor.
+     *
+     * Everything that can DEMAND a code asks this first: role obligation
+     * ({@see User::requiresTwoFactor()}), the super admin's
+     * standing obligation, the sign-in challenge, and the step-up prompt. One
+     * switch rather than a condition per call site, because the failure mode of
+     * scattering them is a screen that still demands a code nobody can produce.
+     *
+     * Turning it off does NOT erase anything: enrolled secrets and recovery
+     * codes stay encrypted at rest, so ticking `twofa_required` back on in
+     * Settings restores the factor for everyone who had it, with no re-enrolment.
+     *
+     * It defaults ON — the column default and both seeders say true — so an
+     * install that never touches Settings is protected. It is off in this
+     * database because the institute asked for it to be.
+     */
+    public static function enabled(): bool
+    {
+        return self::$enabled ??= (bool) Setting::current()->twofa_required;
+    }
+
+    /** Tests flip the switch; without this they would share one memoised value. */
+    public static function forgetEnabled(): void
+    {
+        self::$enabled = null;
+    }
 
     /** A fresh base32 secret to hand to the authenticator app. */
     public function generateSecret(): string

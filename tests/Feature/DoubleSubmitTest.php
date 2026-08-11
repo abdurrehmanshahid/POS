@@ -525,6 +525,76 @@ class DoubleSubmitTest extends TestCase
             'And it used to bill the family twice.');
     }
 
+    /**
+     * The Students screen carries the same shape as the wizard: `saveStudent()`
+     * sets `formOpen = false` and re-mints on its success path, and nothing at
+     * the top refuses a call that arrives once the form has closed.
+     */
+    public function test_two_save_calls_on_one_students_component_add_once(): void
+    {
+        $this->actingAs($this->admin());
+
+        $students = Student::count();
+
+        $page = Livewire::test('pages.students')
+            ->call('newStudent')
+            ->set('fName', 'Bundled Student')
+            ->set('fPhone', '03009998855');
+
+        $page->call('saveStudent');
+        $page->call('saveStudent');
+
+        $this->assertSame(1, Student::where('name', 'Bundled Student')->count(),
+            'A browser double-click created two people.');
+        $this->assertSame($students + 1, Student::count());
+    }
+
+    /**
+     * The double-click a browser actually produces, which the test above cannot see.
+     *
+     * The test above builds the second half as a FRESH component and hand-feeds
+     * it the first one's token. That models two independent requests sharing one
+     * snapshot. A real double-click is not that: Livewire bundles two clicks
+     * fired in the same tick into ONE request as two calls on the SAME component,
+     * and `submit()` re-mints the token on its success path — so the second call
+     * arrives holding a *fresh* key and satisfies `once()` cleanly.
+     *
+     * Found by double-clicking Register in a browser as the officer: two
+     * students, two admissions, two challans, and two `operations` rows carrying
+     * different keys. The token guard was never reached.
+     *
+     * `wire:loading.attr="disabled"` on the button does not cover it either;
+     * both clicks land before the first request is issued.
+     */
+    public function test_two_submit_calls_on_one_component_enrol_once(): void
+    {
+        $this->actingAs($this->admin());
+        $course = Course::where('is_active', true)->firstOrFail();
+
+        $students = Student::count();
+        $admissions = Admission::count();
+        $challans = Challan::count();
+
+        $page = Livewire::test('pages.registrations')
+            ->call('openWizard')
+            ->set('mode', 'new')
+            ->set('newName', 'Bundled Double')
+            ->set('newPhone', '03009998866')
+            ->set('courseIds', [$course->id]);
+
+        // Exactly what the bundled request does: the same component, twice, with
+        // no reopen in between and no token injected by hand.
+        $page->call('submit');
+        $page->call('submit');
+
+        $this->assertSame(1, Student::where('name', 'Bundled Double')->count(),
+            'A browser double-click created two people.');
+        $this->assertSame($students + 1, Student::count());
+        $this->assertSame($admissions + 1, Admission::count());
+        $this->assertSame($challans + 1, Challan::count(),
+            'And billed the family twice.');
+    }
+
     // ---- Toggles: a different failure with the same cause ------------------
 
     public function test_activating_a_course_twice_leaves_it_active(): void

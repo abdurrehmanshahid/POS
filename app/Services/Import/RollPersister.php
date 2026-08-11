@@ -238,13 +238,20 @@ class RollPersister
             // The anchor is the first enrolment, for every caller that still
             // reads challans.admission_id rather than the admissions relation.
             'admission_id' => $admissions[0]->id,
+            'student_id' => $admissions[0]->student_id,
+            'raised_by' => $row->officer->id,
             'base_amount' => $base,
             'discount_amount' => $discount,
             'discount_reason' => $discount > 0 ? 'Imported from the institute roll' : null,
             'discount_approved_by' => $discount > 0 ? $row->officer->id : null,
             'net_amount' => $net,
             'plan' => 'full',
-            'due_date' => $row->secondDueOn ?? $row->registeredOn,
+            // The registration-date fallback applies only when nothing is owed,
+            // where the date is cosmetic on an already-settled invoice. A row
+            // that still owes money and names no deadline gets NULL, because
+            // falling back here would date the debt to the day the student
+            // enrolled and report it as months overdue on arrival.
+            'due_date' => $row->secondDueOn ?? ($row->balance > 0 ? null : $row->registeredOn),
             'status' => 'unpaid',
         ]);
 
@@ -434,6 +441,19 @@ class RollPersister
         // schedule() refuses a plan that does not total the fee, and a refusal
         // here would roll back an otherwise good row.
         if ($second <= 0) {
+            return;
+        }
+
+        // No deadline, so no schedule. `Installments::schedule()` orders parts
+        // by date and its whole purpose is to answer "what falls due next"; a
+        // part with no due date makes that question unanswerable, and passing
+        // NULL would throw inside the transaction and lose the row.
+        //
+        // The balance is not lost by skipping this: it lives on the challan,
+        // `Ledger::outstanding()` counts it, and `duesAgeing()` reports it as
+        // Unscheduled. What it does not do is invent a deadline in order to have
+        // one.
+        if ($row->secondDueOn === null) {
             return;
         }
 

@@ -122,6 +122,11 @@ class RegistrationService
                     // The anchor. Every existing query reaches the student and
                     // the headline course through this.
                     'admission_id' => $admissions[0]->id,
+                    // Stated directly as well, because a challan billing a
+                    // non-course charge has no admission to be reached through
+                    // and `Ledger::scopedChallans()` needs an owner either way.
+                    'student_id' => $admissions[0]->student_id,
+                    'raised_by' => $actor->id,
                     'base_amount' => $base,
                     'discount_amount' => $discount,
                     'discount_reason' => $discount > 0 ? $reason : null,

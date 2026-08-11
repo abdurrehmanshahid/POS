@@ -11,6 +11,8 @@ use App\Models\Payment;
 use App\Models\Student;
 use App\Models\User;
 use App\Services\Ledger;
+use App\Services\Reporting;
+use App\Support\Contact;
 use Database\Seeders\DatabaseSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
@@ -104,6 +106,44 @@ class RollImportTest extends TestCase
     }
 
     // ---- The write barrier ---------------------------------------------------
+
+    /**
+     * Every alias must point at a course that exists.
+     *
+     * The resolver treats an alias whose code is missing exactly like an
+     * unknown course: it rejects the row. So a typo in `course_aliases`, or a
+     * course later renamed or removed, silently sends rows back to the
+     * rejection pile with a message blaming the spreadsheet. That is precisely
+     * the failure the 27 catalogue entries were added to end, and it would look
+     * identical to never having added them.
+     */
+    public function test_every_course_alias_resolves_to_a_real_course(): void
+    {
+        $codes = Course::pluck('code')->map(fn ($c) => mb_strtolower($c))->all();
+
+        $this->assertNotEmpty(config('roll-import.course_aliases'));
+
+        foreach (config('roll-import.course_aliases') as $text => $code) {
+            $this->assertContains(mb_strtolower($code), $codes,
+                "Alias \"{$text}\" points at course code \"{$code}\", which does not exist. "
+                .'Every row naming it will be rejected as an unknown course.');
+        }
+    }
+
+    /**
+     * An alias must never name a value the config also calls "not a course",
+     * because `resolveCourses()` checks `not_courses` FIRST and would reject a
+     * row the alias was written to rescue.
+     */
+    public function test_no_alias_contradicts_the_not_a_course_list(): void
+    {
+        $notCourses = array_map('mb_strtolower', config('roll-import.not_courses'));
+
+        foreach (array_keys(config('roll-import.course_aliases')) as $text) {
+            $this->assertNotContains(mb_strtolower((string) $text), $notCourses,
+                "\"{$text}\" is both an alias and a not-a-course; the rejection wins and the alias is dead.");
+        }
+    }
 
     public function test_a_dry_run_writes_nothing(): void
     {
@@ -371,19 +411,60 @@ class RollImportTest extends TestCase
      * The fingerprint has to survive the workflow it exists for.
      *
      * The advertised loop is "read the rejections, correct the sheet, run it
-     * again". An earlier key hashed the name and the registration date too, so
-     * fixing a typo produced a second student, a second invoice and the same
-     * money booked twice.
+     * again", so a corrected DATE must not mint a second student. The date
+     * carries no identity and is re-typed as often as anything else.
      */
-    public function test_correcting_a_name_or_a_date_does_not_re_import_the_student(): void
+    public function test_correcting_a_date_does_not_re_import_the_student(): void
     {
         $this->artisan('roll:import', ['file' => $this->sheet([$this->goodRow()]), '--commit' => true]);
         $after = $this->counts();
 
-        $corrected = $this->goodRow(['Name' => 'Imported Student Corrected', 'Registration Date' => '2026-07-02']);
+        $corrected = $this->goodRow(['Registration Date' => '2026-07-02']);
         $this->artisan('roll:import', ['file' => $this->sheet([$corrected]), '--commit' => true]);
 
-        $this->assertSame($after, $this->counts(), 'A corrected cell must not mint a second student.');
+        $this->assertSame($after, $this->counts(), 'A corrected date must not mint a second student.');
+    }
+
+    /**
+     * The known, accepted cost of putting the name in the key.
+     *
+     * Pinned rather than hidden. The name had to join the key so that families
+     * sharing one phone number could be told apart — without it, 40 real
+     * students carrying Rs 670,000 could never be imported at all. The price is
+     * this: correcting a spelling between two runs makes the row look new.
+     *
+     * It is bounded by the load being essentially one-time, by the name being
+     * lowercased and trimmed so casing and stray spaces are not edits, and by
+     * `php artisan records:duplicates`, which exists to find exactly this pair.
+     *
+     * If this test ever starts failing, the key changed — do not simply delete
+     * it; check that families still import as separate people.
+     */
+    public function test_correcting_a_name_does_re_import_and_that_is_the_known_trade_off(): void
+    {
+        $this->artisan('roll:import', ['file' => $this->sheet([$this->goodRow()]), '--commit' => true]);
+        $after = $this->counts();
+
+        $corrected = $this->goodRow(['Name' => 'Imported Student Corrected']);
+        $this->artisan('roll:import', ['file' => $this->sheet([$corrected]), '--commit' => true]);
+
+        $this->assertSame($after['students'] + 1, Student::count(),
+            'A corrected name mints a second student. This is the accepted cost of telling siblings apart.');
+    }
+
+    /** Casing and stray whitespace are not edits, so they must not re-import. */
+    public function test_a_name_differing_only_in_case_or_spacing_is_the_same_student(): void
+    {
+        $this->artisan('roll:import', ['file' => $this->sheet([$this->goodRow()]), '--commit' => true]);
+        $after = $this->counts();
+
+        $this->artisan('roll:import', [
+            'file' => $this->sheet([$this->goodRow(['Name' => '  imported STUDENT '])]),
+            '--commit' => true,
+        ]);
+
+        $this->assertSame($after, $this->counts(),
+            'Re-casing a name must not mint a second student.');
     }
 
     /**
@@ -606,11 +687,16 @@ class RollImportTest extends TestCase
     }
 
     /**
-     * 52 phone numbers in the real roll are shared by more than one student.
-     * Two of them on one course collide on the import key, and the operator
-     * should get a sentence rather than a driver error.
+     * 52 phone numbers in the real roll are shared by more than one student,
+     * mostly siblings on a parent's number. They are two people and must import
+     * as two people.
+     *
+     * This used to refuse both, because the key was (phone, course) and could
+     * not tell them apart. That cost 40 real students carrying Rs 670,000 —
+     * three deep in places, e.g. lines 10/11/12 are Iram, Afsheen and Sofia
+     * Rajut. The name is now part of the key.
      */
-    public function test_two_lines_claiming_the_same_student_and_course_are_both_refused(): void
+    public function test_two_siblings_sharing_a_phone_on_one_course_both_import(): void
     {
         $before = $this->counts();
 
@@ -619,10 +705,54 @@ class RollImportTest extends TestCase
             $this->goodRow(['Name' => 'Sibling Two']),   // same phone, same course
         ]);
 
-        $this->artisan('roll:import', ['file' => $file, '--commit' => true])
-            ->expectsOutputToContain('claim the same student on the same course');
+        $this->artisan('roll:import', ['file' => $file, '--commit' => true])->assertSuccessful();
 
-        $this->assertSame($before, $this->counts(), 'Neither line is guessed at.');
+        $this->assertSame($before['students'] + 2, Student::count(),
+            'Two siblings on one number are two students.');
+        $this->assertSame(1, Student::where('name', 'Sibling One')->count());
+        $this->assertSame(1, Student::where('name', 'Sibling Two')->count());
+    }
+
+    /**
+     * The same line typed twice is still one student.
+     *
+     * The rule compares the person AND the money, so this collapses while the
+     * siblings above do not.
+     */
+    public function test_an_identical_repeated_line_is_collapsed_to_one_student(): void
+    {
+        $before = $this->counts();
+
+        $file = $this->sheet([
+            $this->goodRow(['Name' => 'Typed Twice']),
+            $this->goodRow(['Name' => 'Typed Twice']),
+        ]);
+
+        $this->artisan('roll:import', ['file' => $file, '--commit' => true])->assertSuccessful();
+
+        $this->assertSame($before['students'] + 1, Student::count(),
+            'One line typed twice is one student, not two and not zero.');
+        $this->assertSame($before['challans'] + 1, Challan::count(),
+            'And it must not bill the family twice.');
+    }
+
+    /**
+     * Two lines that agree on the person but not on the money are refused, and
+     * the reason says which figures disagree.
+     */
+    public function test_the_same_person_with_different_money_is_refused_with_the_conflict_named(): void
+    {
+        $before = $this->counts();
+
+        $file = $this->sheet([
+            $this->goodRow(['Name' => 'Disputed Dua']),
+            $this->goodRow(['Name' => 'Disputed Dua', 'Discounted Price' => 20000, 'Total Amount' => 20000]),
+        ]);
+
+        $this->artisan('roll:import', ['file' => $file, '--commit' => true])
+            ->expectsOutputToContain('same person, different money');
+
+        $this->assertSame($before, $this->counts(), 'Neither figure is guessed at.');
     }
 
     /**
@@ -680,6 +810,102 @@ class RollImportTest extends TestCase
         $this->assertSame($before, $this->counts(), 'A refused row must write nothing.');
     }
 
+    /**
+     * A student whose number nobody recorded is history, not a broken row.
+     *
+     * 72 rows of the institute's roll carry "-" here. They are imported with a
+     * NULL phone rather than an invented one, and the blank must be NULL and
+     * never '' so that "we do not have a number" has one representation.
+     */
+    public function test_a_row_with_no_phone_is_imported_rather_than_refused(): void
+    {
+        $file = $this->sheet([$this->goodRow(['Phone' => '-', 'Name' => 'No Number Nadia'])]);
+
+        $this->artisan('roll:import', ['file' => $file, '--commit' => true])
+            ->assertSuccessful();
+
+        $student = Student::where('name', 'No Number Nadia')->firstOrFail();
+
+        $this->assertNull($student->phone, 'A missing number must be NULL, never an empty string.');
+    }
+
+    /**
+     * A number that cannot be dialled is stored as no number, and the row still
+     * imports — but the operator is told, and the text they typed survives.
+     *
+     * "0316842216" is ten digits where a PK mobile needs eleven. The missing
+     * digit cannot be guessed, so the only clue to the real number is what was
+     * written, and that clue is what the warnings CSV exists to keep.
+     */
+    public function test_an_undiallable_number_imports_as_null_with_a_warning(): void
+    {
+        $file = $this->sheet([$this->goodRow(['Phone' => '0316842216', 'Name' => 'Short Digits Sana'])]);
+
+        $this->artisan('roll:import', ['file' => $file, '--commit' => true])
+            ->expectsOutputToContain('cannot be dialled');
+
+        $student = Student::where('name', 'Short Digits Sana')->firstOrFail();
+
+        $this->assertNull($student->phone, 'An undiallable number must not be stored as if it worked.');
+    }
+
+    /**
+     * The phone rule, asserted on the normaliser rather than through a sheet.
+     *
+     * Deliberately not an end-to-end import test: a spreadsheet cell beginning
+     * with "+" is a FORMULA, so PhpSpreadsheet reads "+905355170955" back as an
+     * error rather than as text, and a fixture written that way fails for a
+     * reason that has nothing to do with the rule being tested. The real export
+     * stores these as text and resolves them correctly.
+     *
+     * Three rules in one place because they only make sense together:
+     *
+     *  - Genuine students abroad are accepted. The roll carries +90 (Turkey),
+     *    +971 (UAE) and +968 (Oman), and refusing them lost reachable people
+     *    over which country they happened to be in.
+     *  - The leading "+" is the entire safety of that branch. Without it a PK
+     *    mobile typed one digit short would fall through and be stored as a
+     *    valid foreign number — a typo nobody can dial, recorded as fine.
+     *  - Every way of writing one PK number still yields one canonical form,
+     *    because the import fingerprint depends on it.
+     */
+    public function test_the_phone_normaliser_accepts_abroad_and_still_refuses_typos(): void
+    {
+        // Real students abroad, kept as written.
+        $this->assertSame('+905355170955', Contact::normalizePhone('+905355170955'));
+        $this->assertSame('+971553824025', Contact::normalizePhone('+971553824025'));
+        $this->assertSame('+96897735200', Contact::normalizePhone('+96897735200'));
+
+        // Local numbers with the wrong digit count stay unusable.
+        $this->assertNull(Contact::normalizePhone('0316842216'), 'ten digits, one short');
+        $this->assertNull(Contact::normalizePhone('032177634459'), 'twelve digits, one over');
+        $this->assertNull(Contact::normalizePhone('.'));
+        $this->assertNull(Contact::normalizePhone('Digital Media'));
+
+        // One canonical form, however it was written.
+        $this->assertSame('+92 300 1234567', Contact::normalizePhone('03001234567'));
+        $this->assertSame('+92 300 1234567', Contact::normalizePhone('+92 300 1234567'));
+        $this->assertSame('+92 300 1234567', Contact::normalizePhone('00923001234567'));
+        $this->assertSame('+92 300 1234567', Contact::normalizePhone('0300-1234567'));
+    }
+
+    /**
+     * The fallback identity has to be stable, or re-running the importer loads
+     * all 72 phoneless students a second time as new people.
+     */
+    public function test_a_phoneless_row_is_recognised_on_a_second_run(): void
+    {
+        $file = $this->sheet([$this->goodRow(['Phone' => '-', 'Name' => 'No Number Nadia'])]);
+
+        $this->artisan('roll:import', ['file' => $file, '--commit' => true])->assertSuccessful();
+        $after = $this->counts();
+
+        $this->artisan('roll:import', ['file' => $file, '--commit' => true])->assertSuccessful();
+
+        $this->assertSame($after, $this->counts(),
+            'A phoneless row was imported twice; its fallback fingerprint is not stable.');
+    }
+
     public static function rejections(): array
     {
         return [
@@ -687,8 +913,9 @@ class RollImportTest extends TestCase
             'not a course' => [['Course' => 'Co-working Space'], 'not a course'],
             'no course' => [['Course' => ''], 'no course named'],
             'unknown CSR' => [['CSR' => 'Someone Else'], 'unknown CSR'],
-            'no phone' => [['Phone' => '-'], 'no phone number'],
-            'bad phone' => [['Phone' => 'Digital Media'], 'not a PK mobile'],
+            // Neither a blank phone nor an unusable one is here any more: both
+            // import with a NULL number rather than being refused. The four
+            // phone tests below pin that, so it cannot be silently reverted.
             'money does not reconcile' => [
                 ['Discounted Price' => 25000, 'Advance Payment' => 5000, 'Total Amount' => 5000, 'Balance' => 0],
                 'does not reconcile',
@@ -702,13 +929,90 @@ class RollImportTest extends TestCase
                     'Total Amount' => 10000, 'Balance' => 15000, 'Second Installment' => 15000],
                 'status says Paid',
             ],
-            'no due date for an outstanding instalment' => [
-                ['Status' => 'Pending', 'Discounted Price' => 25000, 'Advance Payment' => 10000,
-                    'Second Installment' => 15000, 'Balance' => 15000, 'Total Amount' => 10000,
-                    'Pending Payment Due Date' => '-'],
-                'no due date',
-            ],
+            // An outstanding balance with no due date is no longer refused; it
+            // imports unscheduled. See the three tests below.
         ];
+    }
+
+    /** A Pending row whose deadline the roll never recorded. */
+    private function undatedDebtRow(): array
+    {
+        return $this->goodRow([
+            'Name' => 'Undated Umair',
+            'Status' => 'Pending',
+            'Discounted Price' => 25000,
+            'Advance Payment' => 10000,
+            'Second Installment' => 15000,
+            'Balance' => 15000,
+            'Total Amount' => 10000,
+            'Pending Payment Due Date' => '-',
+        ]);
+    }
+
+    /**
+     * The balance loads, and the deadline stays unknown rather than invented.
+     *
+     * The rejected alternative was the registration-date fallback this importer
+     * uses for dated rows, which would have made the debt months overdue on
+     * arrival and started the institute chasing a deadline nobody set.
+     */
+    public function test_an_undated_balance_imports_with_no_due_date_and_no_schedule(): void
+    {
+        $this->artisan('roll:import', ['file' => $this->sheet([$this->undatedDebtRow()]), '--commit' => true])
+            ->assertSuccessful();
+
+        $student = Student::where('name', 'Undated Umair')->firstOrFail();
+        $challan = Challan::whereIn(
+            'admission_id',
+            Admission::where('student_id', $student->id)->pluck('id')
+        )->firstOrFail();
+
+        $this->assertNull($challan->due_date, 'A deadline nobody recorded must not be invented.');
+        $this->assertSame(15000, $challan->balance(), 'The balance itself must still be owed.');
+        $this->assertSame(0, $challan->installments()->count(),
+            'A part with no due date makes "what falls due next" unanswerable, so there must be no schedule.');
+    }
+
+    /** An undated debt is not late, because there is no date it is late against. */
+    public function test_an_undated_balance_is_never_overdue(): void
+    {
+        $this->artisan('roll:import', ['file' => $this->sheet([$this->undatedDebtRow()]), '--commit' => true])
+            ->assertSuccessful();
+
+        $student = Student::where('name', 'Undated Umair')->firstOrFail();
+        $challan = Challan::whereIn(
+            'admission_id',
+            Admission::where('student_id', $student->id)->pluck('id')
+        )->firstOrFail();
+
+        $this->assertFalse($challan->isOverdue());
+        $this->assertSame(0, Challan::overdue()->whereKey($challan->id)->count(),
+            'The SQL scope must exclude an undated challan too, not just the model method.');
+    }
+
+    /**
+     * The bug this bucket exists to prevent: `Carbon::parse(null)` returns NOW,
+     * so an undated debt used to age as 0 days late and land in "Not yet due" —
+     * reported as healthy current money in the one report built to surface debt.
+     */
+    public function test_an_undated_balance_is_reported_as_unscheduled_not_as_current(): void
+    {
+        $admin = User::where('username', 'adminansar')->firstOrFail();
+        $reporting = app(Reporting::class);
+
+        // Measured as a delta, because the seeded institute already carries
+        // genuinely-current unpaid challans of its own.
+        $before = $reporting->duesAgeing($admin)['buckets'];
+
+        $this->artisan('roll:import', ['file' => $this->sheet([$this->undatedDebtRow()]), '--commit' => true])
+            ->assertSuccessful();
+
+        $after = $reporting->duesAgeing($admin)['buckets'];
+
+        $this->assertSame($before['unscheduled']['total'] + 15000, $after['unscheduled']['total']);
+        $this->assertSame($before['unscheduled']['count'] + 1, $after['unscheduled']['count']);
+        $this->assertSame($before['current']['count'], $after['current']['count'],
+            'An undated debt must not be filed as "Not yet due".');
     }
 
     public function test_the_same_course_named_twice_on_one_line_is_refused(): void

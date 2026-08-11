@@ -65,17 +65,47 @@ class RollRow
         }
     }
 
+    /**
+     * Things worth telling the operator about a row that still imports.
+     *
+     * Distinct from `reasons`, which stop a row. A warning means the row loads
+     * but something about it was lost or degraded on the way in — most often a
+     * phone number that could not be dialled and is therefore stored as NULL.
+     * Without this the loss would be silent, and "imported successfully" would
+     * quietly mean "imported, minus a detail nobody mentioned".
+     *
+     * @var list<string>
+     */
+    public array $warnings = [];
+
+    public function warn(string $warning): void
+    {
+        if (! in_array($warning, $this->warnings, true)) {
+            $this->warnings[] = $warning;
+        }
+    }
+
     public function isRejected(): bool
     {
         return $this->reasons !== [];
     }
 
     /**
-     * Ready to write: understood, and not already here.
+     * A byte-identical repeat of an earlier line in the same file.
+     *
+     * Not a rejection: the line is understood perfectly and its twin is being
+     * imported. Counting it as refused would report 44 problems where there are
+     * 19 harmless repetitions and hide the rows that do need a decision.
+     */
+    public bool $collapsed = false;
+
+    /**
+     * Ready to write: understood, not already here, and not a repeat of a line
+     * this same run is already importing.
      */
     public function isImportable(): bool
     {
-        return ! $this->isRejected() && ! $this->alreadyImported;
+        return ! $this->isRejected() && ! $this->alreadyImported && ! $this->collapsed;
     }
 
     /**

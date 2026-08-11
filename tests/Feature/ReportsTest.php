@@ -4,8 +4,10 @@ namespace Tests\Feature;
 
 use App\Models\Challan;
 use App\Models\Course;
+use App\Models\Student;
 use App\Models\User;
 use App\Services\ChallanActions;
+use App\Services\Ledger;
 use App\Services\RegistrationService;
 use App\Services\Reporting;
 use App\Support\Period;
@@ -41,6 +43,81 @@ class ReportsTest extends TestCase
     private function officer(): User
     {
         return User::where('username', 'aliraza')->firstOrFail();
+    }
+
+    // ---- Non-course charges --------------------------------------------------
+
+    /**
+     * A charge with no admission must still be money.
+     *
+     * `Ledger::scopedChallans()` is the single gate every money figure passes
+     * through, and it used to read `whereHas('admissions', ...)` alone. A
+     * challan with no admission matched nothing, so a charge would have been
+     * billed, collected, audited — and then absent from every total in the
+     * application.
+     *
+     * That is BUG-27's shape, and the reason it needs an explicit test is that
+     * it cannot be caught from inside: `outstanding = billed − received` stays
+     * perfectly balanced while a row is missing from BOTH sides, so no
+     * reconciliation check can ever witness it. Only asserting the total moves
+     * will.
+     */
+    public function test_a_non_course_charge_counts_as_billed_and_collected(): void
+    {
+        $admin = $this->admin();
+        $ledger = app(Ledger::class);
+
+        $billedBefore = $ledger->billed($admin);
+        $receivedBefore = $ledger->received($admin);
+
+        $charge = Challan::create([
+            'challan_no' => 'BBT-CH-2026-9001',
+            'admission_id' => null,                 // not an enrolment
+            'student_id' => Student::first()->id,
+            'raised_by' => $admin->id,
+            'description' => 'Co-working Space',
+            'base_amount' => 15000,
+            'discount_amount' => 0,
+            'net_amount' => 15000,
+            'plan' => 'full',
+            'due_date' => '2026-07-31',
+            'status' => 'unpaid',
+        ]);
+
+        $this->assertSame($billedBefore + 15000, $ledger->billed($admin),
+            'A charge that is not billed is money the institute cannot see.');
+
+        app(ChallanActions::class)->recordPayment($charge, $admin, 15000, 'Cash');
+
+        $this->assertSame($receivedBefore + 15000, $ledger->received($admin->fresh()),
+            'A collection against a charge must reach the ledger.');
+    }
+
+    /** A charge is scoped to the officer who raised it, like an enrolment. */
+    public function test_a_charge_is_visible_only_to_its_own_officer(): void
+    {
+        $admin = $this->admin();
+        $officer = $this->officer();
+        $ledger = app(Ledger::class);
+
+        $before = $ledger->billed($officer);
+
+        Challan::create([
+            'challan_no' => 'BBT-CH-2026-9002',
+            'admission_id' => null,
+            'student_id' => Student::first()->id,
+            'raised_by' => $admin->id,             // not the officer
+            'description' => 'Certificate Fee',
+            'base_amount' => 650,
+            'discount_amount' => 0,
+            'net_amount' => 650,
+            'plan' => 'full',
+            'due_date' => '2026-07-31',
+            'status' => 'unpaid',
+        ]);
+
+        $this->assertSame($before, $ledger->billed($officer->fresh()),
+            "An officer must not see another officer's charge.");
     }
 
     // ---- Period resolution ---------------------------------------------------

@@ -124,8 +124,28 @@ return [
 
         /**
          * Whether to enable font subsetting or not.
+         *
+         * ON, which is dompdf's own default; this file shipped it off as part of
+         * the vendor stub and nothing here ever chose that.
+         *
+         * With it off, every PDF embeds the COMPLETE DejaVu Sans family — three
+         * faces, regular, bold and oblique, covering thousands of glyphs for a
+         * document that uses about seventy. A fee voucher weighed 884 KB and a
+         * payment receipt 1.29 MB, of which the BBT logo is 24 KB and
+         * essentially all the rest is font nobody reads. These documents are
+         * printed and WhatsApped to parents on mobile data, so the weight is
+         * paid by the people least able to afford it, every single time.
+         *
+         * Subsetting rather than switching to a core font (Helvetica et al,
+         * which embed nothing at all and would be smaller still): the core
+         * fonts cannot render anything outside Latin-1. Every one of the 478
+         * names in the institute's current roll happens to be ASCII, so it
+         * would work today and break silently on the first student whose name
+         * is not — printing their fee voucher with their name mangled. Keeping
+         * DejaVu keeps that door open; subsetting just stops us embedding the
+         * parts of it we never use.
          */
-        'enable_font_subsetting' => false,
+        'enable_font_subsetting' => true,
 
         /**
          * The PDF rendering backend to use

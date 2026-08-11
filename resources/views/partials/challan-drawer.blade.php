@@ -35,7 +35,7 @@
                     <div><div style="color:var(--faint)">Course</div><div style="color:var(--ink);font-weight:600">{{ $a->course->title }} ({{ $a->course->code }})</div></div>
                     <div><div style="color:var(--faint)">Trainer</div><div style="color:var(--ink);font-weight:600">{{ $a->course->trainer?->name ?? 'None' }}</div></div>
                     <div><div style="color:var(--faint)">Enrolled by</div><div style="color:var(--ink);font-weight:600">{{ $a->enroller->name }}</div></div>
-                    <div><div style="color:var(--faint)">Due date</div><div class="tnum" style="color:var(--ink);font-weight:600">{{ Format::date($selected->due_date) }}</div></div>
+                    <div><div style="color:var(--faint)">Due date</div><div class="tnum" style="color:var(--ink);font-weight:600">{{ $selected->due_date ? Format::date($selected->due_date) : 'Not scheduled' }}</div></div>
                     <div><div style="color:var(--faint)">Batch</div><div style="color:{{ $a->cohort ? 'var(--ink)' : 'var(--faint)' }};font-weight:600">{{ $a->cohort?->name ?? 'No batch' }}</div></div>
                 </div>
                 @if ($a->status === 'cancelled' && $a->rejection_reason)
@@ -56,7 +56,20 @@
                     @foreach ($selected->payments->sortBy('received_at') as $p)
                         <div style="display:flex;justify-content:space-between;padding:7px 0;font-size:var(--fs-xs);border-top:1px solid var(--surface3)">
                             <span style="color:var(--muted)">{{ Format::date($p->received_at) }} · {{ $p->method }}<div style="font-size:var(--fs-2xs);color:var(--faint)">received by {{ $p->receiver?->name ?? 'system' }}</div></span>
-                            <span class="tnum" style="font-weight:600;color:var(--paid)">{{ Format::money($p->amount) }}</span>
+                            <span style="display:flex;align-items:center;gap:8px">
+                                <span class="tnum" style="font-weight:600;color:var(--paid)">{{ Format::money($p->amount) }}</span>
+                                {{-- One receipt per handover of money, not one per challan: a
+                                     fee settled in three instalments is three receipts, and the
+                                     student is entitled to the one for the money they just paid.
+                                     `wire:navigate` is deliberately absent — this is a file
+                                     download, and Livewire would try to render the PDF bytes
+                                     into the page. --}}
+                                <a href="{{ route('payments.receipt', $p) }}"
+                                   class="btn-icon" title="Download receipt {{ $p->receiptNo() }}"
+                                   style="text-decoration:none">
+                                    <x-icon name="download" :size="15" />
+                                </a>
+                            </span>
                         </div>
                     @endforeach
 

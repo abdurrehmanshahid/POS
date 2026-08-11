@@ -38,11 +38,36 @@ class Ledger
      */
     public function scopedChallans(User $user): Builder
     {
-        return Challan::query()->whereHas('admissions', function (Builder $a) use ($user) {
-            $a->where('status', '!=', 'cancelled');
-            if (! $user->hasPermission('scope.all')) {
-                $a->where('enrolled_by', $user->id);
-            }
+        $all = $user->hasPermission('scope.all');
+
+        return Challan::query()->where(function (Builder $q) use ($user, $all) {
+            // An enrolment invoice, visible through the admissions it bills.
+            $q->whereHas('admissions', function (Builder $a) use ($user, $all) {
+                $a->where('status', '!=', 'cancelled');
+                if (! $all) {
+                    $a->where('enrolled_by', $user->id);
+                }
+            });
+
+            // A non-course charge, which has no admission to be seen through.
+            //
+            // This branch is load-bearing rather than tidy. Every money figure
+            // in the system — billed, received, outstanding, and the whole of
+            // Reporting — passes through this one method, so a charge missing
+            // here is billed, collected, audited and then absent from every
+            // total in the application.
+            //
+            // That is BUG-27's shape, and its lesson is that the fault is
+            // invisible from inside: `outstanding = billed − received` balances
+            // perfectly while a row is missing from BOTH sides, so no internal
+            // check can witness it. Only the money's absence from a report
+            // somebody reads would ever have shown it up.
+            $q->orWhere(function (Builder $c) use ($user, $all) {
+                $c->whereNull('admission_id');
+                if (! $all) {
+                    $c->where('raised_by', $user->id);
+                }
+            });
         });
     }
 
