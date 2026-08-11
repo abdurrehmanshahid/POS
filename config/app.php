@@ -56,6 +56,38 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Which proxies may be believed
+    |--------------------------------------------------------------------------
+    |
+    | Beside `url` above, because the two are halves of one question: how this
+    | application is addressed from outside. Anything terminating TLS in front
+    | of it — Vercel's edge, an nginx on the institute's own box — talks to PHP
+    | over plain HTTP, so PHP sees `http` on port 80 whatever the parent typed.
+    | The truth arrives in `X-Forwarded-*`, and this says whose word to take.
+    |
+    | `*` believes whoever is speaking. Correct on a platform whose edge
+    | addresses are unpublished and change without notice, and safe there
+    | precisely BECAUSE that edge is the only way in. Pin the proxy anywhere the
+    | app can also be reached directly:
+    |
+    |     TRUSTED_PROXIES=127.0.0.1
+    |     TRUSTED_PROXIES=10.0.0.0/8,192.168.1.10
+    |
+    | Passed through verbatim: `TrustProxies` already splits a comma list and
+    | already special-cases `*` and `**`. An earlier version re-implemented that
+    | and got it wrong — `TRUSTED_PROXIES=` produced an empty array, which
+    | Laravel reads as "unconfigured", silently trusting nothing and putting
+    | mixed content on every page.
+    |
+    | Read through `config:cache`, so a change lands on the next build rather
+    | than the next request. Full operator guidance, including the nginx
+    | `$proxy_add_x_forwarded_for` trap, is in docs/DEPLOYMENT.md.
+    |
+    */
+    'trusted_proxies' => env('TRUSTED_PROXIES', '*'),
+
+    /*
+    |--------------------------------------------------------------------------
     | Application Timezone
     |--------------------------------------------------------------------------
     |

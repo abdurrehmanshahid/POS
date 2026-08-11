@@ -26,10 +26,10 @@ final class DocumentResponse
      * page's. Root-relative URLs cannot disagree with the address bar, so the
      * question does not arise.
      *
-     * Framework-level correctness is handled where it belongs: `trustProxies`
-     * in bootstrap/app.php is what makes `$request->root()` honest behind a
-     * TLS-terminating proxy, for these URLs and every other one the app
-     * generates. This is belt to that braces, not a substitute for it.
+     * Framework-level correctness is handled where it belongs: `TrustProxies`,
+     * configured in AppServiceProvider, is what makes `$request->root()` honest
+     * behind a TLS-terminating proxy, for these URLs and every other one the
+     * app generates. This is belt to that braces, not a substitute for it.
      */
     public static function viewer(string $title, string $streamUrl, string $downloadUrl): Response
     {

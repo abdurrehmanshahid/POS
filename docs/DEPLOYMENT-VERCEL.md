@@ -46,7 +46,9 @@ APP_NAME="Big Binary Tech Institute"
 APP_ENV=production                 # REQUIRED: 'local' exposes passwordless demo logins
 APP_DEBUG=false                    # REQUIRED: leaks DB credentials otherwise
 APP_KEY=base64:…                   # generate ONCE with `php artisan key:generate --show`
-APP_URL=https://<your-domain>
+APP_URL=https://<your-domain>      # REQUIRED: every emailed link is built from this
+
+TRUSTED_PROXIES=*                  # correct HERE, and only here. See below.
 
 DB_CONNECTION=mysql
 DB_HOST=…
@@ -75,6 +77,35 @@ SUPERADMIN_PASSWORD=               # REQUIRED BLANK: seeder mints a strong one a
 
 > **Never rotate `APP_KEY` after go-live.** It decrypts every stored two-factor
 > secret; rotating locks out every enrolled account at once.
+
+### `TRUSTED_PROXIES=*` is correct on this platform
+
+Vercel's edge terminates TLS and forwards plain HTTP, so PHP sees `http` and
+would emit `http://` links on an `https://` page — the browser then blocks the
+stylesheet, the compiled JS and the fee-voucher viewer as mixed content.
+`X-Forwarded-Proto` carries the truth.
+
+`*` means "believe whoever is speaking", which is safe **here** because the edge
+is the only way in: nothing reaches the function without passing through it.
+That is not true of a self-hosted box, and `docs/DEPLOYMENT.md` tells that
+deployment to pin the address instead.
+
+### `APP_URL` and preview deployments
+
+The **password-reset link** emailed to staff is built from `APP_URL` rather than
+from the caller's `Host:` header, so an attacker cannot aim a real reset token at
+their own server.
+
+Only that link is pinned. Preview deployments served at
+`<project>-<hash>.vercel.app` are unaffected for ordinary use — every page and
+in-app link follows the preview's own hostname, and nothing is rejected. The one
+consequence is that a reset email *triggered from a preview* points at
+production. Set `APP_URL` per-environment in the Vercel dashboard if that
+matters.
+
+`TRUSTED_PROXIES` and `APP_URL` are both read through `config:cache`, which runs
+in the build command. Changing either takes effect on the next **deploy**, not
+the next request.
 
 ## 4. What degrades on this platform
 

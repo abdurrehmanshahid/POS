@@ -64,7 +64,9 @@ Copy `.env.example` to `.env` and set at minimum:
 ```env
 APP_ENV=production
 APP_DEBUG=false              # non-negotiable: debug pages leak config and queries
-APP_URL=https://pos.bbt.edu.pk
+APP_URL=https://pos.bbt.edu.pk   # see "The address in links" below — this is load-bearing
+
+TRUSTED_PROXIES=127.0.0.1    # the nginx in front of PHP. See below before changing.
 
 SESSION_SECURE_COOKIE=true   # HTTPS only
 SESSION_ENCRYPT=true
@@ -72,6 +74,49 @@ SESSION_ENCRYPT=true
 INSTITUTE_TODAY=             # MUST be blank in production, or "overdue" freezes
 INSTITUTE_SELF_SERVICE_RESET=false
 ```
+
+### The address in links
+
+`APP_URL` is not decoration. The **password-reset link** emailed to staff is
+built from it rather than from the hostname the caller claims in the `Host:`
+header. Without that, an attacker submits a real member of staff's address on
+the public forgot-password form while claiming a hostname of their own, and that
+person receives a genuine email from this institute carrying a valid reset token
+pointing at the attacker's server — a working credential, delivered by us. Set
+`APP_URL` to the exact `https://` address staff use.
+
+The pinning stops at that one link, deliberately. Links *inside* a page still
+follow whatever host the browser is actually on, so the app keeps working when
+reached at a LAN IP or a second internal name — pinning those too would bounce
+staff to `APP_URL`, onto a host their session cookie does not match, and loop
+them on the login screen. A wrong `APP_URL` therefore costs you reset emails,
+not the site.
+
+### Which proxy to believe
+
+nginx terminates TLS and talks to PHP over plain HTTP, so PHP sees `http` and
+would generate `http://` links on an `https://` page — the browser then blocks
+the stylesheet, the compiled JS and the fee-voucher viewer as mixed content.
+`X-Forwarded-Proto` carries the truth, and `TRUSTED_PROXIES` says whose word to
+take for it.
+
+Set it to nginx's own address (`127.0.0.1` when it is on the same box). The
+default of `*` believes whoever is speaking, which is right on a platform that
+is the only way in and wrong here, where the app may also answer on its own
+port. Two consequences if you leave it: the 20-failures-per-IP spray brake in
+`LoginThrottle` can be stepped around by rotating a forged `X-Forwarded-For`,
+and every audit row records whatever address the caller claimed.
+
+One nginx gotcha, because the usual recipe gets it wrong:
+
+```nginx
+proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;  # APPENDS — forged entry survives
+proxy_set_header X-Forwarded-For $remote_addr;                # overwrites — use this
+proxy_set_header X-Forwarded-Proto $scheme;
+```
+
+`TRUSTED_PROXIES` is read through `config:cache`, so changing it takes effect
+after `php artisan config:cache`, not on the next request.
 
 Generate a key, this is what encrypts sessions and every stored 2FA secret:
 
