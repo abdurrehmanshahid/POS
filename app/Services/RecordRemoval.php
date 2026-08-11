@@ -58,8 +58,21 @@ class RecordRemoval
             // This is the same reasoning that governs cancellation in
             // ChallanActions::cancel(); the two must agree or the rule is only
             // enforced on whichever path the operator happens to take.
+            //
+            // Asked of `challans.student_id` and NOT of `challan.admission`.
+            // The chain through the admission is how this was written, and it
+            // returned zero for a non-course charge — which has no admission —
+            // so the guard fell silent on exactly the records it exists for:
+            // purging a co-working tenant would have cascaded through their
+            // challan, destroyed Rs 90,000 of real collections, and printed a
+            // confirmation. That is the same defect as BUG-04, which this
+            // method was written to fix, reappearing through a different
+            // relation because the relation was the thing that changed.
+            //
+            // `student_id` states the owner outright and is populated on every
+            // challan, enrolment or charge, so there is no chain left to break.
             $collected = (int) Payment::whereHas(
-                'challan.admission',
+                'challan',
                 fn ($q) => $q->where('student_id', $record->id)
             )->sum('amount');
 

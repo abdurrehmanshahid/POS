@@ -26,6 +26,11 @@ class StudentExportController extends Controller
                     // answers from memory instead of firing a query per row.
                     ->with(['course', 'enroller', 'challan.payments']);
             }])
+            // Charges are not scoped down the way admissions are above: an
+            // officer's own charges are already all `visibleTo` lets through,
+            // and narrowing them again would drop a contact's balance from
+            // their own row.
+            ->withCharges()
             ->orderBy('student_code')
             ->get();
 

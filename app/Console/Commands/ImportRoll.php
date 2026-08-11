@@ -93,9 +93,16 @@ class ImportRoll extends Command
         $money = array_sum(array_map(fn (RollRow $r) => $r->totalReceived, $ready));
         $owed = array_sum(array_map(fn (RollRow $r) => $r->balance, $ready));
 
+        // Called out rather than folded into the total, because these rows
+        // create a contact and an invoice with no admission — no enrolment, no
+        // seat, nothing in a register. An operator reading "413 imported" would
+        // otherwise reasonably read all 413 as students.
+        $charges = array_filter($ready, fn (RollRow $r) => $r->isCharge());
+
         $this->newLine();
         $this->table(['', 'Rows'], [
             ['Ready to import', count($ready)],
+            ['  of which are charges, not enrolments', count($charges)],
             ['Already imported', count($already)],
             ['Duplicate lines collapsed', count($collapsed)],
             ['Rejected', count($rejected)],

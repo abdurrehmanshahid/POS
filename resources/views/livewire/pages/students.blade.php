@@ -198,6 +198,10 @@ new class extends Component {
                 ->where('status', '!=', 'cancelled')
                 ->when(! $user->can('scope.all'), fn ($qq) => $qq->where('enrolled_by', $user->id))
                 ->with(['course', 'enroller', 'challan.installments', 'challan.payments'])])
+            // The other half of what `outstanding()` reads: a contact's charges
+            // hang off no admission, so without this the balance column costs a
+            // query per row and a contact renders as a person with no money.
+            ->withCharges()
             ->orderBy('name')
             ->get();
 
@@ -270,6 +274,13 @@ new class extends Component {
                             $recent = $adms->sortByDesc('id')->first();
                             $enrolledBy = $recent?->enroller?->name ?? 'Not enrolled';
                             $outstanding = $s->outstanding();
+                            // Loaded by `withCharges()`, so this is only the
+                            // invoices that bill no course. Someone can be
+                            // billed without being enrolled, and the fees pill
+                            // below has to know that or a contact who owes
+                            // Rs 15,000 reads as having nothing to pay.
+                            $charges = $s->challans;
+                            $billed = $courses > 0 || $charges->isNotEmpty();
                         @endphp
                         <tr class="clickable" wire:click="viewStudent({{ $s->id }})">
                             <td class="tnum rec-id" data-label="ID" style="color:var(--iris);font-weight:700">{{ $s->student_code }}</td>
@@ -277,7 +288,17 @@ new class extends Component {
                                 <div style="display:flex;align-items:center;gap:11px">
                                     <x-ui.avatar :name="$s->name" variant="orange" :size="30" />
                                     <div style="min-width:0">
-                                        <div style="font-weight:600;color:var(--ink)">{{ $s->name }}</div>
+                                        <div style="display:flex;align-items:center;gap:6px">
+                                            <span style="font-weight:600;color:var(--ink)">{{ $s->name }}</span>
+                                            {{-- Said outright, not left to the fine print. This person
+                                                 bought a service and is not enrolled on anything, so
+                                                 their absence from a register or a course count is
+                                                 correct rather than a record somebody forgot to
+                                                 finish. --}}
+                                            @if ($s->isContact())
+                                                <x-ui.pill tone="navy">Contact</x-ui.pill>
+                                            @endif
+                                        </div>
                                         <div style="font-size:var(--fs-xs);color:var(--muted)">{{ $s->guardian_name }} · {{ $s->typeLabel() }}</div>
                                     </div>
                                 </div>
@@ -286,8 +307,8 @@ new class extends Component {
                             <td data-label="Enrolled by">{{ $enrolledBy }}</td>
                             <td class="tnum" data-label="Courses">{{ $courses }}</td>
                             <td data-label="Fees">
-                                @if ($courses === 0)
-                                    <x-ui.pill tone="cancelled">No enrolment</x-ui.pill>
+                                @if (! $billed)
+                                    <x-ui.pill tone="cancelled">Nothing billed</x-ui.pill>
                                 @elseif ($outstanding <= 0)
                                     <x-ui.pill tone="paid" :dot="true">Cleared</x-ui.pill>
                                 @else
@@ -371,10 +392,38 @@ new class extends Component {
                                     </div>
                                 @empty
                                     <div class="empty-state">
-                                        No enrolments yet, this student is registered but not on a course.
+                                        @if ($selected->isContact())
+                                            Not enrolled on anything. This is a contact — someone the
+                                            institute has billed for a service rather than a course.
+                                            Enrolling them turns them into a student.
+                                        @else
+                                            No enrolments yet, this student is registered but not on a course.
+                                        @endif
                                     </div>
                                 @endforelse
                             </div>
+
+                            {{-- Charges: what was billed with no course behind it. Shown
+                                 only when there are some, so a normal student's drawer is
+                                 unchanged. Without this a contact's entire financial
+                                 history — the reason their record exists — is invisible on
+                                 the one screen an officer opens to look them up. --}}
+                            @if ($selected->challans->isNotEmpty())
+                                <div style="font-size:var(--fs-2xs);text-transform:uppercase;letter-spacing:.05em;color:var(--faint);font-weight:700;margin:24px 0 11px">Charges</div>
+                                <div style="display:flex;flex-direction:column;gap:10px">
+                                    @foreach ($selected->challans->sortByDesc('id') as $c)
+                                        <div style="display:flex;align-items:center;gap:12px;padding:12px 14px;border:1px solid var(--border);border-radius:12px">
+                                            <div style="flex:1;min-width:0">
+                                                <div style="font-size:var(--fs-sm);font-weight:600;color:var(--ink)">{{ $c->subject() }}</div>
+                                                <div class="tnum rec-id" style="font-size:var(--fs-xs);color:var(--muted);margin-top:1px">{{ $c->challan_no }} · {{ Format::date($c->created_at) }}</div>
+                                            </div>
+                                            <div class="tnum" style="font-size:var(--fs-sm);font-weight:700;color:var(--ink)">{{ Format::money($c->net_amount) }}</div>
+                                            @php $st = $c->paymentState(); @endphp
+                                            <x-ui.pill :tone="$st" :dot="true">{{ ucfirst($st) }}</x-ui.pill>
+                                        </div>
+                                    @endforeach
+                                </div>
+                            @endif
 
                             {{-- Actions on the record itself --}}
                             <div style="display:flex;gap:10px;margin-top:24px;padding-top:18px;border-top:1px solid var(--border)">

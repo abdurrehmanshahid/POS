@@ -24,6 +24,26 @@ class RollRow
     /** @var list<Course> Resolved, in the order the cell named them. */
     public array $courses = [];
 
+    /**
+     * Things this line bills that nobody enrols on.
+     *
+     * A co-working desk, a certificate reissue, a recovery settlement. Held as
+     * the spreadsheet's own words rather than resolved against anything,
+     * because there is nothing to resolve them against — that is what makes
+     * them charges. 32 of the roll's 478 lines are these, Rs 289,950, and they
+     * were refused outright until `challans` learned to bill without an
+     * admission.
+     *
+     * @var list<string>
+     */
+    public array $charges = [];
+
+    /** Identity of the person who bought the charge. @see RollResolver */
+    public ?string $personKey = null;
+
+    /** Identity of the charge itself, one per line. @see RollResolver */
+    public ?string $chargeKey = null;
+
     /** @var array<int, Cohort> Resolved batch per course id; absent means create it. */
     public array $cohorts = [];
 
@@ -88,6 +108,25 @@ class RollRow
     public function isRejected(): bool
     {
         return $this->reasons !== [];
+    }
+
+    /**
+     * Does this line bill a service rather than teaching?
+     *
+     * A line is one or the other and never both — the resolver refuses a line
+     * that names a course and a charge together, because the two take different
+     * paths through the persister and half of each is not a thing that can be
+     * written. No line in the institute's roll mixes them.
+     */
+    public function isCharge(): bool
+    {
+        return $this->charges !== [];
+    }
+
+    /** What the invoice says it is for, in the spreadsheet's own words. */
+    public function chargeDescription(): string
+    {
+        return implode(', ', $this->charges);
     }
 
     /**

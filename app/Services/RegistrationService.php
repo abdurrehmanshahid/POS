@@ -86,6 +86,8 @@ class RegistrationService
 
             $this->assertNotAlreadyEnrolled($student, $courses);
 
+            $this->promoteIfContact($student, $actor);
+
             $due = Clock::today()->copy()->addDays(7)->toDateString();
 
             $admissions = [];
@@ -244,6 +246,41 @@ class RegistrationService
             $student->name.' is already enrolled on '.$clash
             .'. Cancel the existing registration first if this one is meant to replace it.'
         );
+    }
+
+    /**
+     * A contact who enrols stops being a contact, here and nowhere else.
+     *
+     * This is the whole conversion lifecycle, and it is deliberately three
+     * lines inside the transaction that creates the admissions rather than a
+     * button somewhere. `kind` answers one question — "is this person someone we
+     * teach?" — and an enrolment settles it. Leaving the decision to an operator
+     * would mean a genuinely enrolled student sitting outside every student
+     * count until somebody remembered, which is the same wrong number the column
+     * was added to fix, only harder to notice because the record looks complete.
+     *
+     * There is no route back. A student who later rents a desk is still a
+     * student; demoting them would erase the enrolment from the headline count
+     * while the enrolment itself carries on existing.
+     *
+     * Audited, because it changes which reports a person appears in and there
+     * would otherwise be no record that they were ever anything else.
+     */
+    private function promoteIfContact(Student $student, User $actor): void
+    {
+        if (! $student->isContact()) {
+            return;
+        }
+
+        $student->update(['kind' => 'student']);
+
+        Audit::record('Contact enrolled as a student', $actor, [
+            'subject' => $student,
+            'subject_label' => $student->student_code.' · '.$student->name,
+            'field' => 'kind',
+            'old_value' => 'contact',
+            'new_value' => 'student',
+        ]);
     }
 
     private function resolveStudent(User $actor, array $data): Student

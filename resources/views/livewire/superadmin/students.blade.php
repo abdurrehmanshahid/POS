@@ -35,6 +35,7 @@ new #[Layout('components.layouts.super')] class extends Component {
         $students = Student::withTrashed()
             ->withCount(['admissions' => fn ($q) => $q->where('status', '!=', 'cancelled')])
             ->with(['admissions.challan.payments'])
+            ->withCharges()
             ->when(! $this->showRemoved, fn ($q) => $q->whereNull('deleted_at'))
             ->when($this->q !== '', function ($q) {
                 $term = '%'.Str::lower(trim($this->q)).'%';

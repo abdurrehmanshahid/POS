@@ -154,7 +154,12 @@ class Analytics
     public function counts(): array
     {
         return [
-            'students' => Student::count(),
+            // People the institute teaches. Contacts — a desk tenant, a
+            // certificate reissue — are billed and collected from but are not
+            // students, and counting them here put a number on the owner's
+            // console that no trainer's register could ever reproduce.
+            'students' => Student::query()->students()->count(),
+            'contacts' => Student::query()->contacts()->count(),
             'students_removed' => Student::onlyTrashed()->count(),
             'staff' => User::where('is_active', true)->count(),
             'staff_inactive' => User::where('is_active', false)->count(),
@@ -162,9 +167,15 @@ class Analytics
             'courses' => Course::where('is_active', true)->count(),
             'admissions' => Admission::where('status', '!=', 'cancelled')->count(),
             'cancelled' => Admission::where('status', 'cancelled')->count(),
+            // Live enrolment invoices, plus charges — which have no admission
+            // and so were silently excluded by the `whereHas` alone. A room
+            // booking a month past its due date is exactly as overdue as a fee
+            // is, and it went uncounted on the one screen that reports overdues.
             'overdue' => Challan::query()
                 ->overdue()
-                ->whereHas('admissions', fn ($q) => $q->where('status', '!=', 'cancelled'))
+                ->where(fn ($q) => $q
+                    ->whereHas('admissions', fn ($a) => $a->where('status', '!=', 'cancelled'))
+                    ->orWhereNull('admission_id'))
                 ->count(),
         ];
     }
