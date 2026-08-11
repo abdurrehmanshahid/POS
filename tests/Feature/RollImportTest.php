@@ -718,6 +718,42 @@ class RollImportTest extends TestCase
         $this->assertSame($before, $this->counts(), 'A refused row must write nothing.');
     }
 
+    /**
+     * A student whose number nobody recorded is history, not a broken row.
+     *
+     * 72 rows of the institute's roll carry "-" here. They are imported with a
+     * NULL phone rather than an invented one, and the blank must be NULL and
+     * never '' so that "we do not have a number" has one representation.
+     */
+    public function test_a_row_with_no_phone_is_imported_rather_than_refused(): void
+    {
+        $file = $this->sheet([$this->goodRow(['Phone' => '-', 'Name' => 'No Number Nadia'])]);
+
+        $this->artisan('roll:import', ['file' => $file, '--commit' => true])
+            ->assertSuccessful();
+
+        $student = Student::where('name', 'No Number Nadia')->firstOrFail();
+
+        $this->assertNull($student->phone, 'A missing number must be NULL, never an empty string.');
+    }
+
+    /**
+     * The fallback identity has to be stable, or re-running the importer loads
+     * all 72 phoneless students a second time as new people.
+     */
+    public function test_a_phoneless_row_is_recognised_on_a_second_run(): void
+    {
+        $file = $this->sheet([$this->goodRow(['Phone' => '-', 'Name' => 'No Number Nadia'])]);
+
+        $this->artisan('roll:import', ['file' => $file, '--commit' => true])->assertSuccessful();
+        $after = $this->counts();
+
+        $this->artisan('roll:import', ['file' => $file, '--commit' => true])->assertSuccessful();
+
+        $this->assertSame($after, $this->counts(),
+            'A phoneless row was imported twice; its fallback fingerprint is not stable.');
+    }
+
     public static function rejections(): array
     {
         return [
@@ -725,7 +761,10 @@ class RollImportTest extends TestCase
             'not a course' => [['Course' => 'Co-working Space'], 'not a course'],
             'no course' => [['Course' => ''], 'no course named'],
             'unknown CSR' => [['CSR' => 'Someone Else'], 'unknown CSR'],
-            'no phone' => [['Phone' => '-'], 'no phone number'],
+            // A blank phone is no longer here on purpose: it is now imported as
+            // NULL rather than refused. See
+            // test_a_row_with_no_phone_is_imported_rather_than_refused below,
+            // which pins the new behaviour so this is not silently reverted.
             'bad phone' => [['Phone' => 'Digital Media'], 'not a PK mobile'],
             'money does not reconcile' => [
                 ['Discounted Price' => 25000, 'Advance Payment' => 5000, 'Total Amount' => 5000, 'Balance' => 0],

@@ -110,6 +110,17 @@ return [
     */
     'csr_usernames' => [
         'ali raza' => 'aliraza',
+
+        // The six officers created by
+        // 2026_08_11_000002_create_accounts_for_the_officers_named_in_the_roll.
+        // Those accounts are inactive by design; attribution needs the row, not
+        // a live session, so the import works before anyone activates them.
+        'sofia' => 'sofia',
+        'mariyam' => 'mariyam',
+        'shumail altaf' => 'shumailaltaf',
+        'eman ashraf' => 'emanashraf',
+        'iqra ijaz' => 'iqraijaz',
+        'ayaan ali' => 'ayaanali',
     ],
 
     /*

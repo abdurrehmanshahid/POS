@@ -249,12 +249,16 @@ class RollResolver
             $row->reject('no student name');
         }
 
-        // `students.phone` is NOT NULL and is the only channel a fee reminder
-        // travels down, so a row without one cannot become a student. 72 rows
-        // in the institute's own roll carry "-" here.
-        if ($row->phone === '') {
-            $row->reject('no phone number');
-        } elseif (! Contact::normalizePhone($row->phone)) {
+        // A missing phone is no longer a rejection. `students.phone` became
+        // nullable so the 72 rows of legacy history that carry "-" here can be
+        // loaded as what they are — students whose number nobody recorded —
+        // rather than dropped or given an invented one.
+        //
+        // A phone that is PRESENT and malformed is still refused. "." and
+        // "Digital Media" are not numbers nobody has, they are numbers somebody
+        // typed wrongly, and storing them would put a value in the column that
+        // no reminder can ever reach while looking as though it can.
+        if ($row->phone !== '' && ! Contact::normalizePhone($row->phone)) {
             $row->reject("phone is not a PK mobile: \"{$row->phone}\"");
         }
 
@@ -387,12 +391,36 @@ class RollResolver
     {
         $person = Contact::normalizePhone($row->phone);
 
-        if ($person === null || $row->courses === []) {
+        if ($row->courses === []) {
             return; // Already rejected; there is nothing stable to key on.
         }
 
+        // A phoneless row still needs an identity, or it could not be imported
+        // at all: without a key it can be neither recognised on a second run nor
+        // caught by the within-file duplicate check, so re-running the importer
+        // would load all 72 of them again as new people.
+        //
+        // The fallback is the name and the registration date, and it is
+        // deliberately NAMESPACED away from the phone key. Without the prefix a
+        // phoneless row and a phoned row could in principle hash to the same
+        // value and one would silently claim the other had already been
+        // imported.
+        //
+        // The fallback is weaker than the phone, and it is worth being honest
+        // about how: the roll has 59 names shared by more than one row, so two
+        // different people with the same name enrolling on the same course on
+        // the same day collide — the within-file duplicate check then refuses
+        // both, which is the safe direction to fail. And unlike a phone, a name
+        // gets re-typed between exports, so fixing a spelling mistake makes the
+        // row look new. Both are acceptable for 72 rows of dead history; neither
+        // would be acceptable as the primary key for the whole file, which is
+        // why the phone is still used wherever there is one.
+        $identity = $person !== null
+            ? 'phone:'.$person
+            : 'name:'.mb_strtolower(trim($row->name)).'|'.$row->registeredOn;
+
         foreach ($row->courses as $course) {
-            $row->importKeys[$course->id] = sha1($person.'|'.$course->code);
+            $row->importKeys[$course->id] = sha1($identity.'|'.$course->code);
         }
 
         $matched = array_filter($row->importKeys, fn ($k) => $existingKeys->has($k));
