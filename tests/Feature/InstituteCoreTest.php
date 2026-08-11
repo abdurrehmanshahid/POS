@@ -712,4 +712,62 @@ class InstituteCoreTest extends TestCase
             'course_ids' => [Course::where('code', 'SHOP-101')->firstOrFail()->id],
         ]);
     }
+
+    // ---- The payment method agreed at the counter ---------------------------
+
+    /**
+     * The voucher's "Payment Method" line, filled before any money arrives.
+     *
+     * It was always printed and always blank until payment landed, so every
+     * challan handed over the counter asked a parent for money without saying
+     * how to hand it over. `payment_method` records what was AGREED;
+     * `paid_via` still records what actually happened.
+     */
+    public function test_a_registration_can_state_how_the_fee_is_to_be_paid(): void
+    {
+        $result = app(RegistrationService::class)->register($this->officer(), [
+            'new_student' => [
+                'type' => 'R', 'name' => 'Method Student', 'guardian_name' => 'Guardian',
+                'phone' => '+92 300 1111111', 'cnic' => null,
+            ],
+            'course_ids' => [Course::where('code', 'WD-101')->firstOrFail()->id],
+            'payment_method' => 'Bank transfer',
+        ]);
+
+        $this->assertSame('Bank transfer', $result['challans'][0]->payment_method);
+        $this->assertNull($result['challans'][0]->paid_via,
+            'Agreeing a method is not the same as having been paid.');
+    }
+
+    /** Blank is a real answer: not every registration has agreed one yet. */
+    public function test_the_payment_method_is_optional(): void
+    {
+        $result = app(RegistrationService::class)->register($this->officer(), [
+            'new_student' => [
+                'type' => 'R', 'name' => 'No Method', 'guardian_name' => null,
+                'phone' => '+92 300 2222222', 'cnic' => null,
+            ],
+            'course_ids' => [Course::where('code', 'WD-101')->firstOrFail()->id],
+        ]);
+
+        $this->assertNull($result['challans'][0]->payment_method);
+    }
+
+    /**
+     * The wizard offers only the configured list, but the value arrives over
+     * the wire and ends up PRINTED on a document a parent acts on.
+     */
+    public function test_an_unknown_payment_method_is_refused(): void
+    {
+        $this->expectException(InvalidArgumentException::class);
+
+        app(RegistrationService::class)->register($this->officer(), [
+            'new_student' => [
+                'type' => 'R', 'name' => 'Crafted', 'guardian_name' => null,
+                'phone' => '+92 300 3333333', 'cnic' => null,
+            ],
+            'course_ids' => [Course::where('code', 'WD-101')->firstOrFail()->id],
+            'payment_method' => 'Pay at the door, no receipt',
+        ]);
+    }
 }

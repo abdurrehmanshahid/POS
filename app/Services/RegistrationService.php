@@ -56,9 +56,23 @@ class RegistrationService
             throw new InvalidArgumentException('A discount requires a reason.');
         }
 
+        // The method the institute expects, printed on the voucher. Blank is a
+        // real answer — not every registration has agreed one yet — but a value
+        // that is not on the list is not, for the same reason the discount is
+        // bounded here: the wizard's buttons are a suggestion, and this value
+        // arrives over the wire and ends up printed on a document a parent acts
+        // on. `ChallanActions` applies the identical rule to `paid_via`, so the
+        // two halves of the same question cannot come to disagree about what
+        // the institute accepts.
+        $method = trim((string) ($data['payment_method'] ?? '')) ?: null;
+
+        if ($method !== null && ! in_array($method, config('institute.payment_methods'), true)) {
+            throw new InvalidArgumentException('That is not a payment method the institute accepts.');
+        }
+
         $issueChallans = (bool) ($data['generate_challans'] ?? true);
 
-        return DB::transaction(function () use ($actor, $data, $courseIds, $pct, $reason, $issueChallans) {
+        return DB::transaction(function () use ($actor, $data, $courseIds, $pct, $reason, $method, $issueChallans) {
             // Resolve and validate the courses BEFORE creating the student, so a
             // registration that cannot proceed does not leave a person behind.
             //
@@ -135,6 +149,9 @@ class RegistrationService
                     'discount_approved_by' => $discount > 0 ? $actor->id : null,
                     'net_amount' => $base - $discount,
                     'plan' => 'full',
+                    // What was AGREED. `paid_via` records what happened, and
+                    // the voucher prefers that once money has arrived.
+                    'payment_method' => $method,
                     'due_date' => $due,
                     'status' => 'unpaid',
                 ]);

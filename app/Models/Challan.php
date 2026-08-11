@@ -22,7 +22,7 @@ class Challan extends Model
         'challan_no', 'admission_id', 'student_id', 'raised_by', 'description', 'import_key',
         'base_amount', 'discount_amount',
         'discount_reason', 'discount_approved_by', 'net_amount', 'plan',
-        'due_date', 'status', 'paid_via', 'paid_at',
+        'payment_method', 'due_date', 'status', 'paid_via', 'paid_at',
     ];
 
     protected $casts = [

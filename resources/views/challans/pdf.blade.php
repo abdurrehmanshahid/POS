@@ -28,7 +28,16 @@
 
         // The method shown is the most recent collection, which is what the
         // person holding the voucher just did.
-        $method = $challan->payments->sortByDesc('received_at')->first()?->method ?? $challan->paid_via;
+        // What actually happened, if anything has; otherwise what was agreed.
+        //
+        // That order matters on a reprint: once money has arrived the voucher
+        // should say how it arrived, not how somebody expected it to. Before
+        // then, the agreed method is the only thing there is — and it is the
+        // line a parent reads to know how to pay, which is why it was worth a
+        // column rather than leaving the field blank on every unpaid voucher.
+        $method = $challan->payments->sortByDesc('received_at')->first()?->method
+            ?? $challan->paid_via
+            ?? $challan->payment_method;
 
         $copies = ['Student Copy', 'Head Office Copy', 'Campus Copy'];
 
