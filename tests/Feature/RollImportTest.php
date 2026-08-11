@@ -11,6 +11,7 @@ use App\Models\Payment;
 use App\Models\Student;
 use App\Models\User;
 use App\Services\Ledger;
+use App\Services\Reporting;
 use Database\Seeders\DatabaseSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
@@ -779,13 +780,90 @@ class RollImportTest extends TestCase
                     'Total Amount' => 10000, 'Balance' => 15000, 'Second Installment' => 15000],
                 'status says Paid',
             ],
-            'no due date for an outstanding instalment' => [
-                ['Status' => 'Pending', 'Discounted Price' => 25000, 'Advance Payment' => 10000,
-                    'Second Installment' => 15000, 'Balance' => 15000, 'Total Amount' => 10000,
-                    'Pending Payment Due Date' => '-'],
-                'no due date',
-            ],
+            // An outstanding balance with no due date is no longer refused; it
+            // imports unscheduled. See the three tests below.
         ];
+    }
+
+    /** A Pending row whose deadline the roll never recorded. */
+    private function undatedDebtRow(): array
+    {
+        return $this->goodRow([
+            'Name' => 'Undated Umair',
+            'Status' => 'Pending',
+            'Discounted Price' => 25000,
+            'Advance Payment' => 10000,
+            'Second Installment' => 15000,
+            'Balance' => 15000,
+            'Total Amount' => 10000,
+            'Pending Payment Due Date' => '-',
+        ]);
+    }
+
+    /**
+     * The balance loads, and the deadline stays unknown rather than invented.
+     *
+     * The rejected alternative was the registration-date fallback this importer
+     * uses for dated rows, which would have made the debt months overdue on
+     * arrival and started the institute chasing a deadline nobody set.
+     */
+    public function test_an_undated_balance_imports_with_no_due_date_and_no_schedule(): void
+    {
+        $this->artisan('roll:import', ['file' => $this->sheet([$this->undatedDebtRow()]), '--commit' => true])
+            ->assertSuccessful();
+
+        $student = Student::where('name', 'Undated Umair')->firstOrFail();
+        $challan = Challan::whereIn(
+            'admission_id',
+            Admission::where('student_id', $student->id)->pluck('id')
+        )->firstOrFail();
+
+        $this->assertNull($challan->due_date, 'A deadline nobody recorded must not be invented.');
+        $this->assertSame(15000, $challan->balance(), 'The balance itself must still be owed.');
+        $this->assertSame(0, $challan->installments()->count(),
+            'A part with no due date makes "what falls due next" unanswerable, so there must be no schedule.');
+    }
+
+    /** An undated debt is not late, because there is no date it is late against. */
+    public function test_an_undated_balance_is_never_overdue(): void
+    {
+        $this->artisan('roll:import', ['file' => $this->sheet([$this->undatedDebtRow()]), '--commit' => true])
+            ->assertSuccessful();
+
+        $student = Student::where('name', 'Undated Umair')->firstOrFail();
+        $challan = Challan::whereIn(
+            'admission_id',
+            Admission::where('student_id', $student->id)->pluck('id')
+        )->firstOrFail();
+
+        $this->assertFalse($challan->isOverdue());
+        $this->assertSame(0, Challan::overdue()->whereKey($challan->id)->count(),
+            'The SQL scope must exclude an undated challan too, not just the model method.');
+    }
+
+    /**
+     * The bug this bucket exists to prevent: `Carbon::parse(null)` returns NOW,
+     * so an undated debt used to age as 0 days late and land in "Not yet due" —
+     * reported as healthy current money in the one report built to surface debt.
+     */
+    public function test_an_undated_balance_is_reported_as_unscheduled_not_as_current(): void
+    {
+        $admin = User::where('username', 'adminansar')->firstOrFail();
+        $reporting = app(Reporting::class);
+
+        // Measured as a delta, because the seeded institute already carries
+        // genuinely-current unpaid challans of its own.
+        $before = $reporting->duesAgeing($admin)['buckets'];
+
+        $this->artisan('roll:import', ['file' => $this->sheet([$this->undatedDebtRow()]), '--commit' => true])
+            ->assertSuccessful();
+
+        $after = $reporting->duesAgeing($admin)['buckets'];
+
+        $this->assertSame($before['unscheduled']['total'] + 15000, $after['unscheduled']['total']);
+        $this->assertSame($before['unscheduled']['count'] + 1, $after['unscheduled']['count']);
+        $this->assertSame($before['current']['count'], $after['current']['count'],
+            'An undated debt must not be filed as "Not yet due".');
     }
 
     public function test_the_same_course_named_twice_on_one_line_is_refused(): void

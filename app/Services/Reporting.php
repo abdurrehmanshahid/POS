@@ -277,6 +277,10 @@ class Reporting
             'd1_30' => ['label' => '1 to 30 days', 'tone' => 'unpaid', 'total' => 0, 'count' => 0],
             'd31_60' => ['label' => '31 to 60 days', 'tone' => 'unpaid', 'total' => 0, 'count' => 0],
             'd60_plus' => ['label' => 'Over 60 days', 'tone' => 'overdue', 'total' => 0, 'count' => 0],
+            // Imported debt the roll gave no deadline for. Last, because it is
+            // not a stage of lateness — it is money owed on no particular date,
+            // and it needs a decision rather than a reminder.
+            'unscheduled' => ['label' => 'Unscheduled', 'tone' => 'unpaid', 'total' => 0, 'count' => 0],
         ];
 
         $students = [];
@@ -291,15 +295,30 @@ class Reporting
                 continue;
             }
 
-            $due = Carbon::parse($challan->due_date)->startOfDay();
-            $daysLate = $due->lessThan($today) ? (int) $due->diffInDays($today) : 0;
+            // An imported legacy balance can have no due date at all, and it
+            // cannot be aged: there is no deadline to measure lateness against.
+            //
+            // This is written as an explicit NULL branch rather than left to
+            // `Carbon::parse()`, which returns NOW for null. That would have
+            // computed `daysLate = 0` and filed every undated debt under "Not
+            // yet due" — reported as healthy, current money, sitting among
+            // balances that genuinely are current. Rs 450,688 of the
+            // institute's legacy debt would have been invisible in the one
+            // report built to make debt visible.
+            if ($challan->due_date === null) {
+                $daysLate = 0;
+                $key = 'unscheduled';
+            } else {
+                $due = $challan->due_date->copy()->startOfDay();
+                $daysLate = $due->lessThan($today) ? (int) $due->diffInDays($today) : 0;
 
-            $key = match (true) {
-                $daysLate === 0 => 'current',
-                $daysLate <= 30 => 'd1_30',
-                $daysLate <= 60 => 'd31_60',
-                default => 'd60_plus',
-            };
+                $key = match (true) {
+                    $daysLate === 0 => 'current',
+                    $daysLate <= 30 => 'd1_30',
+                    $daysLate <= 60 => 'd31_60',
+                    default => 'd60_plus',
+                };
+            }
 
             $buckets[$key]['total'] += $owed;
             $buckets[$key]['count']++;

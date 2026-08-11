@@ -188,7 +188,9 @@ new class extends Component {
                             </div>
                         </td>
                         <td data-label="Course"><span class="clamp-2" title="{{ $c->admission->course->title }}">{{ $c->admission->course->title }}</span></td>
-                        <td class="tnum" data-label="Due / paid via" style="color:var(--muted)">{{ $c->isPaid() ? 'via '.$c->paid_via : 'due '.Format::date($c->due_date) }}</td>
+                        <td class="tnum" data-label="Due / paid via" style="color:var(--muted)">{{-- An imported legacy balance can have no due date; Format::date() renders
+                             NULL as '', which would print a bare "due " with nothing after it. --}}
+                        {{ $c->isPaid() ? 'via '.$c->paid_via : ($c->due_date ? 'due '.Format::date($c->due_date) : 'no due date') }}</td>
                         <td class="right tnum" data-label="Net" style="font-weight:700">{{ Format::money($c->net_amount) }}</td>
                         <td data-label="Status"><x-ui.pill :tone="$tone" :dot="true">{{ $label }}</x-ui.pill></td>
                         <td class="right actions-col" data-label="Actions">

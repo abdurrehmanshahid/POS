@@ -350,9 +350,17 @@ class RollResolver
             $row->reject("status says {$row->status} but nothing is outstanding");
         }
 
-        if ($row->needsSchedule() && $row->secondDueOn === null) {
-            $row->reject('an instalment is outstanding but the roll gives no due date for it');
-        }
+        // An outstanding balance with no due date is no longer a rejection. The
+        // balance is imported UNSCHEDULED: the challan carries a NULL due date,
+        // no installment plan is created, and `Reporting::duesAgeing()` reports
+        // it under "Unscheduled".
+        //
+        // The rejected alternative was to fall back to the registration date, as
+        // this importer does for dated rows. That would have made all 33 of
+        // these balances overdue by months the instant they landed, and the
+        // institute would have begun chasing parents over a deadline nobody ever
+        // set. Owing money on no particular date is the truth here, and it is
+        // representable.
 
         // `Installments::schedule()` refuses parts that fall due out of order,
         // and it refuses them at write time — so without this the dry run calls

@@ -164,7 +164,9 @@
                     <tr><td class="k">Batch</td><td class="v">{{ $cohort?->name ?? '—' }}</td></tr>
                     <tr><td class="k">Advance Payment</td><td class="v">{{ Format::money($advance) }}</td></tr>
                     <tr class="{{ $balance > 0 ? 'over' : '' }}"><td class="k">Balance</td><td class="v">{{ Format::money($balance) }}</td></tr>
-                    <tr><td class="k">Due Date</td><td class="v">{{ Format::date($challan->due_date) }}</td></tr>
+                    {{-- A voucher handed to a parent must not show a blank where a deadline
+                         belongs; an imported legacy balance may genuinely have none. --}}
+                    <tr><td class="k">Due Date</td><td class="v">{{ $challan->due_date ? Format::date($challan->due_date) : 'Not scheduled' }}</td></tr>
                     <tr><td class="k">Officer</td><td class="v">{{ $adm?->enroller?->name }}</td></tr>
                     <tr><td class="k">Admission #</td><td class="v tnum">{{ $adm?->reg_no }}<span style="font-weight:normal;color:#6b7192"> · {{ $student?->student_code }}</span></td></tr>
                 </table>
