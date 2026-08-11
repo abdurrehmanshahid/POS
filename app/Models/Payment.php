@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Services\Sequences;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
@@ -20,6 +21,17 @@ class Payment extends Model
         'amount' => 'integer',
         'received_at' => 'datetime',
     ];
+
+    /**
+     * The receipt number, derived from this row's id rather than stored.
+     *
+     * See {@see Sequences::receiptNo()} for why it is derived: a
+     * reprint has to produce the number the student is already holding.
+     */
+    public function receiptNo(): string
+    {
+        return Sequences::receiptNo($this->id);
+    }
 
     public function challan(): BelongsTo
     {

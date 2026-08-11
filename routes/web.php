@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Controllers\ChallanController;
+use App\Http\Controllers\ReceiptController;
 use App\Http\Controllers\ReportExportController;
 use App\Http\Controllers\StudentExportController;
 use App\Http\Middleware\RequirePasswordReset;
@@ -60,6 +61,11 @@ Route::middleware('auth')->group(function () {
 
         Route::get('challans/{challan}/pdf', [ChallanController::class, 'download'])
             ->middleware('permission:challans.view')->name('challans.pdf');
+        // Evidence that a collection happened, as opposed to the voucher above,
+        // which is a demand for one. Keyed by the payment rather than the
+        // challan: a challan settled in three instalments has three receipts.
+        Route::get('payments/{payment}/receipt', [ReceiptController::class, 'download'])
+            ->middleware('permission:challans.view')->name('payments.receipt');
         Route::get('students/export', [StudentExportController::class, 'export'])
             ->middleware('permission:students.view')->name('students.export');
         Route::get('reports/export', ReportExportController::class)

@@ -102,6 +102,28 @@ class Sequences
         return self::prefix().'CH-2026-'.$serial;
     }
 
+    /**
+     * BBT-RC-000042, the receipt number for a collected payment.
+     *
+     * DERIVED from the payment's own id rather than allocated from a counter,
+     * and that is the whole design. A receipt is not a new record — it is a
+     * rendering of a `payments` row that already exists — so it needs no
+     * sequence of its own, no extra column, and no write at print time.
+     *
+     * The consequence that matters: printing a receipt twice produces the same
+     * number both times, and reprinting one from three years ago still produces
+     * the number the student is holding. A counter would have handed out a
+     * fresh number on every reprint, so two pieces of paper describing one
+     * payment would disagree, which is exactly what a receipt exists to prevent.
+     *
+     * `payments.id` is auto-increment and never reused, so this inherits
+     * uniqueness rather than restating it.
+     */
+    public static function receiptNo(int $paymentId): string
+    {
+        return sprintf('%sRC-%06d', self::prefix(), $paymentId);
+    }
+
     /** Atomically read-and-advance a named counter; returns the value used. */
     private function bump(string $key): int
     {
