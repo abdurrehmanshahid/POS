@@ -4,84 +4,76 @@ namespace App\Http\Controllers;
 
 use App\Models\Challan;
 use App\Models\Setting;
+use App\Support\DocumentResponse;
 use App\Support\Download;
-use Barryvdh\DomPDF\Facade\Pdf;
 use Illuminate\Http\Request;
 use Symfony\Component\HttpFoundation\Response;
 
+/**
+ * The fee challan as a PDF (spec §12), rendered from the live record.
+ *
+ * Landscape A4: the voucher prints three copies side by side — Bank, Student,
+ * Institute — which is the form every fee challan in Pakistan is printed on and
+ * the order they are torn off at the bank counter. Three portrait columns would
+ * be 60mm wide and unreadable.
+ *
+ * THREE routes, ONE document. That second half is the point. There is a single
+ * renderer — dompdf, over `challans.pdf` — and every way of reaching the
+ * voucher reaches those same bytes:
+ *
+ *   view()      the PDF.js viewer, pointed at stream(). Read it, print it,
+ *               hand it over. Nothing lands in Downloads.
+ *   stream()    the bytes, displayed. What the viewer fetches.
+ *   download()  the bytes, saved, for attaching to an email or WhatsApp.
+ *
+ * The alternative was a hand-written HTML twin of the voucher for the screen,
+ * with dompdf producing the PDF for download. Two typesetters for one financial
+ * document drift apart — dompdf supports a subset of CSS, so tidying the screen
+ * with a flex layout silently changes the copy the parent is holding, and
+ * nobody sees it happen. One renderer cannot disagree with itself.
+ */
 class ChallanController extends Controller
 {
     /**
-     * The fee challan as a PDF (spec §12), rendered from the live record.
+     * The voucher on screen, in a viewer that is always there.
      *
-     * Landscape A4: the voucher prints three copies side by side, one each for
-     * the student, head office and the campus, matching the form the institute
-     * already hands over the counter. Three portrait columns would be 60mm wide
-     * and unreadable.
-     *
-     * Two ways out, because a counter wants two different things from the same
-     * document and only one of them was on offer:
-     *
-     *   view()      opens in the browser's own PDF viewer. Read it, check it,
-     *               hit Ctrl+P, hand it over. Nothing lands in Downloads.
-     *   download()  saves the file, for attaching to an email or WhatsApp.
-     *
-     * Printing used to mean download, find the file, open it, print, and then
-     * remember to delete it — five steps and a Downloads folder full of
-     * vouchers for the most common thing anyone does with this document.
-     */
-    /**
-     * The voucher as an ordinary web page, with a Print button.
-     *
-     * HTML rather than an inline PDF, and that choice is the whole point of
-     * this method. Streaming a PDF `inline` asks the browser to display it,
-     * which it can only do if it has a working PDF viewer — and where it does
-     * not (a locked-down desktop, some mobile browsers, an automation profile)
-     * it silently downloads instead. So the button labelled "view" was the one
-     * button whose promise the browser could refuse. A page has no such
-     * dependency.
-     *
-     * It is the SAME Blade template dompdf typesets, with a screen-only block
-     * appended, so there is no second voucher to keep in step with the first.
-     * `@media print` puts it back to A4 landscape and hides the toolbar, so
-     * what comes out of the printer is the document, not a screenshot of a
-     * web page.
+     * Serving the PDF `inline` and trusting the browser is what this replaces:
+     * "inline" is a request a browser may decline, and where it declines it
+     * downloads instead, so the button labelled "view" was the one button whose
+     * promise could not be kept. See `resources/views/documents/viewer.blade.php`.
      */
     public function view(Request $request, Challan $challan): Response
     {
-        $challan = $this->authorised($request, $challan);
+        // No eager load. This page renders a title and an iframe, and for a
+        // SINGLE model `->load()` costs exactly the query that touching the
+        // property would — there is no N+1 to prevent with one record. Priming
+        // `admission` here measured 4 queries against 1, because `isVisibleTo()`
+        // returns early for anyone with `scope.all` and never reads it.
+        $this->assertVisible($request, $challan);
 
-        return response()->view('challans.pdf', [
-            'challan' => $challan,
-            'settings' => Setting::current(),
-            'forScreen' => true,
-        ]);
+        return DocumentResponse::viewer(
+            'Fee challan '.$challan->challan_no.' · '.$challan->student?->name,
+            route('challans.stream', $challan),
+            route('challans.pdf', $challan),
+        );
+    }
+
+    public function stream(Request $request, Challan $challan): Response
+    {
+        return Download::inline($this->render($request, $challan), $this->filename($challan));
     }
 
     public function download(Request $request, Challan $challan): Response
     {
-        $challan = $this->authorised($request, $challan);
-
-        $name = 'challan-'.$challan->challan_no.'.pdf';
-
-        return Download::named(
-            Pdf::loadView('challans.pdf', [
-                'challan' => $challan,
-                'settings' => Setting::current(),
-            ])->setPaper('a4', 'landscape')->download($name),
-            $name,
-        );
+        return Download::named($this->render($request, $challan), $this->filename($challan));
     }
 
-    /**
-     * Load and authorise — the part both routes share.
-     *
-     * One method, so the permission check cannot be present on one route and
-     * missing from the other. That is the failure mode worth designing against
-     * here: a second way to reach a document is a second place to forget who
-     * is allowed to see it.
-     */
-    private function authorised(Request $request, Challan $challan): Challan
+    private function filename(Challan $challan): string
+    {
+        return 'challan-'.$challan->challan_no.'.pdf';
+    }
+
+    private function render(Request $request, Challan $challan): Response
     {
         $challan->load(
             'student',
@@ -93,13 +85,30 @@ class ChallanController extends Controller
             'admission.enroller', 'admissions.course', 'discountApprover', 'installments', 'payments',
         );
 
+        $this->assertVisible($request, $challan);
+
+        return DocumentResponse::pdf('challans.pdf', [
+            'challan' => $challan,
+            'settings' => Setting::current(),
+        ], 'a4');
+    }
+
+    /**
+     * One permission check, asked the same way by all three routes.
+     *
+     * Its own method so the check cannot be present on one route and missing
+     * from another. That is the failure mode worth designing against here:
+     * every extra way to reach a document is another place to forget who is
+     * allowed to see it, and `stream()` is reached by a fetch from inside a
+     * viewer rather than by a click, which makes it the easiest one to overlook.
+     */
+    private function assertVisible(Request $request, Challan $challan): void
+    {
         // Officers may only reach their own enrolments (spec §6). Asked of the
         // invoice: `$challan->admission->enrolled_by` is a 500 rather than a
         // denial on a charge, which has no admission to ask.
         if (! $challan->isVisibleTo($request->user())) {
             abort(403);
         }
-
-        return $challan;
     }
 }

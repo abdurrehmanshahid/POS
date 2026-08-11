@@ -4,8 +4,8 @@ namespace App\Http\Controllers;
 
 use App\Models\Payment;
 use App\Models\Setting;
+use App\Support\DocumentResponse;
 use App\Support\Download;
-use Barryvdh\DomPDF\Facade\Pdf;
 use Illuminate\Http\Request;
 use Symfony\Component\HttpFoundation\Response;
 
@@ -22,49 +22,39 @@ use Symfony\Component\HttpFoundation\Response;
  * Built over the `payments` rows that already exist. No new table, no new
  * column, and nothing is written when a receipt is printed — a receipt that
  * mutated the ledger it reports on would be a worse problem than not having one.
+ *
+ * Three routes over one renderer, exactly as {@see ChallanController} sets out.
  */
 class ReceiptController extends Controller
 {
-    /**
-     * The receipt as a page, with a Print button.
-     *
-     * HTML rather than an inline PDF, for the reason set out in
-     * {@see ChallanController::view()}: "inline" is a
-     * request the browser may decline, and a receipt the student is standing
-     * there waiting for is the worst place to discover that.
-     */
     public function view(Request $request, Payment $payment): Response
     {
-        $payment = $this->authorised($request, $payment);
+        // No eager load, for the reason set out in ChallanController::view().
+        $this->assertVisible($request, $payment);
 
-        return response()->view('receipts.pdf', [
-            'payment' => $payment,
-            'challan' => $payment->challan,
-            'settings' => Setting::current(),
-            'balanceAfter' => $this->balanceAfter($payment),
-            'forScreen' => true,
-        ]);
-    }
-
-    /** Save the file, for sending on. */
-    public function download(Request $request, Payment $payment): Response
-    {
-        $payment = $this->authorised($request, $payment);
-
-        $name = 'receipt-'.$payment->receiptNo().'.pdf';
-
-        return Download::named(
-            Pdf::loadView('receipts.pdf', [
-                'payment' => $payment,
-                'challan' => $payment->challan,
-                'settings' => Setting::current(),
-                'balanceAfter' => $this->balanceAfter($payment),
-            ])->setPaper('a5', 'landscape')->download($name),
-            $name,
+        return DocumentResponse::viewer(
+            'Receipt '.$payment->receiptNo().' · '.$payment->challan->student?->name,
+            route('payments.receipt.stream', $payment),
+            route('payments.receipt', $payment),
         );
     }
 
-    private function authorised(Request $request, Payment $payment): Payment
+    public function stream(Request $request, Payment $payment): Response
+    {
+        return Download::inline($this->render($request, $payment), $this->filename($payment));
+    }
+
+    public function download(Request $request, Payment $payment): Response
+    {
+        return Download::named($this->render($request, $payment), $this->filename($payment));
+    }
+
+    private function filename(Payment $payment): string
+    {
+        return 'receipt-'.$payment->receiptNo().'.pdf';
+    }
+
+    private function render(Request $request, Payment $payment): Response
     {
         $payment->load([
             'receiver',
@@ -76,22 +66,34 @@ class ReceiptController extends Controller
             'challan.payments',
         ]);
 
-        $challan = $payment->challan;
+        $this->assertVisible($request, $payment);
 
-        // The same scope rule as the voucher: an officer may only see their own
-        // enrolments, and a receipt names the student, so it cannot be laxer.
-        if (! $request->user()->can('challans.view')) {
+        return DocumentResponse::pdf('receipts.pdf', [
+            'payment' => $payment,
+            'challan' => $payment->challan,
+            'settings' => Setting::current(),
+            'balanceAfter' => $this->balanceAfter($payment),
+        ], 'a5');
+    }
+
+    /**
+     * The same row-scope rule the voucher uses, asked the same way.
+     *
+     * Only the row scope. The `challans.view` CAPABILITY is the route group's
+     * job and every one of these six routes carries it — re-asking it here was
+     * a second answer to a question already settled, and one the challan's
+     * controller did not ask, so the two had begun to disagree about what this
+     * method is for.
+     *
+     * Asked of the invoice, so a receipt for a non-course charge is a
+     * permission decision rather than a server error. The officer who collected
+     * the money is the one who may reprint the proof of it.
+     */
+    private function assertVisible(Request $request, Payment $payment): void
+    {
+        if (! $payment->challan->isVisibleTo($request->user())) {
             abort(403);
         }
-
-        // Asked of the invoice, so a receipt for a non-course charge is a
-        // permission decision rather than a server error. The officer who
-        // collected the money is the one who may reprint the proof of it.
-        if (! $challan->isVisibleTo($request->user())) {
-            abort(403);
-        }
-
-        return $payment;
     }
 
     /**

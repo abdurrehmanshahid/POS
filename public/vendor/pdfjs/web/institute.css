@@ -1,0 +1,36 @@
+/*
+ * OURS, not Mozilla's — the one file in this directory that is.
+ *
+ * PDF.js v6 ships an annotation editor in its toolbar: Draw, Text, Highlight,
+ * Add image, Add signature, and a "Manage pages" menu that can delete pages,
+ * add another file and export the result. Excellent in a general-purpose
+ * reader, wrong here. What this viewer shows is a fee challan or a payment
+ * receipt — documents of record, generated from the ledger, which the counter
+ * hands to a parent.
+ *
+ * The risk is not that someone edits the database; they cannot, and reloading
+ * shows the pristine document either way. It is that "Add signature" on an
+ * institute voucher reads as an invitation to sign one, and that a saved copy
+ * carrying a hand-drawn amendment still looks exactly like something this
+ * system issued. Nothing on this toolbar should imply the document is a draft.
+ *
+ * So the read-only half stays — find, page navigation, zoom, rotate, document
+ * properties, Print, Save — and the authoring half goes. Hidden rather than
+ * deleted from the markup: PDF.js wires its keyboard and event handlers to
+ * these nodes at start-up, and removing them risks a null reference somewhere
+ * in a file we do not maintain. A `display: none` cannot break rendering.
+ *
+ * Re-apply on upgrade: `web/viewer.html` needs the <link> to this file after
+ * its own, and this file needs to survive the unzip. See ../README.md.
+ */
+
+/* Comment, Highlight, Text, Draw, Add image, Add signature. */
+#editorModeButtons,
+#editorModeSeparator {
+    display: none !important;
+}
+
+/* "Manage pages" — add file, delete, cut, copy, export selected. */
+#viewsManagerToggleButton {
+    display: none !important;
+}

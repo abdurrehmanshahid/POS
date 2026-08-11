@@ -68,22 +68,36 @@ Route::middleware('auth')->group(function () {
         Volt::route('datamodel', 'pages.datamodel')->middleware('permission:datamodel.view')->name('datamodel');
         Volt::route('settings', 'pages.settings')->middleware('permission:settings.manage')->name('settings');
 
-        // Two routes per document, same permission, same renderer. `view` opens
-        // it in the browser's PDF viewer, which is what somebody printing a
-        // voucher at the counter actually wants; `pdf` saves the file, for
-        // sending it on. Offering only the second made printing a five-step
-        // errand through the Downloads folder.
-        Route::get('challans/{challan}/view', [ChallanController::class, 'view'])
-            ->middleware('permission:challans.view')->name('challans.view');
-        Route::get('challans/{challan}/pdf', [ChallanController::class, 'download'])
-            ->middleware('permission:challans.view')->name('challans.pdf');
-        // Evidence that a collection happened, as opposed to the voucher above,
-        // which is a demand for one. Keyed by the payment rather than the
-        // challan: a challan settled in three instalments has three receipts.
-        Route::get('payments/{payment}/receipt/view', [ReceiptController::class, 'view'])
-            ->middleware('permission:challans.view')->name('payments.receipt.view');
-        Route::get('payments/{payment}/receipt', [ReceiptController::class, 'download'])
-            ->middleware('permission:challans.view')->name('payments.receipt');
+        // Three routes per document, one permission, one renderer. `view` is
+        // the PDF.js viewer; `stream` is the bytes it fetches and displays;
+        // `pdf` is the same bytes saved, for sending on. Splitting display from
+        // saving is what lets both be honest — the browser is never asked to
+        // display something it may decline, and the file is never named by
+        // anything but us. All three carry the same permission, because they
+        // are three doors onto one document.
+        // Stated ONCE, structurally, rather than chained onto six declarations.
+        // The failure this guards against is a seventh document route added
+        // without the guard, which is invisible in a list of near-identical
+        // lines and total in effect — an unguarded stream route hands any
+        // signed-in user every voucher in the institute.
+        Route::middleware('permission:challans.view')->group(function () {
+            Route::get('challans/{challan}/view', [ChallanController::class, 'view'])
+                ->name('challans.view');
+            Route::get('challans/{challan}/stream', [ChallanController::class, 'stream'])
+                ->name('challans.stream');
+            Route::get('challans/{challan}/pdf', [ChallanController::class, 'download'])
+                ->name('challans.pdf');
+            // Evidence that a collection happened, as opposed to the voucher
+            // above, which is a demand for one. Keyed by the payment rather
+            // than the challan: a challan settled in three instalments has
+            // three receipts.
+            Route::get('payments/{payment}/receipt/view', [ReceiptController::class, 'view'])
+                ->name('payments.receipt.view');
+            Route::get('payments/{payment}/receipt/stream', [ReceiptController::class, 'stream'])
+                ->name('payments.receipt.stream');
+            Route::get('payments/{payment}/receipt', [ReceiptController::class, 'download'])
+                ->name('payments.receipt');
+        });
         Route::get('students/export', [StudentExportController::class, 'export'])
             ->middleware('permission:students.view')->name('students.export');
         Route::get('reports/export', ReportExportController::class)

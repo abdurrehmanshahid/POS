@@ -9,6 +9,7 @@
   "routes": [
     { "src": "/build/(.*)", "dest": "/public/build/$1" },
     { "src": "/assets/(.*)", "dest": "/public/assets/$1" },
+    { "src": "/vendor/(.*)", "dest": "/public/vendor/$1" },
     { "src": "/favicon.ico", "dest": "/public/favicon.ico" },
     { "src": "/robots.txt", "dest": "/public/robots.txt" },
     { "src": "/(.*)", "dest": "/api/index.php" }

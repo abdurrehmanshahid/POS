@@ -151,23 +151,6 @@ class ScreensTest extends TestCase
         $this->assertStringContainsString('RC-', $payment->receiptNo());
     }
 
-    public function test_a_receipt_renders_as_a_pdf_and_is_scoped_like_the_voucher(): void
-    {
-        $challan = Challan::where('challan_no', 'BBT-CH-2026-1076')->firstOrFail(); // enrolled_by admin
-        app(ChallanActions::class)->recordPayment($challan, $this->admin(), 10000, 'Cash');
-        $payment = $challan->fresh()->payments()->orderBy('id')->first();
-
-        $this->actingAs($this->admin())
-            ->get(route('payments.receipt', $payment))
-            ->assertOk()
-            ->assertHeader('content-type', 'application/pdf');
-
-        // The receipt names the student, so it cannot be laxer than the voucher.
-        $this->actingAs($this->officer())
-            ->get(route('payments.receipt', $payment))
-            ->assertForbidden();
-    }
-
     /** Printing a receipt must never write anything; it reports the ledger. */
     public function test_printing_a_receipt_changes_nothing(): void
     {
@@ -182,26 +165,11 @@ class ScreensTest extends TestCase
         $this->assertSame($before, [Payment::count(), Challan::count(), $challan->fresh()->balance()]);
     }
 
-    public function test_challan_pdf_is_permission_gated_and_scoped(): void
-    {
-        $challan = Challan::where('challan_no', 'BBT-CH-2026-1076')->firstOrFail(); // enrolled_by admin(1)
-
-        $this->actingAs($this->admin())
-            ->get(route('challans.pdf', $challan))
-            ->assertOk()
-            ->assertHeader('content-type', 'application/pdf');
-
-        // Officer(2) did not enrol this one -> forbidden by scope.
-        $this->actingAs($this->officer())
-            ->get(route('challans.pdf', $challan))
-            ->assertForbidden();
-    }
-
     /**
-     * The voucher prints three copies, one each for the student, head office and
-     * the campus, matching the form the institute already hands over the
-     * counter. Rendered rather than asserted on the blade, because a DomPDF
-     * template that throws only does so at render time.
+     * The voucher prints three copies — bank, student, institute — matching the
+     * form every counter in Pakistan already hands over. Rendered rather than
+     * asserted on the blade, because a DomPDF template that throws only does so
+     * at render time.
      */
     public function test_the_challan_pdf_renders_three_copies_with_advance_and_balance(): void
     {
@@ -213,9 +181,16 @@ class ScreensTest extends TestCase
             'settings' => Setting::current(),
         ])->render();
 
-        foreach (['Student Copy', 'Head Office Copy', 'Campus Copy'] as $copy) {
+        // The standard Pakistani fee challan, in the order the copies are torn
+        // off at the bank counter. The bank's is not optional: it is the copy
+        // the cashier retains, so a voucher without one cannot be deposited.
+        foreach (['Bank Copy', 'Student Copy', 'Institute Copy'] as $copy) {
             $this->assertStringContainsString($copy, $html);
         }
+
+        // And the line the cashier stamps, which is the only mark on this
+        // document the institute did not print itself.
+        $this->assertStringContainsString('Bank Stamp', $html);
 
         $this->assertStringContainsString('Advance Payment', $html);
         $this->assertStringContainsString('Balance', $html);
@@ -325,22 +300,34 @@ class ScreensTest extends TestCase
      * Two filenames here carry SPACES, which an unquoted disposition cannot
      * express at all, so this is not hypothetical for the exports.
      *
-     * @return list<array{0:string,1:string}>
+     * The displayed routes are here too, not in a test of their own. The name
+     * matters MORE on those, which is the wrong way round from what you would
+     * guess: `inline` is what the PDF.js viewer fetched, and its own Save
+     * button reads the filename straight out of this header. Leave it off and
+     * viewing-then-saving produces a file called `stream`.
+     *
+     * @return list<array{0:string,1:string,2:string}>
      */
     public static function downloads(): array
     {
         return [
-            'challan PDF' => ['challan', 'challan-BBT-CH-2026-1076.pdf'],
-            'students CSV' => ['students', 'BBT Students.csv'],
-            'report XLSX' => ['report', 'BBT Report'],
+            'challan PDF' => ['challan', 'attachment', 'challan-BBT-CH-2026-1076.pdf'],
+            'challan shown' => ['challan-stream', 'inline', 'challan-BBT-CH-2026-1076.pdf'],
+            'receipt shown' => ['receipt-stream', 'inline', 'receipt-'],
+            'students CSV' => ['students', 'attachment', 'BBT Students.csv'],
+            'report XLSX' => ['report', 'attachment', 'BBT Report'],
         ];
     }
 
     #[DataProvider('downloads')]
-    public function test_a_download_states_its_filename_unambiguously(string $kind, string $expected): void
+    public function test_a_download_states_its_filename_unambiguously(string $kind, string $type, string $expected): void
     {
+        $challan = fn () => Challan::where('challan_no', 'BBT-CH-2026-1076')->firstOrFail();
+
         $url = match ($kind) {
-            'challan' => route('challans.pdf', Challan::where('challan_no', 'BBT-CH-2026-1076')->firstOrFail()),
+            'challan' => route('challans.pdf', $challan()),
+            'challan-stream' => route('challans.stream', $challan()),
+            'receipt-stream' => route('payments.receipt.stream', $this->aReceipt()),
             'students' => route('students.export'),
             'report' => route('reports.export'),
         };
@@ -349,7 +336,7 @@ class ScreensTest extends TestCase
             ->assertOk()
             ->headers->get('Content-Disposition');
 
-        $this->assertStringContainsString('attachment;', $disposition);
+        $this->assertStringStartsWith($type.';', $disposition);
 
         // Quoted, for everything that reads RFC 6266 the old way...
         $this->assertMatchesRegularExpression('/filename="[^"]*'.preg_quote($expected, '/').'/', $disposition,
@@ -361,15 +348,16 @@ class ScreensTest extends TestCase
     }
 
     /**
-     * The view routes are HTML pages, not PDFs, and carry no disposition.
+     * The view route is the PDF.js viewer, pointed at the stream route.
      *
-     * `inline` is a request the browser may decline — where there is no PDF
-     * viewer it downloads instead, so the button labelled "view" was the one
-     * whose promise the browser could refuse. A page has no such dependency,
-     * which is the whole reason these routes render the same Blade template
-     * rather than typesetting it.
+     * Serving the PDF `inline` and trusting the browser is what this replaces:
+     * "inline" is a request a browser honours only if it has a PDF viewer and
+     * is permitted to use one, and where it is not it downloads the file
+     * instead. So the one button labelled "view" was the one whose promise
+     * could be refused, silently. PDF.js draws the pages itself and needs
+     * neither.
      */
-    public function test_the_view_routes_serve_a_printable_page_not_a_download(): void
+    public function test_the_view_route_serves_the_pdfjs_viewer(): void
     {
         $challan = Challan::where('challan_no', 'BBT-CH-2026-1076')->firstOrFail();
 
@@ -379,22 +367,210 @@ class ScreensTest extends TestCase
         $this->assertNull($res->headers->get('Content-Disposition'),
             'The view route is a page; a disposition would make the browser save it instead.');
 
-        $res->assertSee('window.print()', false)
-            ->assertSee($challan->challan_no)
-            // The logo has to be a URL on screen. As a filesystem path — which
-            // is what dompdf needs — it 404s and the voucher prints with a
-            // broken image where the institute's mark belongs.
-            ->assertSee('/assets/bbt-logo-print.png', false)
-            ->assertDontSee(public_path('assets'), false);
+        $res->assertSee('vendor/pdfjs/web/viewer.html', false)
+            ->assertSee($challan->challan_no);
+
+        // Root-relative, so the viewer's fetch stays same-origin and carries
+        // the session cookie however the box is reached — proxy, LAN IP, or a
+        // hostname that disagrees with APP_URL.
+        $this->assertStringContainsString(
+            rawurlencode('/challans/'.$challan->id.'/stream'),
+            $res->getContent(),
+            'An absolute stream URL turns the viewer fetch cross-origin and loses the session.',
+        );
     }
 
-    public function test_the_view_routes_are_scoped_like_the_downloads(): void
+    /**
+     * The stream route really serves a PDF, not a page describing one.
+     *
+     * Its disposition is asserted by the `downloads` provider along with every
+     * other named response; what is left here is the claim nothing else makes —
+     * that the body is a PDF document rather than, say, a redirect to the login
+     * screen rendered with a 200.
+     */
+    public function test_the_stream_route_serves_the_pdf_itself(): void
+    {
+        $challan = Challan::where('challan_no', 'BBT-CH-2026-1076')->firstOrFail();
+
+        $res = $this->actingAs($this->admin())->get(route('challans.stream', $challan))
+            ->assertOk()
+            ->assertHeader('content-type', 'application/pdf');
+
+        $this->assertStringStartsWith('%PDF-', $res->getContent());
+    }
+
+    /**
+     * One renderer, one document: what is displayed and what is saved are the
+     * same bytes under the same name, differing only in how they are delivered.
+     *
+     * This is the invariant the whole rework exists to establish. What it
+     * replaces was a hand-written HTML twin of the voucher for the screen and
+     * dompdf for the download — two typesetters for one financial document,
+     * which drift, because dompdf supports a subset of CSS and nobody sees the
+     * printed copy change when the screen one is tidied.
+     */
+    public function test_viewing_and_saving_are_the_same_document(): void
+    {
+        $challan = Challan::where('challan_no', 'BBT-CH-2026-1076')->firstOrFail();
+
+        $shown = $this->actingAs($this->admin())->get(route('challans.stream', $challan))->assertOk();
+        $saved = $this->actingAs($this->admin())->get(route('challans.pdf', $challan))->assertOk();
+
+        // The BYTES, and only the bytes. Both responses' filenames and content
+        // types are pinned by the `downloads` provider, so asserting their
+        // equality here would be arithmetic rather than a new fact — and it
+        // would not catch the thing this test exists for. A future `stream()`
+        // growing its own `Pdf::loadView(...)` with a different paper size or a
+        // different Blade would keep both headers identical while the screen
+        // and the parent's copy showed different documents.
+        //
+        // dompdf stamps a creation timestamp and a document id into every
+        // render, so two renders of one voucher are never byte-identical. Those
+        // two fields are normalised away; everything that is the document is
+        // left alone.
+        $normalise = fn (string $pdf) => preg_replace(
+            ['/\/CreationDate\s*\([^)]*\)/', '/\/ModDate\s*\([^)]*\)/', '/\/ID\s*\[[^\]]*\]/'],
+            '',
+            $pdf,
+        );
+
+        $this->assertSame(
+            $normalise($shown->getContent()),
+            $normalise($saved->getContent()),
+            'Viewing and saving produced different documents — there is more than one renderer again.',
+        );
+    }
+
+    /**
+     * The vendored viewer is COMMITTED, not merely sitting on this machine.
+     *
+     * `assertFileExists` was the first version of this test and it was worse
+     * than useless: it passed on the laptop that vendored the files while a
+     * bare `vendor/` in .gitignore — Composer's rule, unanchored, so it matches
+     * at any depth — silently excluded `public/vendor/pdfjs` entirely. A clean
+     * `git status`, a green suite, and every view button opening a blank frame
+     * on CI and in production. The files being on disk is not the claim worth
+     * asserting; the files being in the repository is.
+     *
+     * `git ls-files` rather than the filesystem, for exactly that reason.
+     */
+    public function test_the_vendored_pdf_viewer_is_committed(): void
+    {
+        $tracked = [];
+        exec('git -C '.escapeshellarg(base_path()).' ls-files public/vendor/pdfjs 2>/dev/null', $tracked);
+        $tracked = array_flip($tracked);
+
+        foreach ([
+            'web/viewer.html',      // the application
+            'web/viewer.mjs',
+            'web/viewer.css',
+            'build/pdf.mjs',        // the library it drives
+            'build/pdf.worker.mjs', // and the worker that does the rendering
+            'web/locale/locale.json',
+            'web/institute.css',    // ours: hides the annotation editor
+            'LICENSE',              // Apache-2.0. It is not ours to ship unmarked.
+        ] as $file) {
+            $path = 'public/vendor/pdfjs/'.$file;
+
+            $this->assertFileExists(public_path('vendor/pdfjs/'.$file));
+            $this->assertArrayHasKey($path, $tracked,
+                "{$path} exists but git is not tracking it — check .gitignore.");
+        }
+    }
+
+    /**
+     * The annotation editor stays off a document of record.
+     *
+     * PDF.js v6 ships Draw, Text, Add signature and a Manage pages menu that
+     * can delete pages and export a merged file. `web/institute.css` hides
+     * them, and `web/viewer.html` has to link it — which is step 3 of the
+     * upgrade instructions and therefore the step somebody will skip. The
+     * symptom is an "Add signature" button appearing on a fee voucher, which
+     * nothing else in the suite would notice.
+     */
+    public function test_the_viewer_does_not_offer_to_edit_the_document(): void
+    {
+        $html = file_get_contents(public_path('vendor/pdfjs/web/viewer.html'));
+        $css = file_get_contents(public_path('vendor/pdfjs/web/institute.css'));
+
+        $this->assertStringContainsString('institute.css', $html,
+            'viewer.html lost the link to our stylesheet — re-apply step 3 of the upgrade notes.');
+
+        foreach (['#editorModeButtons', '#viewsManagerToggleButton'] as $selector) {
+            $this->assertStringContainsString($selector, $css);
+            // The id has to still exist in Mozilla's markup, or the rule is
+            // hiding nothing and the editor is back with no test failing.
+            $this->assertStringContainsString('id="'.ltrim($selector, '#').'"', $html,
+                "{$selector} is gone from viewer.html; the upgrade moved it and the editor is visible again.");
+        }
+    }
+
+    /**
+     * The challan's three routes, each carrying the same scope rule. The
+     * receipt's three are covered by test_the_receipt_routes_view_stream_and_save,
+     * which needs a Payment to point at.
+     *
+     * `stream` is the one worth testing hardest: it is reached by a fetch from
+     * inside a viewer rather than by a click, which makes it the easiest route
+     * to add and the easiest to forget to guard. An unguarded one would hand
+     * any signed-in user every voucher in the institute.
+     *
+     * @return list<array{0:string}>
+     */
+    public static function documentRoutes(): array
+    {
+        return [
+            'challan viewer' => ['challans.view'],
+            'challan stream' => ['challans.stream'],
+            'challan download' => ['challans.pdf'],
+        ];
+    }
+
+    #[DataProvider('documentRoutes')]
+    public function test_every_document_route_is_scoped(string $name): void
     {
         $challan = Challan::where('challan_no', 'BBT-CH-2026-1076')->firstOrFail(); // admin's
 
-        $this->actingAs($this->officer())
-            ->get(route('challans.view', $challan))
-            ->assertForbidden();
+        $this->actingAs($this->admin())->get(route($name, $challan))->assertOk();
+        $this->actingAs($this->officer())->get(route($name, $challan))->assertForbidden();
+    }
+
+    /**
+     * A collected payment on the admin's challan, for the tests that need a
+     * receipt to point at.
+     *
+     * One place, because the three lines it replaces were being written out
+     * per-test and had to agree about the challan, the amount and how to pick
+     * the payment back out.
+     */
+    private function aReceipt(): Payment
+    {
+        $challan = Challan::where('challan_no', 'BBT-CH-2026-1076')->firstOrFail(); // enrolled_by admin
+
+        app(ChallanActions::class)->recordPayment($challan, $this->admin(), 10000, 'Cash');
+
+        return $challan->fresh()->payments()->orderBy('id')->first();
+    }
+
+    /** The receipt's three routes, held to the voucher's rule. */
+    public function test_the_receipt_routes_view_stream_and_save(): void
+    {
+        $payment = $this->aReceipt();
+
+        $this->actingAs($this->admin())->get(route('payments.receipt.view', $payment))
+            ->assertOk()
+            ->assertSee('vendor/pdfjs/web/viewer.html', false);
+
+        foreach (['payments.receipt.stream', 'payments.receipt'] as $name) {
+            $this->actingAs($this->admin())->get(route($name, $payment))
+                ->assertOk()
+                ->assertHeader('content-type', 'application/pdf');
+        }
+
+        // And a receipt names the student, so it is no laxer than the voucher.
+        foreach (['payments.receipt.view', 'payments.receipt.stream', 'payments.receipt'] as $name) {
+            $this->actingAs($this->officer())->get(route($name, $payment))->assertForbidden();
+        }
     }
 
     // ---- Invoices that bill no enrolment ------------------------------------

@@ -1,3 +1,17 @@
+# The PDF.js viewer loads `viewer.mjs` and `pdf.mjs` as <script type="module">,
+# and a module script is REJECTED outright unless the server calls it
+# JavaScript — browsers apply strict MIME checking here and there is no
+# sniffing fallback. Plenty of shared hosts still ship a mime.types that
+# predates `.mjs` and serve it as text/plain, which fails with "Expected a
+# JavaScript module script but the server responded with a MIME type of
+# text/plain" in the console and a blank frame on screen, with nothing at all
+# in the server logs. Declared here so the fee voucher does not depend on how
+# current the host's mime.types happens to be.
+<IfModule mod_mime.c>
+    AddType text/javascript .mjs
+    AddType application/wasm .wasm
+</IfModule>
+
 <IfModule mod_rewrite.c>
     <IfModule mod_negotiation.c>
         Options -MultiViews -Indexes

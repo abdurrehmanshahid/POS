@@ -20,6 +20,29 @@ return Application::configure(basePath: dirname(__DIR__))
         },
     )
     ->withMiddleware(function (Middleware $middleware): void {
+        /*
+         * Believe the proxy about how the request arrived.
+         *
+         * Every URL Laravel generates — `asset()`, `route()`, `@vite`, the
+         * password-reset link in an email — is built from `$request->root()`,
+         * and that reads the scheme and host off the connection PHP actually
+         * received. Behind anything that terminates TLS and forwards plain HTTP
+         * (Vercel, a load balancer, nginx on the institute's own box) the
+         * connection PHP sees is `http://`, so every one of those URLs comes out
+         * `http://` on a page the browser loaded over `https://`. The browser
+         * then blocks them as mixed content: the stylesheet, the compiled JS,
+         * the institute's logo, and the fee-voucher viewer, all at once, with
+         * the only evidence in the browser console.
+         *
+         * The forwarded headers say what really happened. `at: '*'` because a
+         * platform proxy's address is not knowable in advance and changes
+         * without notice — the standard configuration for a cloud deployment.
+         * It means trusting `X-Forwarded-*` from whatever reaches the app, so
+         * the app must not also be reachable directly on a public address; on
+         * Vercel and behind a properly configured nginx it is not.
+         */
+        $middleware->trustProxies(at: '*');
+
         $middleware->alias([
             // Thin permission layer (spec §3). Usage: middleware('permission:challans.pay').
             'permission' => EnsurePermission::class,

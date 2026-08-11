@@ -1,15 +1,24 @@
 # Dependencies
+#
+# `/vendor/` is anchored, and that leading slash is load-bearing. Unanchored,
+# it matches at ANY depth, and Composer's directory name is not rare: it
+# silently swallowed `public/vendor/pdfjs`, the PDF.js viewer every fee-voucher
+# screen loads. Git reported a clean working tree while the files existed on one
+# laptop and nowhere else — no error, no warning, and a blank frame on CI and in
+# production. Anchor these, and the rule says what it means: Composer's vendor
+# directory, at the root, not any directory anywhere that shares its name.
 node_modules/
-vendor/
+/vendor/
 .venv/
 venv/
 __pycache__/
 *.pyc
 
-# Build output
-dist/
-build/
-out/
+# Build output — anchored for the same reason. `build/`, `dist/` and `out/` are
+# even likelier to collide, since almost every vendored JS library ships one.
+/dist/
+/build/
+/out/
 *.tsbuildinfo
 coverage/
 .next/

@@ -26,8 +26,6 @@
             ? round($challan->discount_amount / $challan->base_amount * 100, 2)
             : 0;
 
-        // The method shown is the most recent collection, which is what the
-        // person holding the voucher just did.
         // What actually happened, if anything has; otherwise what was agreed.
         //
         // That order matters on a reprint: once money has arrived the voucher
@@ -39,7 +37,25 @@
             ?? $challan->paid_via
             ?? $challan->payment_method;
 
-        $copies = ['Student Copy', 'Head Office Copy', 'Campus Copy'];
+        // The three copies every fee challan in Pakistan is printed with, in
+        // the order they are torn off. This is not a naming preference — it is
+        // how the document is USED, and the previous split (Student, Head
+        // Office, Campus) gave the bank none at all:
+        //
+        //   Bank Copy       the student hands all three across the counter, the
+        //                   bank stamps all three and RETAINS this one as its
+        //                   record of the deposit.
+        //   Student Copy    stamped and handed back. The payer's proof.
+        //   Institute Copy  stamped and handed back, then submitted here. It is
+        //                   what the office reconciles the day's takings
+        //                   against, and it carries the bank's stamp, which is
+        //                   the only part of this document the institute did
+        //                   not print itself.
+        //
+        // A voucher with no bank copy is one a cashier cannot accept: there is
+        // nothing to keep, so there is no record on the bank's side that the
+        // money was ever deposited against this challan number.
+        $copies = ['Bank Copy', 'Student Copy', 'Institute Copy'];
 
         // Every course this invoice bills, not just the one that heads it. An
         // invoice covering three Shopify levels has to name all three or the
@@ -58,23 +74,19 @@
         $contactEmail = config('institute.contact_email');
         $contactPhone = config('institute.contact_phone');
 
-        // Embedded from the local filesystem, never a URL: dompdf runs with
+        // A filesystem path, never a URL: dompdf runs with
         // `enable_remote => false`, and a voucher must render identically on a
         // shared host with no outbound network. Guarded with is_file() so a
         // missing asset degrades to the wordmark below rather than throwing
         // while a parent is waiting at the counter for their copy.
-        // A print-sized copy, not the screen logo. dompdf embeds the source
-        // bitmap once per placement, and this voucher places it three times, so
-        // the screen asset produced a ~900 KB PDF for one fee challan, on a
+        //
+        // The print-sized bitmap, not the screen one. dompdf embeds the source
+        // image once per placement and this voucher places it three times, so
+        // the screen asset produced a ~900 KB PDF for one fee challan — a
         // document that gets printed and WhatsApped to parents. At 140px tall
         // it is still comfortably above the 20px it renders at.
-        $logoFile = public_path('assets/bbt-logo-print.png');
-        $hasLogo = is_file($logoFile);
-        // dompdf reads the filesystem; a browser cannot. Rendering the same
-        // template on screen with the absolute path produced a 404 and a broken
-        // image on the voucher an officer is about to hand over — the one
-        // difference between the two renderers that actually matters here.
-        $logo = ($forScreen ?? false) ? asset('assets/bbt-logo-print.png') : $logoFile;
+        $logo = public_path('assets/bbt-logo-print.png');
+        $hasLogo = is_file($logo);
     @endphp
     <style>
         /* DomPDF: table layout only, no flexbox or grid. Landscape A4, three
@@ -122,61 +134,8 @@
         .foot { margin-top: 7px; text-align: center; font-size: 6.8px; color: #9aa0bd; line-height: 1.5; }
     </style>
 
-    {{-- ON SCREEN ONLY. dompdf never sees this block, and nothing above it
-         changes, so the printed voucher is byte-for-byte the document it always
-         was — this only makes the SAME markup legible in a browser.
-
-         The reason it exists: the view route used to stream a PDF inline, which
-         depends on the browser having a working PDF viewer. Where it does not —
-         a locked-down desktop, an automation profile, some mobile browsers — an
-         "inline" PDF silently downloads instead, so the one thing the button
-         promised was the one thing it could not guarantee. HTML has no such
-         dependency: every browser can display a page and print it.
-
-         The units are px because dompdf's are, and at 96dpi they map to the A4
-         landscape sheet closely enough that what you see is what prints. --}}
-    @if ($forScreen ?? false)
-        <style>
-            body { background: #eef0f6; padding: 18px; font-size: 12px; }
-            .sheet-wrap { max-width: 1100px; margin: 0 auto; background: #fff; padding: 16px;
-                          box-shadow: 0 1px 3px rgba(0,0,0,.15); border-radius: 4px; }
-            .bar { max-width: 1100px; margin: 0 auto 14px; display: flex; align-items: center; gap: 10px; }
-            .bar h1 { font-size: 15px; margin: 0; flex: 1; color: #12132a; }
-            .bar button, .bar a {
-                font: inherit; font-weight: 700; font-size: 12px; padding: 9px 16px; border-radius: 8px;
-                border: 1px solid #cfd4e6; background: #fff; color: #2A2668; cursor: pointer; text-decoration: none;
-            }
-            .bar .primary { background: #2A2668; border-color: #2A2668; color: #fff; }
-
-            /* Wide enough that three columns stay readable; below that they
-               stack, because a 60mm column on a phone is not a voucher. */
-            @media (max-width: 900px) {
-                table.sheet, table.sheet tr, table.sheet td.copy { display: block; width: auto; }
-                td.copy { margin-bottom: 14px; }
-            }
-
-            @media print {
-                /* Back to the printed document exactly: no toolbar, no card,
-                   no page background, and the real paper size. */
-                @page { size: A4 landscape; margin: 12mm 8mm; }
-                body { background: #fff; padding: 0; }
-                .bar { display: none !important; }
-                .sheet-wrap { max-width: none; margin: 0; padding: 0; box-shadow: none; border-radius: 0; }
-                table.sheet, table.sheet tr, table.sheet td.copy { display: revert; }
-                td.copy { width: 33.33%; margin-bottom: 0; }
-            }
-        </style>
-    @endif
 </head>
 <body>
-@if ($forScreen ?? false)
-    <div class="bar">
-        <h1>Fee challan {{ $challan->challan_no }} · {{ $student?->name }}</h1>
-        <button class="primary" onclick="window.print()">Print</button>
-        <a href="{{ route('challans.pdf', $challan) }}">Download PDF</a>
-    </div>
-    <div class="sheet-wrap">
-@endif
 <table class="sheet">
     <tr>
         @foreach ($copies as $copy)
@@ -263,16 +222,19 @@
                     @endif
                 </div>
 
+                {{-- What the line is FOR, said plainly. On the standard form
+                     this is where the cashier stamps and initials, and an
+                     unstamped copy is worth nothing to anybody: it is the
+                     bank's mark, not ours, that turns a demand into evidence
+                     the money was deposited. Labelled "Signature" it read as a
+                     place for the student to sign. --}}
                 <div class="sign">
-                    <div class="sign-line">Signature</div>
+                    <div class="sign-line">Bank Stamp &amp; Signature</div>
                 </div>
             </td>
         @endforeach
     </tr>
 </table>
-@if ($forScreen ?? false)
-    </div>
-@endif
 
 <div class="foot">
     System-generated voucher. The admission number is read from the record and cannot be altered.

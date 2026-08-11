@@ -824,10 +824,18 @@ State: `done`
 **I want** the printed challan to match the voucher we already hand over
 **So that** the system's output is the document the counter and bank recognise
 
-- **What:** Student, Head Office and Campus copies side by side on one landscape
+- **What:** Bank, Student and Institute copies side by side on one landscape
   A4 sheet, each a self contained voucher with the bank block, student details,
-  fee breakdown, signature line and its own status stamp. Advance Payment and
-  Balance are now real figures. A part collected challan stamps PART PAID.
+  fee breakdown, a Bank Stamp & Signature line and its own status stamp.
+  Advance Payment and Balance are now real figures. A part collected challan
+  stamps PART PAID.
+- **Why those three:** it is the split every fee challan in Pakistan uses, in
+  the order the copies are torn off — the bank retains its own, stamps and
+  returns the other two, the student keeps one and submits the third here. An
+  earlier version split the institute's two copies (Head Office and Campus) and
+  gave the bank none, which makes the voucher undepositable: there is nothing
+  for the cashier to keep, so no record exists on the bank's side that money was
+  ever deposited against that challan number.
 - **How:** Advance is the sum of collections and balance is what remains, both
   from US-6.2. Discount prints as the percentage the counter recognises, derived
   from the stored amount rather than kept as a second number that could drift.
