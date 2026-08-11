@@ -176,10 +176,10 @@ class RollPersister
                 $existing->restore();
             }
 
-            return $existing;
+            return $this->joined($existing, $row);
         }
 
-        return Student::create([
+        return $this->joined(Student::create([
             // The same BBT-R.. series as everyone else, deliberately. A separate
             // series would read more honestly right up to the moment a contact
             // enrols, and then they would carry a code that says "not a student"
@@ -194,7 +194,7 @@ class RollPersister
             'phone' => Contact::normalizePhone($row->phone),
             'created_by' => $row->officer->id,
             'import_key' => $row->personKey,
-        ]);
+        ]), $row);
     }
 
     /**
@@ -238,10 +238,10 @@ class RollPersister
             ->first();
 
         if ($existing?->student) {
-            return $existing->student;
+            return $this->joined($existing->student, $row);
         }
 
-        return Student::create([
+        return $this->joined(Student::create([
             'student_code' => $this->sequences->nextStudentCode('R'),
             'type' => 'R',
             'name' => $row->name,
@@ -249,7 +249,47 @@ class RollPersister
             'cnic' => null,
             'phone' => Contact::normalizePhone($row->phone),
             'created_by' => $row->officer->id,
-        ]);
+        ]), $row);
+    }
+
+    /**
+     * Date the person by the day they actually joined, not the day of the import.
+     *
+     * The admission and the invoice have always been backdated — the same event
+     * has to land in the same period, or `Reporting::summary()` reads billed and
+     * collected a whole roll apart — and the person was quietly left out of it.
+     * The result was 445 records whose drawer read "Joined 11 Aug 2026", the
+     * afternoon the file was loaded, for students who walked in during July
+     * 2025. The roll knows better on every row.
+     *
+     * PULLED BACK rather than simply set, because a person can appear on several
+     * lines and the file is not in date order. Their record should start on the
+     * earliest day they appear, so a later line cannot move the institute's
+     * first sight of them forwards. Azeem's six co-working months come in
+     * ascending order in this roll and would have been right either way; that is
+     * luck, not a property of the export.
+     */
+    private function joined(Student $student, RollRow $row): Student
+    {
+        if ($row->registeredOn === null) {
+            return $student;
+        }
+
+        $joined = Carbon::parse($row->registeredOn);
+
+        if ($student->created_at !== null && $student->created_at->lte($joined)) {
+            return $student;
+        }
+
+        // timestamps off, or Eloquent stamps `updated_at` with now() on the way
+        // out — the same reason `backdate()` does it.
+        $student->timestamps = false;
+        $student->created_at = $joined;
+        $student->updated_at = $joined;
+        $student->save();
+        $student->timestamps = true;
+
+        return $student;
     }
 
     /**

@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\Payment;
 use App\Models\Setting;
 use Barryvdh\DomPDF\Facade\Pdf;
+use Barryvdh\DomPDF\PDF as PdfDocument;
 use Illuminate\Http\Request;
 use Symfony\Component\HttpFoundation\Response;
 
@@ -24,10 +25,26 @@ use Symfony\Component\HttpFoundation\Response;
  */
 class ReceiptController extends Controller
 {
+    /** Open in the browser's viewer, to read and print. @see ChallanController */
+    public function view(Request $request, Payment $payment): Response
+    {
+        return $this->render($request, $payment)
+            ->stream('receipt-'.$payment->receiptNo().'.pdf');
+    }
+
+    /** Save the file, for sending on. */
     public function download(Request $request, Payment $payment): Response
+    {
+        return $this->render($request, $payment)
+            ->download('receipt-'.$payment->receiptNo().'.pdf');
+    }
+
+    private function render(Request $request, Payment $payment): PdfDocument
     {
         $payment->load([
             'receiver',
+            'challan.student',
+            'challan.raiser',
             'challan.admission.student',
             'challan.admission.course',
             'challan.admissions.course',
@@ -42,19 +59,19 @@ class ReceiptController extends Controller
             abort(403);
         }
 
-        if (! $request->user()->can('scope.all')
-            && $challan->admission->enrolled_by !== $request->user()->id) {
+        // Asked of the invoice, so a receipt for a non-course charge is a
+        // permission decision rather than a server error. The officer who
+        // collected the money is the one who may reprint the proof of it.
+        if (! $challan->isVisibleTo($request->user())) {
             abort(403);
         }
 
-        $pdf = Pdf::loadView('receipts.pdf', [
+        return Pdf::loadView('receipts.pdf', [
             'payment' => $payment,
             'challan' => $challan,
             'settings' => Setting::current(),
             'balanceAfter' => $this->balanceAfter($payment),
         ])->setPaper('a5', 'landscape');
-
-        return $pdf->download('receipt-'.$payment->receiptNo().'.pdf');
     }
 
     /**

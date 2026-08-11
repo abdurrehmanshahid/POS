@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Services\Ledger;
 use App\Support\Clock;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
@@ -86,6 +87,43 @@ class Challan extends Model
 
         return $this->admissions->map(fn ($a) => $a->course?->title)->filter()->implode(', ')
             ?: ($this->admission?->course?->title ?? '—');
+    }
+
+    /**
+     * Every course code on this invoice, for search. Empty for a charge.
+     *
+     * Exists so a screen searching invoices does not have to reach through
+     * `admission->course` itself and crash on the ones that have no admission.
+     */
+    public function courseCodes(): string
+    {
+        return $this->admissions->map(fn ($a) => $a->course?->code)->filter()->implode(' ');
+    }
+
+    /**
+     * May this person see this invoice? The rule, stated once.
+     *
+     * The SQL twin is {@see Ledger::scopedChallans()} and the two
+     * must agree — a document an officer can download but cannot find on the
+     * list, or the reverse, is a scoping bug either way.
+     *
+     * Written because the two PDF controllers each tested
+     * `$challan->admission->enrolled_by` directly. That is a 500, not a denial,
+     * the moment the invoice is a charge: there is no admission to ask, so the
+     * officer requesting a receipt for money they collected got a server error.
+     * A charge belongs to whoever raised it.
+     */
+    public function isVisibleTo(User $user): bool
+    {
+        if ($user->hasPermission('scope.all')) {
+            return true;
+        }
+
+        if ($this->isCharge()) {
+            return $this->raised_by === $user->id;
+        }
+
+        return $this->admission?->enrolled_by === $user->id;
     }
 
     /**

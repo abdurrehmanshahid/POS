@@ -917,6 +917,48 @@ class RollImportTest extends TestCase
             'A phoneless row was imported twice; its fallback fingerprint is not stable.');
     }
 
+    /**
+     * The person is dated by the day they joined, like their admission already
+     * was.
+     *
+     * Everything else on an imported line is backdated and the person was
+     * quietly left out, so all 445 records read "Joined 11 Aug 2026" — the
+     * afternoon the file was loaded — for students who walked in a year
+     * earlier. The roll knows the real date on every row.
+     */
+    public function test_an_imported_student_is_dated_by_when_they_joined(): void
+    {
+        $row = $this->goodRow(['Registration Date' => '2025-07-03', 'Pending Payment Due Date' => '2025-07-03']);
+
+        $this->artisan('roll:import', ['file' => $this->sheet([$row]), '--commit' => true])
+            ->assertSuccessful();
+
+        $student = Admission::whereNotNull('import_key')->sole()->student;
+
+        $this->assertSame('2025-07-03', $student->created_at->toDateString(),
+            'The student record is dated by the import, not by when they joined.');
+    }
+
+    /**
+     * A person on several lines starts on the EARLIEST of them.
+     *
+     * The file is not in date order, so a later line must not be able to move
+     * the institute's first sight of someone forwards.
+     */
+    public function test_a_person_on_several_lines_is_dated_by_the_first(): void
+    {
+        $rows = [
+            $this->chargeRow(['Registration Date' => '2026-05-12', 'Pending Payment Due Date' => '2026-05-12']),
+            $this->chargeRow(['Registration Date' => '2025-10-14', 'Pending Payment Due Date' => '2025-10-14']),
+        ];
+
+        $this->artisan('roll:import', ['file' => $this->sheet($rows), '--commit' => true])
+            ->assertSuccessful();
+
+        $this->assertSame('2025-10-14', $this->importedContact()->created_at->toDateString(),
+            'A later line moved the joining date forwards.');
+    }
+
     // ---- Charges: the 32 rows nobody enrols on ------------------------------
 
     /** A row buying a service rather than teaching. */
@@ -1136,6 +1178,34 @@ class RollImportTest extends TestCase
             Student::visibleTo($officer)->whereKey($contact->id)->exists(),
             'The officer who raised the charge cannot see who they raised it against.'
         );
+    }
+
+    /**
+     * The owner's console must report every rupee the institute billed.
+     *
+     * `Analytics::ledger()` reached invoices through `whereHas('admissions')`,
+     * so all 32 charges were absent from BOTH the billed total and the received
+     * total. That is the worst shape this defect takes: `outstanding =
+     * billed − received` is an identity, so the console's own "Ledger
+     * reconciles" self-check went on reporting true while the institute's
+     * revenue read Rs 289,950 short. Nothing inside the number could witness
+     * it, which is exactly why it needs a test that looks from outside.
+     */
+    public function test_the_owner_console_counts_charges_in_the_institutes_revenue(): void
+    {
+        $before = app(Analytics::class)->ledger();
+
+        $this->artisan('roll:import', ['file' => $this->sheet([$this->chargeRow()]), '--commit' => true])
+            ->assertSuccessful();
+
+        $after = app(Analytics::class)->ledger();
+
+        $this->assertSame($before['billed'] + 25000, $after['billed'],
+            'A charge was billed and the owner console did not see it.');
+        $this->assertSame($before['received'] + 25000, $after['received'],
+            'A charge was collected and the owner console did not see it.');
+        $this->assertSame($before['challans'] + 1, $after['challans']);
+        $this->assertTrue($after['reconciles']);
     }
 
     /** A charge's balance must reach the person, or nobody chases it. */

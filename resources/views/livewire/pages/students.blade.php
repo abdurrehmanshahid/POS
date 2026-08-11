@@ -271,8 +271,7 @@ new class extends Component {
                         @php
                             $adms = $s->admissions;
                             $courses = $adms->count();
-                            $recent = $adms->sortByDesc('id')->first();
-                            $enrolledBy = $recent?->enroller?->name ?? 'Not enrolled';
+                            $enrolledBy = $s->handledBy() ?? 'Not enrolled';
                             $outstanding = $s->outstanding();
                             // Loaded by `withCharges()`, so this is only the
                             // invoices that bill no course. Someone can be
@@ -299,7 +298,17 @@ new class extends Component {
                                                 <x-ui.pill tone="navy">Contact</x-ui.pill>
                                             @endif
                                         </div>
-                                        <div style="font-size:var(--fs-xs);color:var(--muted)">{{ $s->guardian_name }} · {{ $s->typeLabel() }}</div>
+                                        {{-- What they bought, for a contact. The pill already
+                                             says "Contact", so repeating typeLabel() here said
+                                             it twice and said nothing else; the service is the
+                                             one fact that identifies them. --}}
+                                        <div style="font-size:var(--fs-xs);color:var(--muted)">
+                                            @if ($s->isContact())
+                                                {{ $charges->sortByDesc('id')->first()?->subject() ?? 'No charges' }}
+                                            @else
+                                                {{ $s->guardian_name }} · {{ $s->typeLabel() }}
+                                            @endif
+                                        </div>
                                     </div>
                                 </div>
                             </td>
@@ -349,8 +358,7 @@ new class extends Component {
                     <div class="drawer-backdrop" wire:click="closeDrawer"></div>
                     <div class="drawer">
                         @php
-                            $recent = $selected->admissions->sortByDesc('id')->first();
-                            $enrolledBy = $recent?->enroller?->name ?? 'Not enrolled';
+                            $enrolledBy = $selected->handledBy() ?? 'Not enrolled';
                         @endphp
                         <div class="drawer-head">
                             <x-ui.avatar :name="$selected->name" variant="orange" :size="42" />

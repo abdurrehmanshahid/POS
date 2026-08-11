@@ -7,7 +7,11 @@
         use App\Support\Format;
 
         $adm = $challan->admission;
-        $student = $adm?->student;
+        // From the invoice, not through the admission. A charge — a room
+        // booking, a certificate fee — has no admission, and reaching for the
+        // student through one printed a voucher with the name, phone and CNIC
+        // all blank: a document the counter would hand over with nobody on it.
+        $student = $challan->student;
         $course = $adm?->course;
         $cohort = $adm?->cohort;
 
@@ -155,20 +159,30 @@
                          covers exactly one enrolment, so it lists one; the
                          markup is ready for the grouped invoice without a
                          second template. --}}
-                    <tr><td class="k">Course(s)</td><td class="v">
-                        @foreach ($billedCourses as $line)
-                            <div><span class="bullet">•</span> {{ $line->title }}
-                                <span style="font-weight:normal;color:#6b7192">({{ $line->code }})</span></div>
-                        @endforeach
+                    {{-- A charge bills no course, so it names what it IS
+                         instead. Left as an empty "Course(s)" row the voucher
+                         would show a fee with nothing beside it to say what the
+                         money was for. --}}
+                    <tr><td class="k">{{ $challan->isCharge() ? 'For' : 'Course(s)' }}</td><td class="v">
+                        @if ($challan->isCharge())
+                            <div><span class="bullet">•</span> {{ $challan->subject() }}</div>
+                        @else
+                            @foreach ($billedCourses as $line)
+                                <div><span class="bullet">•</span> {{ $line->title }}
+                                    <span style="font-weight:normal;color:#6b7192">({{ $line->code }})</span></div>
+                            @endforeach
+                        @endif
                     </td></tr>
-                    <tr><td class="k">Batch</td><td class="v">{{ $cohort?->name ?? '—' }}</td></tr>
+                    @unless ($challan->isCharge())
+                        <tr><td class="k">Batch</td><td class="v">{{ $cohort?->name ?? '—' }}</td></tr>
+                    @endunless
                     <tr><td class="k">Advance Payment</td><td class="v">{{ Format::money($advance) }}</td></tr>
                     <tr class="{{ $balance > 0 ? 'over' : '' }}"><td class="k">Balance</td><td class="v">{{ Format::money($balance) }}</td></tr>
                     {{-- A voucher handed to a parent must not show a blank where a deadline
                          belongs; an imported legacy balance may genuinely have none. --}}
                     <tr><td class="k">Due Date</td><td class="v">{{ $challan->due_date ? Format::date($challan->due_date) : 'Not scheduled' }}</td></tr>
-                    <tr><td class="k">Officer</td><td class="v">{{ $adm?->enroller?->name }}</td></tr>
-                    <tr><td class="k">Admission #</td><td class="v tnum">{{ $adm?->reg_no }}<span style="font-weight:normal;color:#6b7192"> · {{ $student?->student_code }}</span></td></tr>
+                    <tr><td class="k">Officer</td><td class="v">{{ $adm?->enroller?->name ?? $challan->raiser?->name }}</td></tr>
+                    <tr><td class="k">{{ $challan->isCharge() ? 'Reference' : 'Admission #' }}</td><td class="v tnum">{{ $adm?->reg_no }}@if ($adm)<span style="font-weight:normal;color:#6b7192"> · </span>@endif<span style="font-weight:normal;color:#6b7192">{{ $student?->student_code }}</span></td></tr>
                 </table>
 
                 <div class="stamp">

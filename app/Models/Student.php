@@ -157,7 +157,25 @@ class Student extends Model
      */
     public function scopeWithCharges(Builder $q): Builder
     {
-        return $q->with(['challans' => fn ($c) => $c->whereNull('admission_id')->with('payments')]);
+        return $q->with(['challans' => fn ($c) => $c
+            ->whereNull('admission_id')
+            ->with(['payments', 'raiser'])]);
+    }
+
+    /**
+     * The member of staff this person belongs to, however they arrived.
+     *
+     * The students screen asks "enrolled by", and for a contact the honest
+     * answer is not "nobody" — somebody billed them, and it is the same person
+     * `visibleTo()` uses to decide who may see them. Reading "Not enrolled"
+     * against a record with Rs 60,000 of settled invoices made a complete
+     * record look like an abandoned one.
+     */
+    public function handledBy(): ?string
+    {
+        $enroller = $this->admissions->sortByDesc('id')->first()?->enroller?->name;
+
+        return $enroller ?? $this->challans->sortByDesc('id')->first()?->raiser?->name;
     }
 
     // ---- Display -----------------------------------------------------------

@@ -11,6 +11,7 @@ use App\Models\Student;
 use App\Models\User;
 use App\Support\Clock;
 use App\Support\RevenueShare;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
@@ -117,11 +118,33 @@ class Analytics
             ->all();
     }
 
+    /**
+     * Every invoice the institute has actually raised.
+     *
+     * A live enrolment invoice, or a charge — which has no admission and was
+     * therefore silently absent from both halves of the owner's ledger. The
+     * consequence was the worst kind: `outstanding = billed − received` is an
+     * identity, so dropping 32 rows from BOTH sides left the console's own
+     * "Ledger reconciles" self-check reporting true while the institute's
+     * revenue read Rs 289,950 short. Nothing inside the number could witness
+     * it; only somebody who knew the money existed would ever have noticed.
+     *
+     * The same pairing as `Ledger::scopedChallans()`, whose docblock says this
+     * about BUG-27. This is the fifth place the chain-through-admission
+     * assumption was written down and the second to be caught by its absence
+     * from a report rather than by a test.
+     */
+    private function everyInvoice(): Builder
+    {
+        return Challan::query()->where(fn ($q) => $q
+            ->whereHas('admissions', fn ($a) => $a->where('status', '!=', 'cancelled'))
+            ->orWhereNull('admission_id'));
+    }
+
     /** Institute-wide totals, the numbers no officer is allowed to see. */
     public function ledger(): array
     {
-        $agg = Challan::query()
-            ->whereHas('admissions', fn ($q) => $q->where('status', '!=', 'cancelled'))
+        $agg = $this->everyInvoice()
             ->selectRaw('COUNT(*) as challans')
             ->selectRaw('COALESCE(SUM(net_amount), 0) as billed')
             ->first();
@@ -132,9 +155,7 @@ class Analytics
         // made the owner console under-report the institute's own revenue by
         // every advance it had taken but not yet settled.
         $received = (int) Payment::query()
-            ->whereIn('payments.challan_id', Challan::query()
-                ->whereHas('admissions', fn ($q) => $q->where('status', '!=', 'cancelled'))
-                ->select('challans.id'))
+            ->whereIn('payments.challan_id', $this->everyInvoice()->select('challans.id'))
             ->sum('amount');
 
         return [
@@ -171,12 +192,7 @@ class Analytics
             // and so were silently excluded by the `whereHas` alone. A room
             // booking a month past its due date is exactly as overdue as a fee
             // is, and it went uncounted on the one screen that reports overdues.
-            'overdue' => Challan::query()
-                ->overdue()
-                ->where(fn ($q) => $q
-                    ->whereHas('admissions', fn ($a) => $a->where('status', '!=', 'cancelled'))
-                    ->orWhereNull('admission_id'))
-                ->count(),
+            'overdue' => $this->everyInvoice()->overdue()->count(),
         ];
     }
 
