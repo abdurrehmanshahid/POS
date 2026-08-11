@@ -447,17 +447,36 @@ class RollResolver
      * the export, so it renumbers the moment anyone filters or re-sorts before
      * exporting again, and two different files would claim the same identity.
      *
-     * Hashed from the normalised phone and the course code, and deliberately
-     * NOT from the name or the registration date. The whole workflow this
-     * importer is built around is *correct a cell and run it again*, so every
-     * component of the key has to survive that. An earlier version included
-     * both: fixing one typo'd digit in a phone, or a misspelled name, produced
-     * a second student, a second invoice and the same money booked twice.
+     * Hashed from the normalised phone, the NAME, and the course code.
      *
-     * Phone rather than name because the roll has 59 names shared by more than
-     * one row and no CNIC to tell them apart, while `normalizePhone` gives one
-     * canonical form for every way a number can be written — and a row whose
-     * phone will not normalise has already been rejected before this runs.
+     * The name was deliberately excluded at first, and the reasoning was sound:
+     * this importer is built around *correct a cell and run it again*, so every
+     * component of the key has to survive an edit, and a name that gets
+     * re-typed between exports produces a second student, a second invoice and
+     * the same money booked twice.
+     *
+     * It was added anyway, because leaving it out was worse. (phone, course)
+     * cannot tell two members of one family apart, and in this roll that is not
+     * an edge case — 40 rows carrying Rs 670,000 are siblings sharing a parent's
+     * number, three deep in places:
+     *
+     *     lines  10, 11, 12   Iram, Afsheen, Sofia Rajut
+     *     lines 145, 146, 147 Huzaifa Amjad, Yahya Amjad, Zainab Tariq
+     *
+     * With the phone alone those collide, and the safe response to a collision
+     * is to refuse both — so the strong key's price was 40 real students, and
+     * their money, staying outside the system permanently. A key that cannot
+     * represent a family is not strong, it is wrong.
+     *
+     * The cost is real and worth stating: correcting "Muhamad" to "Muhammad"
+     * between two runs makes that row look new, and re-running would import it
+     * twice. Three things bound that risk — the load is essentially one-time,
+     * the name is lowercased and trimmed so casing and stray spaces do not
+     * count as edits, and `php artisan records:duplicates` exists precisely to
+     * find a pair that slips through.
+     *
+     * The registration date is still excluded, for the original reason: it is
+     * re-typed as often as anything else and carries no identity.
      *
      * @param  Collection<string, int>  $existingKeys  flipped: key => position
      */
@@ -489,9 +508,13 @@ class RollResolver
         // row look new. Both are acceptable for 72 rows of dead history; neither
         // would be acceptable as the primary key for the whole file, which is
         // why the phone is still used wherever there is one.
+        // Lowercased and trimmed, so "  Ali Raza" and "ali raza" are one person
+        // and neither casing nor a stray space counts as an edit.
+        $who = mb_strtolower(trim($row->name));
+
         $identity = $person !== null
-            ? 'phone:'.$person
-            : 'name:'.mb_strtolower(trim($row->name)).'|'.$row->registeredOn;
+            ? 'phone:'.$person.'|'.$who
+            : 'name:'.$who.'|'.$row->registeredOn;
 
         foreach ($row->courses as $course) {
             $row->importKeys[$course->id] = sha1($identity.'|'.$course->code);

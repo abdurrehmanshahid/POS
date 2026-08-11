@@ -410,19 +410,60 @@ class RollImportTest extends TestCase
      * The fingerprint has to survive the workflow it exists for.
      *
      * The advertised loop is "read the rejections, correct the sheet, run it
-     * again". An earlier key hashed the name and the registration date too, so
-     * fixing a typo produced a second student, a second invoice and the same
-     * money booked twice.
+     * again", so a corrected DATE must not mint a second student. The date
+     * carries no identity and is re-typed as often as anything else.
      */
-    public function test_correcting_a_name_or_a_date_does_not_re_import_the_student(): void
+    public function test_correcting_a_date_does_not_re_import_the_student(): void
     {
         $this->artisan('roll:import', ['file' => $this->sheet([$this->goodRow()]), '--commit' => true]);
         $after = $this->counts();
 
-        $corrected = $this->goodRow(['Name' => 'Imported Student Corrected', 'Registration Date' => '2026-07-02']);
+        $corrected = $this->goodRow(['Registration Date' => '2026-07-02']);
         $this->artisan('roll:import', ['file' => $this->sheet([$corrected]), '--commit' => true]);
 
-        $this->assertSame($after, $this->counts(), 'A corrected cell must not mint a second student.');
+        $this->assertSame($after, $this->counts(), 'A corrected date must not mint a second student.');
+    }
+
+    /**
+     * The known, accepted cost of putting the name in the key.
+     *
+     * Pinned rather than hidden. The name had to join the key so that families
+     * sharing one phone number could be told apart — without it, 40 real
+     * students carrying Rs 670,000 could never be imported at all. The price is
+     * this: correcting a spelling between two runs makes the row look new.
+     *
+     * It is bounded by the load being essentially one-time, by the name being
+     * lowercased and trimmed so casing and stray spaces are not edits, and by
+     * `php artisan records:duplicates`, which exists to find exactly this pair.
+     *
+     * If this test ever starts failing, the key changed — do not simply delete
+     * it; check that families still import as separate people.
+     */
+    public function test_correcting_a_name_does_re_import_and_that_is_the_known_trade_off(): void
+    {
+        $this->artisan('roll:import', ['file' => $this->sheet([$this->goodRow()]), '--commit' => true]);
+        $after = $this->counts();
+
+        $corrected = $this->goodRow(['Name' => 'Imported Student Corrected']);
+        $this->artisan('roll:import', ['file' => $this->sheet([$corrected]), '--commit' => true]);
+
+        $this->assertSame($after['students'] + 1, Student::count(),
+            'A corrected name mints a second student. This is the accepted cost of telling siblings apart.');
+    }
+
+    /** Casing and stray whitespace are not edits, so they must not re-import. */
+    public function test_a_name_differing_only_in_case_or_spacing_is_the_same_student(): void
+    {
+        $this->artisan('roll:import', ['file' => $this->sheet([$this->goodRow()]), '--commit' => true]);
+        $after = $this->counts();
+
+        $this->artisan('roll:import', [
+            'file' => $this->sheet([$this->goodRow(['Name' => '  imported STUDENT '])]),
+            '--commit' => true,
+        ]);
+
+        $this->assertSame($after, $this->counts(),
+            'Re-casing a name must not mint a second student.');
     }
 
     /**
@@ -645,11 +686,16 @@ class RollImportTest extends TestCase
     }
 
     /**
-     * 52 phone numbers in the real roll are shared by more than one student.
-     * Two of them on one course collide on the import key, and the operator
-     * should get a sentence rather than a driver error.
+     * 52 phone numbers in the real roll are shared by more than one student,
+     * mostly siblings on a parent's number. They are two people and must import
+     * as two people.
+     *
+     * This used to refuse both, because the key was (phone, course) and could
+     * not tell them apart. That cost 40 real students carrying Rs 670,000 —
+     * three deep in places, e.g. lines 10/11/12 are Iram, Afsheen and Sofia
+     * Rajut. The name is now part of the key.
      */
-    public function test_two_lines_claiming_the_same_student_and_course_are_both_refused(): void
+    public function test_two_siblings_sharing_a_phone_on_one_course_both_import(): void
     {
         $before = $this->counts();
 
@@ -658,10 +704,54 @@ class RollImportTest extends TestCase
             $this->goodRow(['Name' => 'Sibling Two']),   // same phone, same course
         ]);
 
-        $this->artisan('roll:import', ['file' => $file, '--commit' => true])
-            ->expectsOutputToContain('claim the same student on the same course');
+        $this->artisan('roll:import', ['file' => $file, '--commit' => true])->assertSuccessful();
 
-        $this->assertSame($before, $this->counts(), 'Neither line is guessed at.');
+        $this->assertSame($before['students'] + 2, Student::count(),
+            'Two siblings on one number are two students.');
+        $this->assertSame(1, Student::where('name', 'Sibling One')->count());
+        $this->assertSame(1, Student::where('name', 'Sibling Two')->count());
+    }
+
+    /**
+     * The same line typed twice is still one student.
+     *
+     * The rule compares the person AND the money, so this collapses while the
+     * siblings above do not.
+     */
+    public function test_an_identical_repeated_line_is_collapsed_to_one_student(): void
+    {
+        $before = $this->counts();
+
+        $file = $this->sheet([
+            $this->goodRow(['Name' => 'Typed Twice']),
+            $this->goodRow(['Name' => 'Typed Twice']),
+        ]);
+
+        $this->artisan('roll:import', ['file' => $file, '--commit' => true])->assertSuccessful();
+
+        $this->assertSame($before['students'] + 1, Student::count(),
+            'One line typed twice is one student, not two and not zero.');
+        $this->assertSame($before['challans'] + 1, Challan::count(),
+            'And it must not bill the family twice.');
+    }
+
+    /**
+     * Two lines that agree on the person but not on the money are refused, and
+     * the reason says which figures disagree.
+     */
+    public function test_the_same_person_with_different_money_is_refused_with_the_conflict_named(): void
+    {
+        $before = $this->counts();
+
+        $file = $this->sheet([
+            $this->goodRow(['Name' => 'Disputed Dua']),
+            $this->goodRow(['Name' => 'Disputed Dua', 'Discounted Price' => 20000, 'Total Amount' => 20000]),
+        ]);
+
+        $this->artisan('roll:import', ['file' => $file, '--commit' => true])
+            ->expectsOutputToContain('same person, different money');
+
+        $this->assertSame($before, $this->counts(), 'Neither figure is guessed at.');
     }
 
     /**
