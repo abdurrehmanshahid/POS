@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use App\Models\Concerns\HasTwoFactorAuth;
+use App\Services\TwoFactor;
 use App\Support\Format;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 
@@ -41,13 +42,23 @@ class SuperAdmin extends Authenticatable
     }
 
     /**
-     * Always. A super admin without a second factor is a single stolen password
-     * away from total data loss, so enrolment is forced at first sign-in and
-     * the factor can never be switched off, only rotated.
+     * Whenever the factor is switched on at all — and it is on by default.
+     *
+     * This used to be an unconditional `true`, on the reasoning that a super
+     * admin without a second factor is a single stolen password away from total
+     * data loss. That reasoning has not changed and is worth re-reading before
+     * anyone leaves `twofa_required` off: this account can read and restore the
+     * whole database, so it is the single worst account to leave on a password
+     * alone.
+     *
+     * It is no longer hardcoded because the institute asked for the factor to be
+     * switchable, and a super admin who could not be QA'd was the practical
+     * result of the old rule. Ticking `twofa_required` in Settings restores the
+     * previous behaviour exactly, with no re-enrolment.
      */
     public function requiresTwoFactor(): bool
     {
-        return true;
+        return TwoFactor::enabled();
     }
 
     public function initials(): string

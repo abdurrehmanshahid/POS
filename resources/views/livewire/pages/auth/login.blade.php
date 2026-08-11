@@ -87,8 +87,13 @@ new #[Layout('components.layouts.guest')] class extends Component {
 
         $throttle->clear();
 
-        // Second factor confirmed → withhold the session until a code arrives.
-        if ($u->hasTwoFactorEnabled()) {
+        // Second factor confirmed AND switched on → withhold the session until a
+        // code arrives. The `enabled()` half matters: this used to test only
+        // whether a secret existed, so turning the factor off left everyone who
+        // had already enrolled still being challenged, with the Settings switch
+        // appearing to do nothing. Enrolment is what you HAVE; `enabled()` is
+        // whether the institute is asking for it.
+        if ($u->hasTwoFactorEnabled() && \App\Services\TwoFactor::enabled()) {
             app(TwoFactorChallenge::class)->start($u, 'web', $this->remember);
 
             return $this->redirect(route('two-factor.challenge'), navigate: false);

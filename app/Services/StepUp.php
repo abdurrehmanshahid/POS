@@ -66,10 +66,19 @@ class StepUp
         }
     }
 
-    /** Which challenge this actor will be asked for, drives the dialog copy. */
+    /**
+     * Which challenge this actor will be asked for, drives the dialog copy.
+     *
+     * Falls back to the password prompt when the factor is switched off, which
+     * is the behaviour this class already had for anyone unenrolled. Step-up
+     * itself is NOT disabled with 2FA: a destructive act still demands a fresh
+     * credential, it is just the password rather than a code.
+     */
     public function usesTotp(Model $actor): bool
     {
-        return method_exists($actor, 'hasTwoFactorEnabled') && $actor->hasTwoFactorEnabled();
+        return TwoFactor::enabled()
+            && method_exists($actor, 'hasTwoFactorEnabled')
+            && $actor->hasTwoFactorEnabled();
     }
 
     /** Label for the confirmation input. */
