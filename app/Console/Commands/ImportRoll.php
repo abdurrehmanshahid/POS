@@ -45,8 +45,11 @@ class ImportRoll extends Command
         $ready = array_filter($rows, fn (RollRow $r) => $r->isImportable());
         $already = array_filter($rows, fn (RollRow $r) => ! $r->isRejected() && $r->alreadyImported);
         $rejected = array_filter($rows, fn (RollRow $r) => $r->isRejected());
+        // Identical repeats of a line this same run is importing. Reported
+        // separately because they are neither a problem nor work to do.
+        $collapsed = array_filter($rows, fn (RollRow $r) => ! $r->isRejected() && $r->collapsed);
 
-        $this->summary($ready, $already, $rejected);
+        $this->summary($ready, $already, $rejected, $collapsed);
         $this->unresolved($rejected);
 
         if ($path = $this->option('rejects')) {
@@ -78,7 +81,7 @@ class ImportRoll extends Command
         return $result['failed'] === [] ? self::SUCCESS : self::FAILURE;
     }
 
-    private function summary(array $ready, array $already, array $rejected): void
+    private function summary(array $ready, array $already, array $rejected, array $collapsed = []): void
     {
         $money = array_sum(array_map(fn (RollRow $r) => $r->totalReceived, $ready));
         $owed = array_sum(array_map(fn (RollRow $r) => $r->balance, $ready));
@@ -87,8 +90,9 @@ class ImportRoll extends Command
         $this->table(['', 'Rows'], [
             ['Ready to import', count($ready)],
             ['Already imported', count($already)],
+            ['Duplicate lines collapsed', count($collapsed)],
             ['Rejected', count($rejected)],
-            ['Total', count($ready) + count($already) + count($rejected)],
+            ['Total', count($ready) + count($already) + count($rejected) + count($collapsed)],
         ]);
 
         $this->line("  Money in the importable rows:  received <fg=green>{$money}</> · outstanding <fg=yellow>{$owed}</>");

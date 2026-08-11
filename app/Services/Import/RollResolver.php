@@ -235,10 +235,76 @@ class RollResolver
             }
 
             $lines = implode(', ', array_map(fn (RollRow $r) => $r->line, $sharing));
+
+            // A group whose lines agree on WHO and on HOW MUCH is the same line
+            // typed twice. The first is imported and the rest are collapsed, so
+            // the export's own repetition does not cost the institute 19 rows
+            // of history. 19 of the 21 groups in this roll are of this kind.
+            if ($this->areTheSameClaim($sharing)) {
+                foreach (array_slice($sharing, 1) as $repeat) {
+                    $repeat->collapsed = true;
+                }
+
+                continue;
+            }
+
+            // Anything else is refused, and the reason now says what actually
+            // disagrees rather than only that the lines collide.
+            //
+            // "Keep the line with the most money" was considered for these and
+            // is NOT safe here, because they are usually not duplicates at all.
+            // The fingerprint is (phone, course) and deliberately not the name,
+            // so siblings on one course sharing a parent's number collide: lines
+            // 200 and 206 of this roll are "Farah Atif" and "Riyan Bin Atif",
+            // two people, and keeping the larger would have deleted a real
+            // student along with the Rs 20,000 he had paid. Which of two
+            // disagreeing claims is true is not the importer's call.
             foreach ($sharing as $row) {
-                $row->reject("lines {$lines} claim the same student on the same course");
+                $row->reject(
+                    "lines {$lines} claim the same student on the same course, and disagree: "
+                    .$this->describeConflict($sharing)
+                );
             }
         }
+    }
+
+    /**
+     * Do these lines make one claim, or several?
+     *
+     * Compared on the person AND the money. Name alone would collapse two
+     * siblings; money alone would collapse two different people who happened to
+     * pay the same fee for the same course.
+     *
+     * @param  list<RollRow>  $rows
+     */
+    private function areTheSameClaim(array $rows): bool
+    {
+        $signature = fn (RollRow $r) => mb_strtolower(trim($r->name))
+            .'|'.$r->discountedPrice.'|'.$r->totalReceived.'|'.$r->balance;
+
+        return count(array_unique(array_map($signature, $rows))) === 1;
+    }
+
+    /**
+     * Name the disagreement, so the operator can act on the rejection CSV
+     * without opening the spreadsheet to work out what differs.
+     *
+     * @param  list<RollRow>  $rows
+     */
+    private function describeConflict(array $rows): string
+    {
+        $names = array_unique(array_map(fn (RollRow $r) => trim($r->name), $rows));
+
+        if (count($names) > 1) {
+            return 'different people ('.implode(' vs ', $names).') sharing one phone number';
+        }
+
+        $money = array_unique(array_map(
+            fn (RollRow $r) => 'fee '.$r->discountedPrice.'/received '.$r->totalReceived,
+            $rows
+        ));
+
+        return 'same person, different money ('.implode(' vs ', $money).')';
     }
 
     // ---- Stage 4: identity and money ---------------------------------------

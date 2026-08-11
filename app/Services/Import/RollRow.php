@@ -71,11 +71,21 @@ class RollRow
     }
 
     /**
-     * Ready to write: understood, and not already here.
+     * A byte-identical repeat of an earlier line in the same file.
+     *
+     * Not a rejection: the line is understood perfectly and its twin is being
+     * imported. Counting it as refused would report 44 problems where there are
+     * 19 harmless repetitions and hide the rows that do need a decision.
+     */
+    public bool $collapsed = false;
+
+    /**
+     * Ready to write: understood, not already here, and not a repeat of a line
+     * this same run is already importing.
      */
     public function isImportable(): bool
     {
-        return ! $this->isRejected() && ! $this->alreadyImported;
+        return ! $this->isRejected() && ! $this->alreadyImported && ! $this->collapsed;
     }
 
     /**
