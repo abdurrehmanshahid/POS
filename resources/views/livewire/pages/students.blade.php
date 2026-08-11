@@ -109,6 +109,17 @@ new class extends Component {
 
     public function saveStudent(): void
     {
+        // The form has already been saved and closed, so there is nothing left
+        // to save. Without this the screen is only ACCIDENTALLY safe: the reset
+        // at the end of this method blanks `fName`, so the second half of a
+        // bundled double-click fails validation and shows the officer "Cannot
+        // save student · Please fix the highlighted fields" over a student who
+        // was in fact added correctly. Anyone who later moves that reset, or
+        // stops resetting the name, turns a confusing toast into a duplicate
+        // person. See submit() in registrations.blade.php, where the same shape
+        // did create two people, two admissions and two challans.
+        if (! $this->formOpen) { return; }
+
         $service = app(StudentService::class);
         $payload = [
             'type' => $this->fType,

@@ -68,11 +68,36 @@ class AuthSecurityTest extends TestCase
 
     // ---- Hole 2: demo credentials exposed in production --------------------
 
-    public function test_demo_credential_fill_is_rejected_outside_local(): void
+    /**
+     * The click-to-fill helpers are gone, so there is no longer an environment
+     * gate to get wrong. Asserting their absence rather than their 404 is the
+     * stronger claim: a gate can be misconfigured, a method that does not exist
+     * cannot be reached at all.
+     */
+    public function test_the_login_component_cannot_fill_a_credential_at_all(): void
     {
-        // The test environment is not 'local', which is what production is like.
-        Livewire::test('pages.auth.login')->call('fillAdmin')->assertStatus(404);
-        Livewire::test('pages.auth.login')->call('fillOfficer')->assertStatus(404);
+        $component = new \ReflectionClass(Livewire::test('pages.auth.login')->instance());
+
+        foreach (['fillAdmin', 'fillOfficer'] as $method) {
+            $this->assertFalse($component->hasMethod($method),
+                "{$method}() is back. A login screen must never be able to print a working password.");
+        }
+    }
+
+    /**
+     * Belt and braces on the same rule, in the one environment where the panel
+     * used to render. `assertDontSee` below covers the test environment; this
+     * covers the environment the panel was actually built for.
+     */
+    public function test_the_login_page_prints_no_password_even_in_local(): void
+    {
+        app()['env'] = 'local';
+
+        $this->get('/login')
+            ->assertOk()
+            ->assertDontSee('Bbt@Admin1')
+            ->assertDontSee('Bbt@Officer1')
+            ->assertDontSee('demo accounts', false);
     }
 
     public function test_login_page_does_not_print_real_passwords_outside_local(): void
