@@ -4,8 +4,8 @@ namespace App\Http\Controllers;
 
 use App\Models\Payment;
 use App\Models\Setting;
+use App\Support\Download;
 use Barryvdh\DomPDF\Facade\Pdf;
-use Barryvdh\DomPDF\PDF as PdfDocument;
 use Illuminate\Http\Request;
 use Symfony\Component\HttpFoundation\Response;
 
@@ -25,21 +25,46 @@ use Symfony\Component\HttpFoundation\Response;
  */
 class ReceiptController extends Controller
 {
-    /** Open in the browser's viewer, to read and print. @see ChallanController */
+    /**
+     * The receipt as a page, with a Print button.
+     *
+     * HTML rather than an inline PDF, for the reason set out in
+     * {@see ChallanController::view()}: "inline" is a
+     * request the browser may decline, and a receipt the student is standing
+     * there waiting for is the worst place to discover that.
+     */
     public function view(Request $request, Payment $payment): Response
     {
-        return $this->render($request, $payment)
-            ->stream('receipt-'.$payment->receiptNo().'.pdf');
+        $payment = $this->authorised($request, $payment);
+
+        return response()->view('receipts.pdf', [
+            'payment' => $payment,
+            'challan' => $payment->challan,
+            'settings' => Setting::current(),
+            'balanceAfter' => $this->balanceAfter($payment),
+            'forScreen' => true,
+        ]);
     }
 
     /** Save the file, for sending on. */
     public function download(Request $request, Payment $payment): Response
     {
-        return $this->render($request, $payment)
-            ->download('receipt-'.$payment->receiptNo().'.pdf');
+        $payment = $this->authorised($request, $payment);
+
+        $name = 'receipt-'.$payment->receiptNo().'.pdf';
+
+        return Download::named(
+            Pdf::loadView('receipts.pdf', [
+                'payment' => $payment,
+                'challan' => $payment->challan,
+                'settings' => Setting::current(),
+                'balanceAfter' => $this->balanceAfter($payment),
+            ])->setPaper('a5', 'landscape')->download($name),
+            $name,
+        );
     }
 
-    private function render(Request $request, Payment $payment): PdfDocument
+    private function authorised(Request $request, Payment $payment): Payment
     {
         $payment->load([
             'receiver',
@@ -66,12 +91,7 @@ class ReceiptController extends Controller
             abort(403);
         }
 
-        return Pdf::loadView('receipts.pdf', [
-            'payment' => $payment,
-            'challan' => $challan,
-            'settings' => Setting::current(),
-            'balanceAfter' => $this->balanceAfter($payment),
-        ])->setPaper('a5', 'landscape');
+        return $payment;
     }
 
     /**

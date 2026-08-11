@@ -15,6 +15,7 @@ use Database\Seeders\DatabaseSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
 use Livewire\Livewire;
+use PHPUnit\Framework\Attributes\DataProvider;
 use Tests\TestCase;
 
 /** End-to-end render + auth + scoping smoke tests for the screens and controllers. */
@@ -308,6 +309,92 @@ class ScreensTest extends TestCase
             ->call('save');
 
         $this->assertDatabaseHas('courses', ['code' => 'TEST-900', 'fee' => 15000]);
+    }
+
+    // ---- Downloading and viewing --------------------------------------------
+
+    /**
+     * Every download names its file in both forms the web has for saying so.
+     *
+     * The shortest legal disposition — `filename=x.pdf`, unquoted — is valid and
+     * is what Laravel emits by default, but it has to be re-parsed correctly by
+     * the browser, any download manager behind it and any proxy between, and
+     * where one of them declines the file arrives as an unnamed blob. A voucher
+     * saved as a bare UUID is one nobody can find again or attach to an email.
+     *
+     * Two filenames here carry SPACES, which an unquoted disposition cannot
+     * express at all, so this is not hypothetical for the exports.
+     *
+     * @return list<array{0:string,1:string}>
+     */
+    public static function downloads(): array
+    {
+        return [
+            'challan PDF' => ['challan', 'challan-BBT-CH-2026-1076.pdf'],
+            'students CSV' => ['students', 'BBT Students.csv'],
+            'report XLSX' => ['report', 'BBT Report'],
+        ];
+    }
+
+    #[DataProvider('downloads')]
+    public function test_a_download_states_its_filename_unambiguously(string $kind, string $expected): void
+    {
+        $url = match ($kind) {
+            'challan' => route('challans.pdf', Challan::where('challan_no', 'BBT-CH-2026-1076')->firstOrFail()),
+            'students' => route('students.export'),
+            'report' => route('reports.export'),
+        };
+
+        $disposition = $this->actingAs($this->admin())->get($url)
+            ->assertOk()
+            ->headers->get('Content-Disposition');
+
+        $this->assertStringContainsString('attachment;', $disposition);
+
+        // Quoted, for everything that reads RFC 6266 the old way...
+        $this->assertMatchesRegularExpression('/filename="[^"]*'.preg_quote($expected, '/').'/', $disposition,
+            "The quoted filename is missing or wrong: {$disposition}");
+
+        // ...and RFC 5987, which wins wherever it is understood.
+        $this->assertStringContainsString("filename*=UTF-8''", $disposition,
+            "The RFC 5987 filename is missing: {$disposition}");
+    }
+
+    /**
+     * The view routes are HTML pages, not PDFs, and carry no disposition.
+     *
+     * `inline` is a request the browser may decline — where there is no PDF
+     * viewer it downloads instead, so the button labelled "view" was the one
+     * whose promise the browser could refuse. A page has no such dependency,
+     * which is the whole reason these routes render the same Blade template
+     * rather than typesetting it.
+     */
+    public function test_the_view_routes_serve_a_printable_page_not_a_download(): void
+    {
+        $challan = Challan::where('challan_no', 'BBT-CH-2026-1076')->firstOrFail();
+
+        $res = $this->actingAs($this->admin())->get(route('challans.view', $challan))->assertOk();
+
+        $this->assertStringContainsString('text/html', $res->headers->get('Content-Type'));
+        $this->assertNull($res->headers->get('Content-Disposition'),
+            'The view route is a page; a disposition would make the browser save it instead.');
+
+        $res->assertSee('window.print()', false)
+            ->assertSee($challan->challan_no)
+            // The logo has to be a URL on screen. As a filesystem path — which
+            // is what dompdf needs — it 404s and the voucher prints with a
+            // broken image where the institute's mark belongs.
+            ->assertSee('/assets/bbt-logo-print.png', false)
+            ->assertDontSee(public_path('assets'), false);
+    }
+
+    public function test_the_view_routes_are_scoped_like_the_downloads(): void
+    {
+        $challan = Challan::where('challan_no', 'BBT-CH-2026-1076')->firstOrFail(); // admin's
+
+        $this->actingAs($this->officer())
+            ->get(route('challans.view', $challan))
+            ->assertForbidden();
     }
 
     // ---- Invoices that bill no enrolment ------------------------------------

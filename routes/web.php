@@ -39,6 +39,15 @@ Route::middleware('auth')->group(function () {
     // First-login password reset (spec §2.1 must_reset_password).
     Volt::route('set-password', 'pages.auth.set-password')->name('password.set');
 
+    // Rotating your own password, voluntarily. Deliberately in this group and
+    // not behind `RequirePasswordReset`: somebody who has just been issued a
+    // temporary password is pushed to `set-password` above, and both doors
+    // leading to the same forced screen would be a redirect loop. No permission
+    // is required — every account may change its own credential, and gating
+    // that behind a role would leave the least-privileged staff the least able
+    // to secure themselves.
+    Volt::route('change-password', 'pages.auth.change-password')->name('password.change');
+
     // TOTP enrolment. Outside the RequirePasswordReset/2fa group because it is
     // the one place an un-enrolled user is allowed to reach.
     Volt::route('two-factor/setup', 'pages.auth.two-factor-setup')->name('two-factor.setup');

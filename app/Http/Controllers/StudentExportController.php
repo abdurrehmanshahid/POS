@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\Student;
+use App\Support\Download;
 use App\Support\Format;
 use Illuminate\Http\Request;
 use Symfony\Component\HttpFoundation\StreamedResponse;
@@ -34,12 +35,14 @@ class StudentExportController extends Controller
             ->orderBy('student_code')
             ->get();
 
-        $headers = [
-            'Content-Type' => 'text/csv; charset=UTF-8',
-            'Content-Disposition' => 'attachment; filename="BBT Students.csv"',
-        ];
+        $filename = 'BBT Students.csv';
 
-        return response()->streamDownload(function () use ($students) {
+        $headers = ['Content-Type' => 'text/csv; charset=UTF-8'];
+
+        // Named through the helper, which states the quoted and the RFC 5987
+        // forms rather than relying on either being inferred. This filename has
+        // a space in it, so an unquoted disposition cannot express it at all.
+        return Download::named(response()->streamDownload(function () use ($students) {
             $out = fopen('php://output', 'w');
             fwrite($out, "\xEF\xBB\xBF"); // UTF-8 BOM
             $this->putRow($out, [
@@ -68,7 +71,7 @@ class StudentExportController extends Controller
                 ]);
             }
             fclose($out);
-        }, 'BBT Students.csv', $headers);
+        }, $filename, $headers), $filename);
     }
 
     private function putRow($out, array $fields): void

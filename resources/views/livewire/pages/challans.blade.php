@@ -214,8 +214,12 @@ new class extends Component {
                                      drawer opened behind the PDF. Stopping propagation is a
                                      browser concern with no server round trip, so it is Alpine's
                                      job, not Livewire's. --}}
-                                <a class="btn-icon btn-icon-plain" href="{{ route('challans.pdf', $c) }}" target="_blank"
-                                   @click.stop title="View challan PDF" aria-label="View challan PDF">
+                                {{-- Points at `view`, not `pdf`. This said "View challan
+                                     PDF" while handing you a file download, which is a
+                                     different thing from viewing and the reason the
+                                     button read as broken. --}}
+                                <a class="btn-icon btn-icon-plain" href="{{ route('challans.view', $c) }}" target="_blank"
+                                   @click.stop title="View &amp; print challan" aria-label="View and print challan">
                                     <x-icon name="eye" :size="16" />
                                 </a>
                             </div>

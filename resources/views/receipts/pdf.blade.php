@@ -1,7 +1,10 @@
 @php
     use App\Support\Format;
 
-    $student = $challan->admission?->student;
+    // From the invoice, not through the admission. A charge has none, and the
+    // chain left the payer's name and code blank on the one document that
+    // exists to prove who handed money over.
+    $student = $challan->student;
     $courses = $challan->admissions
         ->map(fn ($a) => $a->course)
         ->filter()
@@ -19,8 +22,10 @@
     // the wordmark rather than throwing while a parent waits at the counter.
     // The print-sized copy for the same reason the voucher uses it: dompdf
     // embeds the source bitmap once per placement.
-    $logo = public_path('assets/bbt-logo-print.png');
-    $hasLogo = is_file($logo);
+    $logoFile = public_path('assets/bbt-logo-print.png');
+    $hasLogo = is_file($logoFile);
+    // A URL on screen, a filesystem path for dompdf. See the voucher template.
+    $logo = ($forScreen ?? false) ? asset('assets/bbt-logo-print.png') : $logoFile;
 
     // Two copies on one A5 sheet: one for the student, one for the drawer. The
     // institute reconciles the till against paper at the end of the day, and a
@@ -62,8 +67,47 @@
         .sig { margin-top: 16px; border-top: 1px solid #999; padding-top: 3px; font-size: 7.5px; color: #555; width: 60%; }
         .note { font-size: 7px; color: #777; margin-top: 6px; line-height: 1.35; }
     </style>
+
+    {{-- Screen only; dompdf never reaches this. See ChallanController::view()
+         for why the "view" route serves a page rather than an inline PDF. --}}
+    @if ($forScreen ?? false)
+        <style>
+            body { background: #eef0f6; padding: 18px; font-size: 12px; }
+            .sheet-wrap { max-width: 900px; margin: 0 auto; background: #fff; padding: 16px;
+                          box-shadow: 0 1px 3px rgba(0,0,0,.15); border-radius: 4px; }
+            .bar { max-width: 900px; margin: 0 auto 14px; display: flex; align-items: center; gap: 10px; }
+            .bar h1 { font-size: 15px; margin: 0; flex: 1; color: #12132a; }
+            .bar button, .bar a {
+                font: inherit; font-weight: 700; font-size: 12px; padding: 9px 16px; border-radius: 8px;
+                border: 1px solid #cfd4e6; background: #fff; color: #2A2668; cursor: pointer; text-decoration: none;
+            }
+            .bar .primary { background: #2A2668; border-color: #2A2668; color: #fff; }
+
+            @media (max-width: 760px) {
+                table.sheet, table.sheet tr, table.sheet td.copy { display: block; width: auto; }
+                td.copy { margin-bottom: 14px; }
+            }
+
+            @media print {
+                @page { size: A5 landscape; margin: 8mm; }
+                body { background: #fff; padding: 0; }
+                .bar { display: none !important; }
+                .sheet-wrap { max-width: none; margin: 0; padding: 0; box-shadow: none; border-radius: 0; }
+                table.sheet, table.sheet tr, table.sheet td.copy { display: revert; }
+                td.copy { margin-bottom: 0; }
+            }
+        </style>
+    @endif
 </head>
 <body>
+@if ($forScreen ?? false)
+    <div class="bar">
+        <h1>Receipt {{ $payment->receiptNo() }} · {{ $challan->student?->name }}</h1>
+        <button class="primary" onclick="window.print()">Print</button>
+        <a href="{{ route('payments.receipt', $payment) }}">Download PDF</a>
+    </div>
+    <div class="sheet-wrap">
+@endif
 <table class="sheet">
     <tr>
         @foreach ($copies as $copyTitle)
@@ -92,11 +136,14 @@
                 <table class="kv">
                     <tr><td class="k">Receipt No</td><td class="v">{{ $payment->receiptNo() }}</td></tr>
                     <tr><td class="k">Received on</td><td class="v">{{ Format::date($payment->received_at) }}</td></tr>
-                    <tr><td class="k">Student</td><td class="v">{{ $student?->name ?? '—' }}</td></tr>
-                    <tr><td class="k">Student ID</td><td class="v">{{ $student?->student_code ?? '—' }}</td></tr>
+                    <tr><td class="k">{{ $challan->isCharge() ? 'Paid by' : 'Student' }}</td><td class="v">{{ $student?->name ?? '—' }}</td></tr>
+                    <tr><td class="k">Reference</td><td class="v">{{ $student?->student_code ?? '—' }}</td></tr>
                     <tr>
-                        <td class="k">{{ $courses->count() > 1 ? 'Courses' : 'Course' }}</td>
-                        <td class="v">{{ $courses->pluck('title')->implode(', ') ?: '—' }}</td>
+                        {{-- A charge names the service it was for; there is no
+                             course, and "Course: —" on a receipt for a room
+                             booking says nothing about what was bought. --}}
+                        <td class="k">{{ $challan->isCharge() ? 'For' : ($courses->count() > 1 ? 'Courses' : 'Course') }}</td>
+                        <td class="v">{{ $challan->isCharge() ? $challan->subject() : ($courses->pluck('title')->implode(', ') ?: '—') }}</td>
                     </tr>
                     <tr><td class="k">Against challan</td><td class="v">{{ $challan->challan_no }}</td></tr>
                     <tr><td class="k">Total fee</td><td class="v">{{ Format::money($challan->net_amount) }}</td></tr>
@@ -119,5 +166,8 @@
         @endforeach
     </tr>
 </table>
+@if ($forScreen ?? false)
+    </div>
+@endif
 </body>
 </html>

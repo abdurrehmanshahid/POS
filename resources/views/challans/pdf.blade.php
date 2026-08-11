@@ -59,8 +59,13 @@
         // the screen asset produced a ~900 KB PDF for one fee challan, on a
         // document that gets printed and WhatsApped to parents. At 140px tall
         // it is still comfortably above the 20px it renders at.
-        $logo = public_path('assets/bbt-logo-print.png');
-        $hasLogo = is_file($logo);
+        $logoFile = public_path('assets/bbt-logo-print.png');
+        $hasLogo = is_file($logoFile);
+        // dompdf reads the filesystem; a browser cannot. Rendering the same
+        // template on screen with the absolute path produced a 404 and a broken
+        // image on the voucher an officer is about to hand over — the one
+        // difference between the two renderers that actually matters here.
+        $logo = ($forScreen ?? false) ? asset('assets/bbt-logo-print.png') : $logoFile;
     @endphp
     <style>
         /* DomPDF: table layout only, no flexbox or grid. Landscape A4, three
@@ -107,8 +112,62 @@
 
         .foot { margin-top: 7px; text-align: center; font-size: 6.8px; color: #9aa0bd; line-height: 1.5; }
     </style>
+
+    {{-- ON SCREEN ONLY. dompdf never sees this block, and nothing above it
+         changes, so the printed voucher is byte-for-byte the document it always
+         was — this only makes the SAME markup legible in a browser.
+
+         The reason it exists: the view route used to stream a PDF inline, which
+         depends on the browser having a working PDF viewer. Where it does not —
+         a locked-down desktop, an automation profile, some mobile browsers — an
+         "inline" PDF silently downloads instead, so the one thing the button
+         promised was the one thing it could not guarantee. HTML has no such
+         dependency: every browser can display a page and print it.
+
+         The units are px because dompdf's are, and at 96dpi they map to the A4
+         landscape sheet closely enough that what you see is what prints. --}}
+    @if ($forScreen ?? false)
+        <style>
+            body { background: #eef0f6; padding: 18px; font-size: 12px; }
+            .sheet-wrap { max-width: 1100px; margin: 0 auto; background: #fff; padding: 16px;
+                          box-shadow: 0 1px 3px rgba(0,0,0,.15); border-radius: 4px; }
+            .bar { max-width: 1100px; margin: 0 auto 14px; display: flex; align-items: center; gap: 10px; }
+            .bar h1 { font-size: 15px; margin: 0; flex: 1; color: #12132a; }
+            .bar button, .bar a {
+                font: inherit; font-weight: 700; font-size: 12px; padding: 9px 16px; border-radius: 8px;
+                border: 1px solid #cfd4e6; background: #fff; color: #2A2668; cursor: pointer; text-decoration: none;
+            }
+            .bar .primary { background: #2A2668; border-color: #2A2668; color: #fff; }
+
+            /* Wide enough that three columns stay readable; below that they
+               stack, because a 60mm column on a phone is not a voucher. */
+            @media (max-width: 900px) {
+                table.sheet, table.sheet tr, table.sheet td.copy { display: block; width: auto; }
+                td.copy { margin-bottom: 14px; }
+            }
+
+            @media print {
+                /* Back to the printed document exactly: no toolbar, no card,
+                   no page background, and the real paper size. */
+                @page { size: A4 landscape; margin: 12mm 8mm; }
+                body { background: #fff; padding: 0; }
+                .bar { display: none !important; }
+                .sheet-wrap { max-width: none; margin: 0; padding: 0; box-shadow: none; border-radius: 0; }
+                table.sheet, table.sheet tr, table.sheet td.copy { display: revert; }
+                td.copy { width: 33.33%; margin-bottom: 0; }
+            }
+        </style>
+    @endif
 </head>
 <body>
+@if ($forScreen ?? false)
+    <div class="bar">
+        <h1>Fee challan {{ $challan->challan_no }} · {{ $student?->name }}</h1>
+        <button class="primary" onclick="window.print()">Print</button>
+        <a href="{{ route('challans.pdf', $challan) }}">Download PDF</a>
+    </div>
+    <div class="sheet-wrap">
+@endif
 <table class="sheet">
     <tr>
         @foreach ($copies as $copy)
@@ -202,6 +261,9 @@
         @endforeach
     </tr>
 </table>
+@if ($forScreen ?? false)
+    </div>
+@endif
 
 <div class="foot">
     System-generated voucher. The admission number is read from the record and cannot be altered.

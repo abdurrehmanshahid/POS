@@ -61,6 +61,10 @@ Route::prefix('superadmin')->name('superadmin.')->group(function () {
             Volt::route('students', 'superadmin.students')->name('students');
             Volt::route('activity', 'superadmin.activity')->name('activity');
             Volt::route('backups', 'superadmin.backups')->name('backups');
+            // The owner's own credential. Inside the 2fa gate like everything
+            // else: a session that has not cleared the second factor must not be
+            // able to change the password that second factor protects.
+            Volt::route('change-password', 'superadmin.change-password')->name('password.change');
 
             Route::get('backups/sql', [BackupController::class, 'sql'])->name('backups.sql');
             Route::get('backups/csv/{table}', [BackupController::class, 'csv'])->name('backups.csv');

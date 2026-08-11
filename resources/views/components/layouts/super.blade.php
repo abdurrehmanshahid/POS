@@ -61,6 +61,12 @@
                     <div style="font-size:var(--fs-2xs);color:var(--muted)">{{ $su->email }}</div>
                     <x-ui.pill tone="iris" style="margin-top:7px">Super admin</x-ui.pill>
                 </div>
+                {{-- In the account menu rather than the sidebar: it is a thing
+                     you do to yourself, not a section of the console. --}}
+                <a href="{{ route('superadmin.password.change') }}" wire:navigate
+                   style="display:flex;align-items:center;gap:10px;width:100%;padding:11px 15px;color:var(--ink2);font-size:var(--fs-sm);font-weight:600;text-decoration:none">
+                    <x-icon name="key" :size="16" /> Change password
+                </a>
                 <button @click="$store.theme.toggle()"
                         style="display:flex;align-items:center;gap:10px;width:100%;padding:11px 15px;border:none;background:transparent;color:var(--ink2);font-size:var(--fs-sm);font-weight:600;cursor:pointer;text-align:left">
                     <span style="width:18px;text-align:center" x-text="$store.theme.v === 'dark' ? '☀' : '☾'"></span>

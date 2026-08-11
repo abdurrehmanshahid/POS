@@ -86,6 +86,18 @@
                     <div style="font-size:var(--fs-2xs);color:var(--muted)">{{ $user->email }}</div>
                     <x-ui.pill :tone="$user->role?->tone === 'orange' ? 'orange' : 'navy'" style="margin-top:7px">{{ $user->roleLabel() }}</x-ui.pill>
                 </div>
+                {{-- Every account can change its own password, so this is not
+                     permission-gated: putting it behind a role would leave the
+                     least-privileged staff the least able to secure themselves.
+                     Hidden only while impersonating, where "your password" is
+                     ambiguous and the owner must not be able to set a member of
+                     staff's credential from inside their session. --}}
+                @unless (session()->has('impersonator_id'))
+                    <a href="{{ route('password.change') }}" wire:navigate class="menu-item"
+                       style="display:flex;align-items:center;gap:10px;width:100%;padding:11px 15px;color:var(--ink2);font-size:var(--fs-sm);font-weight:600;text-decoration:none">
+                        <x-icon name="key" :size="16" /> Change password
+                    </a>
+                @endunless
                 <button @click="$store.theme.toggle()" class="menu-item"
                         style="display:flex;align-items:center;gap:10px;width:100%;padding:11px 15px;border:none;background:transparent;color:var(--ink2);font-size:var(--fs-sm);font-weight:600;cursor:pointer;text-align:left">
                     <span style="width:18px;text-align:center" x-text="$store.theme.v === 'dark' ? '☀' : '☾'"></span>
