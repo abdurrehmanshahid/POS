@@ -320,12 +320,24 @@ class RollResolver
         // loaded as what they are — students whose number nobody recorded —
         // rather than dropped or given an invented one.
         //
-        // A phone that is PRESENT and malformed is still refused. "." and
-        // "Digital Media" are not numbers nobody has, they are numbers somebody
-        // typed wrongly, and storing them would put a value in the column that
-        // no reminder can ever reach while looking as though it can.
+        // A phone that is present but unusable no longer stops the row either.
+        // The column holds what can be dialled, so an undiallable value becomes
+        // NULL — the same "we do not have a number" the 72 blank rows get —
+        // and the row imports.
+        //
+        // These are two different faults wearing one message, and both end the
+        // same way. Some are not numbers at all: ".", "--", "Digital Media",
+        // "Shopify" — the course name typed into the wrong column. Others are
+        // real attempts with the wrong digit count: "0316842216" is ten digits
+        // where a PK mobile needs eleven, "032177634459" is twelve. A missing
+        // digit cannot be guessed and an invented one would be worse than none.
+        //
+        // It is a WARNING rather than silence, because the typed text is the
+        // only clue to what the number should have been. `--warnings=` writes
+        // them out so the institute can chase them; discarding them quietly
+        // would throw that away and nobody would know to look.
         if ($row->phone !== '' && ! Contact::normalizePhone($row->phone)) {
-            $row->reject("phone is not a PK mobile: \"{$row->phone}\"");
+            $row->warn("phone \"{$row->phone}\" cannot be dialled, imported without a number");
         }
 
         if ($row->registeredOn === null) {

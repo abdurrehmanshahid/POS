@@ -12,6 +12,7 @@ use App\Models\Student;
 use App\Models\User;
 use App\Services\Ledger;
 use App\Services\Reporting;
+use App\Support\Contact;
 use Database\Seeders\DatabaseSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
@@ -829,6 +830,66 @@ class RollImportTest extends TestCase
     }
 
     /**
+     * A number that cannot be dialled is stored as no number, and the row still
+     * imports — but the operator is told, and the text they typed survives.
+     *
+     * "0316842216" is ten digits where a PK mobile needs eleven. The missing
+     * digit cannot be guessed, so the only clue to the real number is what was
+     * written, and that clue is what the warnings CSV exists to keep.
+     */
+    public function test_an_undiallable_number_imports_as_null_with_a_warning(): void
+    {
+        $file = $this->sheet([$this->goodRow(['Phone' => '0316842216', 'Name' => 'Short Digits Sana'])]);
+
+        $this->artisan('roll:import', ['file' => $file, '--commit' => true])
+            ->expectsOutputToContain('cannot be dialled');
+
+        $student = Student::where('name', 'Short Digits Sana')->firstOrFail();
+
+        $this->assertNull($student->phone, 'An undiallable number must not be stored as if it worked.');
+    }
+
+    /**
+     * The phone rule, asserted on the normaliser rather than through a sheet.
+     *
+     * Deliberately not an end-to-end import test: a spreadsheet cell beginning
+     * with "+" is a FORMULA, so PhpSpreadsheet reads "+905355170955" back as an
+     * error rather than as text, and a fixture written that way fails for a
+     * reason that has nothing to do with the rule being tested. The real export
+     * stores these as text and resolves them correctly.
+     *
+     * Three rules in one place because they only make sense together:
+     *
+     *  - Genuine students abroad are accepted. The roll carries +90 (Turkey),
+     *    +971 (UAE) and +968 (Oman), and refusing them lost reachable people
+     *    over which country they happened to be in.
+     *  - The leading "+" is the entire safety of that branch. Without it a PK
+     *    mobile typed one digit short would fall through and be stored as a
+     *    valid foreign number — a typo nobody can dial, recorded as fine.
+     *  - Every way of writing one PK number still yields one canonical form,
+     *    because the import fingerprint depends on it.
+     */
+    public function test_the_phone_normaliser_accepts_abroad_and_still_refuses_typos(): void
+    {
+        // Real students abroad, kept as written.
+        $this->assertSame('+905355170955', Contact::normalizePhone('+905355170955'));
+        $this->assertSame('+971553824025', Contact::normalizePhone('+971553824025'));
+        $this->assertSame('+96897735200', Contact::normalizePhone('+96897735200'));
+
+        // Local numbers with the wrong digit count stay unusable.
+        $this->assertNull(Contact::normalizePhone('0316842216'), 'ten digits, one short');
+        $this->assertNull(Contact::normalizePhone('032177634459'), 'twelve digits, one over');
+        $this->assertNull(Contact::normalizePhone('.'));
+        $this->assertNull(Contact::normalizePhone('Digital Media'));
+
+        // One canonical form, however it was written.
+        $this->assertSame('+92 300 1234567', Contact::normalizePhone('03001234567'));
+        $this->assertSame('+92 300 1234567', Contact::normalizePhone('+92 300 1234567'));
+        $this->assertSame('+92 300 1234567', Contact::normalizePhone('00923001234567'));
+        $this->assertSame('+92 300 1234567', Contact::normalizePhone('0300-1234567'));
+    }
+
+    /**
      * The fallback identity has to be stable, or re-running the importer loads
      * all 72 phoneless students a second time as new people.
      */
@@ -852,11 +913,9 @@ class RollImportTest extends TestCase
             'not a course' => [['Course' => 'Co-working Space'], 'not a course'],
             'no course' => [['Course' => ''], 'no course named'],
             'unknown CSR' => [['CSR' => 'Someone Else'], 'unknown CSR'],
-            // A blank phone is no longer here on purpose: it is now imported as
-            // NULL rather than refused. See
-            // test_a_row_with_no_phone_is_imported_rather_than_refused below,
-            // which pins the new behaviour so this is not silently reverted.
-            'bad phone' => [['Phone' => 'Digital Media'], 'not a PK mobile'],
+            // Neither a blank phone nor an unusable one is here any more: both
+            // import with a NULL number rather than being refused. The four
+            // phone tests below pin that, so it cannot be silently reverted.
             'money does not reconcile' => [
                 ['Discounted Price' => 25000, 'Advance Payment' => 5000, 'Total Amount' => 5000, 'Balance' => 0],
                 'does not reconcile',
