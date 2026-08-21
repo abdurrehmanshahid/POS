@@ -62,8 +62,24 @@ return new class extends Migration
     {
         Schema::table('attendances', function (Blueprint $table) {
             $table->dropUnique('attendances_session_unique');
+
+            // `attendances_student_id_index` is created by up() and so has to be
+            // dropped here. It is NOT the index serving the student_id foreign
+            // key: the original create_attendances_table declares
+            // `foreignId('student_id')->constrained('students')`, and MySQL
+            // auto-creates `attendances_student_id_foreign` for that constraint.
+            // Dropping this one therefore leaves the foreign key served, on
+            // MySQL and on SQLite alike.
+            //
+            // Leaving it behind made `migrate:rollback` followed by `migrate`
+            // die with "index attendances_student_id_index already exists" —
+            // reproduced on SQLite, and a duplicate-key error on MySQL.
             $table->dropIndex(['student_id']);
-            $table->dropConstrainedForeignKey('cohort_id');
+
+            // See the note in create_cohorts_table's down(): the constraint has
+            // to go before the column, and the column has to go at all.
+            $table->dropForeign(['cohort_id']);
+            $table->dropColumn('cohort_id');
         });
     }
 };

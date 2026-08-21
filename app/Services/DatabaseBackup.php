@@ -62,48 +62,45 @@ class DatabaseBackup
     }
 
     /**
+     * Canonical name for a dump taken now.
+     *
+     * The convention lived as a literal in the download controller, in
+     * `backup:run`'s writer and pruner, and in `backup:verify`'s finder. Change
+     * the prefix in one of those and the others keep looking for the old one —
+     * pruning silently stops matching and the drill silently reports "no dump
+     * found", both of which look green.
+     */
+    public function filename(string $extension = 'sql'): string
+    {
+        return 'bbt-backup-'.now()->format('Y-m-d-His').'.'.$extension;
+    }
+
+    /**
+     * Every dump in $path, oldest first.
+     *
+     * Sorted by name, not mtime: the name carries a zero-padded timestamp, so a
+     * file touched or copied back from off-box keeps its true place in the order.
+     *
+     * @return list<string>
+     */
+    public function dumpsIn(string $path): array
+    {
+        $files = glob(rtrim($path, '/').'/bbt-backup-*.sql.gz') ?: [];
+        sort($files);
+
+        return $files;
+    }
+
+    /**
      * Stream a full SQL dump.
      *
      * @param  string  $filename  suggested download name
      */
     public function streamSqlDump(string $filename): StreamedResponse
     {
-        $tables = $this->tables();
-        $driver = DB::connection()->getDriverName();
-
-        return response()->streamDownload(function () use ($tables, $driver) {
+        return response()->streamDownload(function () {
             $out = fopen('php://output', 'w');
-
-            fwrite($out, "-- Big Binary Tech Institute, database backup\n");
-            fwrite($out, '-- Generated: '.now()->toDateTimeString()." UTC\n");
-            fwrite($out, "-- Driver: {$driver}\n");
-            fwrite($out, "-- Restore: import this file via phpMyAdmin > Import, or `mysql -u USER -p DB < thisfile.sql`\n\n");
-
-            if ($driver === 'mysql') {
-                // Disable FK checks for the duration: tables are written in
-                // alphabetical order, not dependency order, so a child table may
-                // legitimately load before its parent.
-                fwrite($out, "SET FOREIGN_KEY_CHECKS=0;\n");
-                fwrite($out, "SET NAMES utf8mb4;\n");
-                fwrite($out, "START TRANSACTION;\n\n");
-            }
-
-            foreach ($tables as $table) {
-                fwrite($out, "\n-- ----------------------------\n-- Table: {$table}\n-- ----------------------------\n");
-
-                if ($driver === 'mysql') {
-                    fwrite($out, "DROP TABLE IF EXISTS `{$table}`;\n");
-                    $create = DB::selectOne("SHOW CREATE TABLE `{$table}`");
-                    fwrite($out, (array_values((array) $create)[1] ?? '').";\n\n");
-                }
-
-                $this->writeInserts($out, $table, $driver);
-            }
-
-            if ($driver === 'mysql') {
-                fwrite($out, "\nCOMMIT;\nSET FOREIGN_KEY_CHECKS=1;\n");
-            }
-
+            $this->writeSqlDump($out);
             fclose($out);
         }, $filename, [
             'Content-Type' => 'application/sql; charset=UTF-8',
@@ -112,20 +109,82 @@ class DatabaseBackup
     }
 
     /**
+     * Write a complete, restore-ready dump to any open stream.
+     *
+     * Split out from {@see streamSqlDump()} so the scheduled `backup:run` and
+     * the super admin's download produce a byte-identical artefact. Two dump
+     * writers would drift, and the one exercised least — the nightly one, which
+     * nobody watches — is the one you find out about during a restore.
+     *
+     * The stream may be a gzip wrapper (`compress.zlib://`), a file, or
+     * `php://output`; nothing here buffers, so peak memory is one chunk
+     * regardless of destination.
+     *
+     * Returns the rows actually written, per table. `backup:run` stores these
+     * as the dump's manifest: counted from the bytes that went into the file
+     * rather than from a second COUNT(*) pass, which both halves the work and
+     * removes the window in which the two could disagree.
+     *
+     * @param  resource  $out
+     * @return array<string,int>
+     */
+    public function writeSqlDump($out): array
+    {
+        $tables = $this->tables();
+        $driver = DB::connection()->getDriverName();
+        $counts = [];
+
+        $this->put($out, "-- Big Binary Tech Institute, database backup\n");
+        $this->put($out, '-- Generated: '.now()->toDateTimeString()." UTC\n");
+        $this->put($out, "-- Driver: {$driver}\n");
+        $this->put($out, "-- Restore: import this file via phpMyAdmin > Import, or `mysql -u USER -p DB < thisfile.sql`\n\n");
+
+        if ($driver === 'mysql') {
+            // Disable FK checks for the duration: tables are written in
+            // alphabetical order, not dependency order, so a child table may
+            // legitimately load before its parent.
+            $this->put($out, "SET FOREIGN_KEY_CHECKS=0;\n");
+            $this->put($out, "SET NAMES utf8mb4;\n");
+            $this->put($out, "START TRANSACTION;\n\n");
+        }
+
+        foreach ($tables as $table) {
+            $this->put($out, "\n-- ----------------------------\n-- Table: {$table}\n-- ----------------------------\n");
+
+            if ($driver === 'mysql') {
+                $this->put($out, "DROP TABLE IF EXISTS `{$table}`;\n");
+                $create = DB::selectOne("SHOW CREATE TABLE `{$table}`");
+                $this->put($out, (array_values((array) $create)[1] ?? '').";\n\n");
+            }
+
+            $counts[$table] = $this->writeInserts($out, $table, $driver);
+        }
+
+        if ($driver === 'mysql') {
+            $this->put($out, "\nCOMMIT;\nSET FOREIGN_KEY_CHECKS=1;\n");
+        }
+
+        return $counts;
+    }
+
+    /**
      * Write INSERT statements for one table, chunked by primary key so memory
      * stays flat. `orderBy` is required for chunkById to be deterministic.
      *
      * @param  resource  $out
+     * @return int rows written, for the caller's manifest
      */
-    private function writeInserts($out, string $table, string $driver): void
+    private function writeInserts($out, string $table, string $driver): int
     {
         $quote = $driver === 'mysql' ? '`' : '"';
         $first = true;
+        $written = 0;
         $generated = $this->generatedColumns($table, $driver);
 
-        DB::table($table)->orderBy($this->keyColumn($table))->chunk(self::CHUNK, function ($rows) use ($out, $table, $quote, $generated, &$first) {
+        DB::table($table)->orderBy($this->keyColumn($table))->chunk(self::CHUNK, function ($rows) use ($out, $table, $quote, $generated, &$first, &$written) {
             foreach ($rows as $row) {
                 $data = (array) $row;
+                $written++;
 
                 // Generated columns are computed by the engine and cannot be
                 // written to. `SELECT *` returns them, so naming them in the
@@ -139,17 +198,45 @@ class DatabaseBackup
 
                 if ($first) {
                     $cols = implode(', ', array_map(fn ($c) => $quote.$c.$quote, array_keys($data)));
-                    fwrite($out, "INSERT INTO {$quote}{$table}{$quote} ({$cols}) VALUES\n");
+                    $this->put($out, "INSERT INTO {$quote}{$table}{$quote} ({$cols}) VALUES\n");
                     $first = false;
                 } else {
-                    fwrite($out, ",\n");
+                    $this->put($out, ",\n");
                 }
 
-                fwrite($out, '('.implode(', ', array_map($this->literal(...), $data)).')');
+                $this->put($out, '('.implode(', ', array_map($this->literal(...), $data)).')');
             }
         });
 
-        fwrite($out, $first ? "-- (no rows)\n" : ";\n");
+        $this->put($out, $first ? "-- (no rows)\n" : ";\n");
+
+        return $written;
+    }
+
+    /**
+     * Write to the dump stream, or fail loudly.
+     *
+     * `fwrite()` returns short or false when the destination cannot take the
+     * bytes — a full disk being the realistic case on a box whose backups share
+     * a volume with the database. Unchecked, the dump simply stopped early: the
+     * gzip trailer was still written on close, the file comfortably cleared the
+     * minimum-size floor, and `backup:run` reported success over a truncated
+     * archive. That is the precise failure this whole command was written to
+     * prevent, so a short write is an exception rather than a return value
+     * somebody has to remember to inspect.
+     *
+     * @param  resource  $out
+     */
+    private function put($out, string $sql): void
+    {
+        $written = @fwrite($out, $sql);
+
+        if ($written === false || $written < strlen($sql)) {
+            throw new \RuntimeException(
+                'Short write to the dump stream after '.($written === false ? '0' : $written).
+                ' of '.strlen($sql).' bytes — the destination is most likely full.'
+            );
+        }
     }
 
     /**

@@ -37,6 +37,25 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | The institute's own wall clock
+    |--------------------------------------------------------------------------
+    |
+    | Storage stays UTC everywhere — `config/app.php` and the MySQL connection's
+    | `+00:00` both depend on that, and changing either re-interprets money
+    | history. This key is for the opposite problem: scheduled work that has to
+    | land at a time a *person* would recognise.
+    |
+    | `routes/console.php` schedules the nightly dump and the weekly restore
+    | drill against this, so "02:00" means 02:00 in Karachi rather than 07:00,
+    | which is what plain `dailyAt('02:00')` gave — an hour into the counter's
+    | morning instead of the quiet window it was written for.
+    |
+    */
+
+    'timezone' => env('INSTITUTE_TIMEZONE', 'Asia/Karachi'),
+
+    /*
+    |--------------------------------------------------------------------------
     | Self-service password reset
     |--------------------------------------------------------------------------
     |

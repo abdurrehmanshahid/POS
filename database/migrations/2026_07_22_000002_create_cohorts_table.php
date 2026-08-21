@@ -55,7 +55,23 @@ return new class extends Migration
     public function down(): void
     {
         Schema::table('admissions', function (Blueprint $table) {
-            $table->dropConstrainedForeignKey('cohort_id');
+            // The constraint first, then the column it points through: MySQL
+            // refuses to drop a column still carrying a foreign key.
+            //
+            // Was `dropConstrainedForeignKey('cohort_id')`, which Laravel 13
+            // removed — and which left the column behind even when it existed,
+            // so a rollback followed by a re-migrate died on "column cohort_id
+            // already exists". Nobody had ever rolled this back to find out.
+            $table->dropForeign(['cohort_id']);
+
+            // The index has to go before the column on SQLite, which validates
+            // surviving indexes after a column drop and fails the whole
+            // statement with "no such column: cohort_id". MySQL would tidy it up
+            // on its own, but doing it explicitly keeps one rollback path that
+            // works on both engines rather than one that only works in
+            // production.
+            $table->dropIndex(['cohort_id']);
+            $table->dropColumn('cohort_id');
         });
         Schema::dropIfExists('cohorts');
     }

@@ -31,7 +31,7 @@ class BackupController extends Controller
         abort_unless(DownloadTicket::consume('sql'), 403, 'Confirm again to download a backup.');
 
         $actor = $request->user('superadmin');
-        $filename = 'bbt-backup-'.now()->format('Y-m-d-His').'.sql';
+        $filename = $backup->filename('sql');
 
         Audit::record('Database backup downloaded', $actor, [
             'subject_label' => $filename,

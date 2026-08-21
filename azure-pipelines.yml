@@ -142,6 +142,30 @@ stages:
             # the environment. That is what lets one suite run against both
             # drivers without a second config file to keep in step.
 
+          - script: |
+              set -e
+              php artisan migrate --force
+              php artisan migrate:reset --force
+              php artisan migrate --force
+            displayName: Prove the migrations roll back
+            env:
+              DB_CONNECTION: $(dbDriver)
+              DB_HOST: 127.0.0.1
+              DB_PORT: 3306
+              DB_DATABASE: $(dbName)
+              DB_USERNAME: root
+              DB_PASSWORD: root
+            # The test suite only ever migrates FORWARD, so every down() method
+            # in this repository was unexecuted code. Two of them were broken —
+            # one dropped a foreign key but left its column behind, another left
+            # an index it had created — and both were found by hand, during a
+            # release, rather than here.
+            #
+            # Down, then up again: a down() that half-reverses passes the first
+            # leg and fails the second on the duplicate it left behind. Cheap,
+            # and it turns "rollbacks work" from a claim in a comment into a
+            # check that has to stay true.
+
       # -------------------------------------------------------------------
       - job: assets
         displayName: Frontend build
@@ -193,3 +217,72 @@ stages:
             # Set this job as the required check in the branch policy for main,
             # the same way the GitHub job named "CI" is the required check
             # there. Everything real runs in the jobs above; this is the gate.
+
+  # -------------------------------------------------------------------------
+  # Deploy
+  # -------------------------------------------------------------------------
+  # Only from main, only when `verify` went green. The stage does nothing
+  # clever: it runs deploy/deploy.sh on the server over SSH, which is the same
+  # script a human runs by hand. One deploy path, exercised on every release —
+  # a separate "emergency manual procedure" is one nobody has rehearsed.
+  #
+  # Setup this stage needs, once:
+  #
+  #   1. Project Settings > Service connections > New > SSH
+  #      Name it `institute-prod`. Host = the Oracle VM's public IP,
+  #      user = `ubuntu`, private key = the one you gave the instance at
+  #      creation.
+  #
+  #   2. Pipelines > Environments > New > name it `production`.
+  #      Add an Approval check on it if you want a human to press go. Leave it
+  #      without one for hands-off deploys. Either way the deploy itself is
+  #      identical; the difference is only who starts it.
+  #
+  # The server must be able to `git fetch` this repository — give the box a
+  # read-only deploy key, or a PAT in the remote URL.
+  # -------------------------------------------------------------------------
+  - stage: deploy
+    displayName: Deploy to production
+    dependsOn: verify
+    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+
+    jobs:
+      - deployment: production
+        displayName: Release
+        environment: production
+        pool:
+          vmImage: ubuntu-latest
+
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - checkout: none
+
+                - task: SSH@0
+                  displayName: Run deploy.sh on the server
+                  inputs:
+                    sshEndpoint: institute-prod
+                    runOptions: commands
+                    # `sudo -u institute` because the app files are owned by the
+                    # service account, not by the SSH user. deploy.sh takes the
+                    # backup, migrates, rebuilds caches and health-checks; it
+                    # exits non-zero if the site does not come back, which fails
+                    # this task and shows up in the pipeline rather than in a
+                    # phone call from the counter.
+                    commands: |
+                      cd /var/www/institute && sudo -u institute bash deploy/deploy.sh
+                    readyTimeout: '30000'
+                    failOnStdErr: false
+
+                - task: SSH@0
+                  displayName: Confirm the site answers
+                  inputs:
+                    sshEndpoint: institute-prod
+                    runOptions: commands
+                    # Deliberately a second, independent check after the script
+                    # has finished and released everything. deploy.sh checking
+                    # its own work is necessary but not sufficient.
+                    commands: |
+                      curl -sf --max-time 15 http://127.0.0.1/up > /dev/null && echo "health: OK"
+                    readyTimeout: '30000'
