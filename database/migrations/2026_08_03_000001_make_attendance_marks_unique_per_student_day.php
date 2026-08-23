@@ -62,22 +62,56 @@ return new class extends Migration
     {
         Schema::table('attendances', function (Blueprint $table) {
             $table->dropUnique('attendances_session_unique');
+        });
 
-            // `attendances_student_id_index` is created by up() and so has to be
-            // dropped here. It is NOT the index serving the student_id foreign
-            // key: the original create_attendances_table declares
-            // `foreignId('student_id')->constrained('students')`, and MySQL
-            // auto-creates `attendances_student_id_foreign` for that constraint.
-            // Dropping this one therefore leaves the foreign key served, on
-            // MySQL and on SQLite alike.
-            //
-            // Leaving it behind made `migrate:rollback` followed by `migrate`
-            // die with "index attendances_student_id_index already exists" —
-            // reproduced on SQLite, and a duplicate-key error on MySQL.
-            $table->dropIndex(['student_id']);
+        // ── Why the foreign key comes off before its index ──────────────────
+        //
+        // `up()` creates `attendances_student_id_index`, so `down()` has to
+        // remove it — leaving it behind made `migrate:rollback` followed by
+        // `migrate` die on "index already exists", which is the bug the CI step
+        // "Prove the migrations roll back" was added to catch.
+        //
+        // Dropping it directly works on SQLite and is REFUSED by MySQL:
+        //
+        //   SQLSTATE[HY000]: General error: 1553 Cannot drop index
+        //   'attendances_student_id_index': needed in a foreign key constraint
+        //
+        // MySQL will not let go of the last index that can serve a foreign key,
+        // and on this table that is the one we are trying to drop. An earlier
+        // version of this comment asserted that the constraint was served by a
+        // separate auto-created `attendances_student_id_foreign` index and that
+        // dropping this one was therefore safe. It is not, and the cost of
+        // being wrong was not a failed rollback in isolation: this migration
+        // runs inside ConcurrencyTest's `DatabaseMigrations` teardown, the
+        // exception aborted that teardown before it could reset
+        // RefreshDatabaseState::$migrated, and every one of the 276 tests after
+        // it re-seeded into a database that had never been dropped. One bad
+        // down() presented as a whole-suite collapse on the MySQL leg only.
+        //
+        // Removing the constraint first means no index is needed by any
+        // constraint, so the drop cannot be refused whatever MySQL's index
+        // inventory happens to look like. The constraint is then put back,
+        // because create_attendances_table declared it and down() has to leave
+        // the schema as that migration left it.
+        //
+        // Separate Schema::table() calls on purpose: each one is its own ALTER
+        // statement, so MySQL evaluates the constraint state between them
+        // rather than inside a single batched statement.
+        Schema::table('attendances', function (Blueprint $table) {
+            $table->dropForeign(['student_id']);
+        });
 
-            // See the note in create_cohorts_table's down(): the constraint has
-            // to go before the column, and the column has to go at all.
+        Schema::table('attendances', function (Blueprint $table) {
+            $table->dropIndex('attendances_student_id_index');
+        });
+
+        Schema::table('attendances', function (Blueprint $table) {
+            $table->foreign('student_id')->references('id')->on('students');
+        });
+
+        // See the note in create_cohorts_table's down(): the constraint has to
+        // go before the column, and the column has to go at all.
+        Schema::table('attendances', function (Blueprint $table) {
             $table->dropForeign(['cohort_id']);
             $table->dropColumn('cohort_id');
         });

@@ -8,6 +8,7 @@ use App\Models\Course;
 use Database\Seeders\DatabaseSeeder;
 use Illuminate\Database\QueryException;
 use Illuminate\Foundation\Testing\DatabaseMigrations;
+use Illuminate\Foundation\Testing\RefreshDatabaseState;
 use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
 
@@ -79,6 +80,28 @@ class ConcurrencyTest extends TestCase
                 $connection->rollBack();
             }
         }
+
+        // ── Containment ─────────────────────────────────────────────────────
+        //
+        // This class is the only one in the suite using DatabaseMigrations, and
+        // that makes it the only one that can poison every test after it.
+        //
+        // DatabaseMigrations registers `migrate:rollback` followed by
+        // `RefreshDatabaseState::$migrated = false` as ONE
+        // beforeApplicationDestroyed callback. If the rollback throws — a
+        // broken down(), which is exactly what a bad migration is — the second
+        // statement never runs. `$migrated` stays true, so every subsequent
+        // RefreshDatabase test skips `migrate:fresh` and re-seeds into the
+        // fully-populated database this class committed. The visible symptom is
+        // 276 duplicate-key failures in unrelated files, and nothing in any of
+        // them points here.
+        //
+        // That is exactly what happened on the MySQL leg
+        // (`attendances_student_id_index` could not be dropped), and it cost
+        // considerably more to diagnose than the one-line migration bug behind
+        // it deserved. Resetting the flag here as well means the next failure
+        // of that shape stays inside this file, where the stack trace is.
+        RefreshDatabaseState::$migrated = false;
 
         parent::tearDown();
     }
