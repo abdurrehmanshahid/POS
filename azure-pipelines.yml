@@ -53,6 +53,28 @@ variables:
   # deploy/provision.sh creates.
   BUILD_STAGE_DIR: /var/www/institute-builds
 
+  # ── The production gate ────────────────────────────────────────────────
+  #
+  # `false` until a production box actually exists.
+  #
+  # `verify` and `build_assets` need no server: they run tests and build the
+  # Vite bundle on Microsoft's hosted agents. `deploy_production` and
+  # `external_smoke` need a registered Environment, a VM resource and a host
+  # that answers. Without this gate a freshly registered pipeline fails on
+  # every run at "environment 'production' could not be found", and a pipeline
+  # that is always red is a pipeline nobody reads — which is how a REAL failure
+  # in `verify` gets waved through on the day it matters.
+  #
+  # Flipping this to 'true' is a commit, deliberately, not a click. Enabling
+  # production deployment then appears in the history with an author and a
+  # reviewer, and reverting it is one revert.
+  #
+  # This is a convenience gate, NOT the security control. The real controls are
+  # the approval, branch control and exclusive lock configured on the
+  # Environment in the Azure DevOps UI. Do not mark this variable settable at
+  # queue time; that would let anyone queueing a build turn deployment on.
+  DEPLOY_ENABLED: 'false'
+
 stages:
 
   # =========================================================================
@@ -368,7 +390,7 @@ stages:
   - stage: deploy_production
     displayName: Deploy to production
     dependsOn: build_assets
-    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'), eq(variables['DEPLOY_ENABLED'], 'true'))
 
     jobs:
       - deployment: production
@@ -453,7 +475,10 @@ stages:
   - stage: external_smoke
     displayName: External smoke test
     dependsOn: deploy_production
-    condition: succeeded()
+    # A skipped `deploy_production` already skips this stage, but the condition
+    # is stated rather than inherited: the one failure mode worth ruling out is
+    # a green "External smoke test" beside a deployment that never ran.
+    condition: and(succeeded(), eq(variables['DEPLOY_ENABLED'], 'true'), ne(variables['PRODUCTION_HOST'], ''))
     jobs:
       - job: smoke
         displayName: Public GET /ready

@@ -451,6 +451,34 @@ The required status check is the job named exactly **`CI`**. That name is
 configured in branch policy, outside this repository, so renaming it silently
 stops protecting `main`.
 
+### Registering the pipeline, and the `DEPLOY_ENABLED` gate
+
+**A YAML file in the repository is not a pipeline.** Azure DevOps does not
+discover `azure-pipelines.yml` on its own; the pipeline is a separate object
+that has to be created and pointed at the file. Until somebody does that,
+`azure-pipelines.yml` has never been parsed, let alone run, and the only thing
+actually testing the code is the GitHub mirror.
+
+Create it: **Pipelines → New pipeline → Azure Repos Git → `bigbinarytech-POS` →
+Existing Azure Pipelines YAML file → `/azure-pipelines.yml` → Save** (Save, not
+"Save and run", so the first run is deliberate).
+
+`DEPLOY_ENABLED` in the variables block is `'false'` until a production box
+exists. `verify` and `build_assets` need no server — they run on Microsoft's
+hosted agents — so the pipeline is useful from the moment it is registered.
+`deploy_production` and `external_smoke` skip cleanly rather than failing on a
+missing Environment.
+
+This exists because a pipeline that is red on every run is a pipeline nobody
+reads, and the cost of that is not the noise: it is that a **real** failure in
+`verify` gets waved through on the day it matters.
+
+Turning it on is a commit, not a click, so enabling production deployment
+carries an author and a reviewer in the history and reverting is one revert.
+Do **not** mark it settable at queue time. It is a convenience gate, **not** the
+security control — the approval, branch control and exclusive lock on the
+Environment are, and those are configured in the UI (see below).
+
 ```text
 Verify  ──►  Build  ──►  Deploy
   │            │            │
