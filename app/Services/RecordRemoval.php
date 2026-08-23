@@ -71,6 +71,18 @@ class RecordRemoval
             //
             // `student_id` states the owner outright and is populated on every
             // challan, enrolment or charge, so there is no chain left to break.
+            // GROSS here, deliberately, and this is the one place in the
+            // application where that is the right column.
+            //
+            // Everywhere else the question is "how much did the institute
+            // keep", and the answer is net of reversals. Here the question is
+            // "would purging this record destroy money history", and a payment
+            // that was later reversed in full is still a payment row, still a
+            // printed receipt, and still part of the trail an auditor would
+            // expect to find. Reading net would let a student whose single
+            // collection had been corrected be purged outright, taking both the
+            // payment and its reversal with them — the money would net to zero
+            // and the evidence that any of it happened would be gone.
             $collected = (int) Payment::whereHas(
                 'challan',
                 fn ($q) => $q->where('student_id', $record->id)

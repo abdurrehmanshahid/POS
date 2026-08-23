@@ -9,8 +9,9 @@ namespace App\Support;
  *
  * The spec defines 15 keys; `students.manage` is a 16th, added so that editing
  * an existing student's identity (name, CNIC, phone) is a distinct grant from
- * enrolling one, `cohorts.manage` a 17th for course batches, and
- * `attendance.manage` an 18th for taking the register. Adding keys is safe,
+ * enrolling one, `cohorts.manage` a 17th for course batches,
+ * `attendance.manage` an 18th for taking the register, and `payments.reverse`
+ * a 19th for correcting a mistyped collection. Adding keys is safe,
  * renaming them is not.
  */
 final class Permissions
@@ -35,6 +36,14 @@ final class Permissions
         'registrations.create' => ['Create and enrol students',             'Registrations and Fees'],
         'challans.view' => ['View fee challans',                       'Registrations and Fees'],
         'challans.pay' => ['Record payments (mark paid)',             'Registrations and Fees'],
+        // Reversing a collection is a supervisor act, not a counter one.
+        // `payments` is append-only, so a reversal does not edit or delete the
+        // original — it records an offsetting movement against it, and every
+        // money figure in the system reports gross MINUS reversals. Deliberately
+        // NOT granted to Admission Officer by the seeder: the whole control is
+        // that the person who mistyped the amount is not the person who undoes
+        // it. Administrator holds every key, so it lands there automatically.
+        'payments.reverse' => ['Reverse a recorded payment',             'Registrations and Fees'],
         'students.view' => ['View student directory',                  'People and Catalog'],
         // Editing a student record changes an identity that already appears on
         // issued challans, so it is separated from `registrations.create`

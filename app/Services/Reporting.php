@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Models\Payment;
 use App\Models\User;
 use App\Support\Clock;
+use App\Support\NetReceipts;
 use App\Support\Period;
 use App\Support\RevenueShare;
 use Illuminate\Database\Eloquent\Builder;
@@ -65,9 +66,18 @@ class Reporting
      */
     public function summary(User $user, Period $period): array
     {
-        $collected = (int) $this->collected($user, $period)->sum('amount');
+        // Net of reversals. See NetReceipts: `amount` is the gross handover and
+        // a correction lives in `payment_reversals`, so summing `amount` here
+        // would report money the institute gave back as money it collected.
+        $collected = (int) $this->collected($user, $period)->sum(DB::raw(NetReceipts::ofPayment()));
         // Now a genuine count of handovers rather than of settled challans, so
         // two part payments on one fee read as the two movements they were.
+        //
+        // Deliberately still counts a payment that was later reversed. It
+        // happened — somebody handed money across a counter and a receipt was
+        // printed — and a count that quietly forgets it would make the audit
+        // trail and this figure disagree. The AMOUNT is net; the COUNT is of
+        // movements.
         $payments = (int) $this->collected($user, $period)->count();
         $billed = (int) $this->issued($user, $period)->sum('net_amount');
         $days = max(1, $period->days());
@@ -91,7 +101,7 @@ class Reporting
     {
         return (int) $this->ledger->scopedPayments($user)
             ->whereBetween('payments.received_at', [$day->copy()->startOfDay(), $day->copy()->endOfDay()])
-            ->sum('amount');
+            ->sum(DB::raw(NetReceipts::ofPayment()));
     }
 
     // ---- Daily collections ---------------------------------------------------
@@ -118,7 +128,7 @@ class Reporting
 
         $totals = $this->collected($user, $period)
             ->groupBy(DB::raw($expr))
-            ->select(DB::raw("$expr as bucket"), DB::raw('SUM(payments.amount) as total'))
+            ->select(DB::raw("$expr as bucket"), DB::raw(NetReceipts::sum().' as total'))
             ->pluck('total', 'bucket');
 
         $out = collect();
@@ -185,8 +195,12 @@ class Reporting
     {
         $rows = $this->collected($user, $period)
             ->groupBy('payments.method')
-            ->select('payments.method', DB::raw('SUM(payments.amount) as total'), DB::raw('COUNT(*) as count'))
-            ->orderByDesc(DB::raw('SUM(payments.amount)'))
+            // Net, so this table still reconciles against the drawer. A 5,000
+            // cash payment reversed the same day means the Cash row should read
+            // what is actually in the drawer at closing, not what passed
+            // through it.
+            ->select('payments.method', DB::raw(NetReceipts::sum().' as total'), DB::raw('COUNT(*) as count'))
+            ->orderByDesc(DB::raw(NetReceipts::sum()))
             ->get();
 
         return $rows->map(fn ($r) => (object) [

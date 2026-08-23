@@ -8,6 +8,7 @@ use App\Models\Course;
 use App\Models\Payment;
 use App\Models\User;
 use App\Support\Clock;
+use App\Support\NetReceipts;
 use App\Support\RevenueShare;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Collection;
@@ -103,7 +104,11 @@ class Ledger
      */
     public function received(User $user): int
     {
-        return (int) $this->scopedPayments($user)->sum('amount');
+        // `NetReceipts::ofPayment()`, never `amount`. Gross is what was handed
+        // over; net is what the institute kept. Reporting gross here would
+        // OVERSTATE receipts, and an overstated collection figure is the
+        // direction that makes a cashier look like a thief.
+        return (int) $this->scopedPayments($user)->sum(DB::raw(NetReceipts::ofPayment()));
     }
 
     public function outstanding(User $user): int
@@ -218,7 +223,7 @@ class Ledger
         $totals = $this->scopedPayments($user)
             ->where('payments.received_at', '>=', $start)
             ->groupBy(DB::raw($expr))
-            ->select(DB::raw("$expr as ym"), DB::raw('SUM(payments.amount) as total'))
+            ->select(DB::raw("$expr as ym"), DB::raw(NetReceipts::sum().' as total'))
             ->pluck('total', 'ym');
 
         $out = [];

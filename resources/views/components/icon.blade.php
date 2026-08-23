@@ -52,6 +52,11 @@
         // Used wherever "not granted" or "no value" needs a mark. Replaces the
         // em dash that was previously standing in as a pseudo-icon.
         'minus-circle'  => '<circle cx="12" cy="12" r="10"/><path d="M8 12h8"/>',
+        // Money going back out. Distinct from 'restore', which means undelete a
+        // record — a reversal deletes nothing, it records an offsetting
+        // movement, and on a screen where both marks can appear they must not
+        // be the same picture.
+        'reverse'       => '<path d="M9 14L4 9l5-5"/><path d="M4 9h10a6 6 0 0 1 0 12h-3"/>',
     ];
     $body = $paths[$name] ?? '';
 @endphp

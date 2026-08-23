@@ -6,12 +6,13 @@ use App\Services\ChallanActions;
 use App\Services\Ledger;
 use App\Support\Concerns\CollectsPayments;
 use App\Support\Concerns\GuardsDoubleSubmit;
+use App\Support\Concerns\ReversesPayments;
 use App\Support\Matcher;
 use Illuminate\Database\Eloquent\Builder;
 use Livewire\Volt\Component;
 
 new class extends Component {
-    use CollectsPayments, GuardsDoubleSubmit;
+    use CollectsPayments, GuardsDoubleSubmit, ReversesPayments;
 
     public string $q = '';
 
@@ -129,15 +130,28 @@ new class extends Component {
             'canRevenue' => $user->can('revenue.view'),
             'canPay' => $user->can('challans.pay'),
             'canCancel' => $user->can('registrations.create'),
+            // Supervisor only. Administrator holds it by default; Admission
+            // Officer deliberately does not, because the control is that the
+            // person who mistyped the amount is not the person who undoes it.
+            'canReverse' => $user->can('payments.reverse'),
             'billed' => $L->billed($user),
             'received' => $L->received($user),
             'outstanding' => $L->outstanding($user),
             'rows' => $rows,
             'counts' => $counts,
             'selected' => $this->drawerId
-                ? $this->scopedChallans()->with(['student', 'raiser', 'admission.student', 'admission.course.trainer', 'admission.cohort', 'admission.enroller', 'admissions.course', 'discountApprover', 'auditLogs.actor', 'installments', 'payments.receiver'])->find($this->drawerId)
+                // `payments.reversals` is eager loaded so the ledger block can
+                // show each handover net of corrections without firing a query
+                // per payment — Payment::netAmount() answers from the relation
+                // when it is loaded.
+                ? $this->scopedChallans()->with(['student', 'raiser', 'admission.student', 'admission.course.trainer', 'admission.cohort', 'admission.enroller', 'admissions.course', 'discountApprover', 'auditLogs.actor', 'installments', 'payments.receiver', 'payments.reversals.approver'])->find($this->drawerId)
                 : null,
-            'payChallan' => $this->payId ? $this->scopedChallans()->with(['student', 'admission.student', 'payments'])->find($this->payId) : null,
+            'payChallan' => $this->payId ? $this->scopedChallans()->with(['student', 'admission.student', 'payments.reversals'])->find($this->payId) : null,
+            'reversePayment' => $this->reverseId
+                ? \App\Models\Payment::with(['reversals', 'challan.student'])
+                    ->whereIn('challan_id', $this->scopedChallans()->select('challans.id'))
+                    ->find($this->reverseId)
+                : null,
         ];
     }
 }; ?>

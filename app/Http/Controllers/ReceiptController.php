@@ -63,7 +63,8 @@ class ReceiptController extends Controller
             'challan.admission.student',
             'challan.admission.course',
             'challan.admissions.course',
-            'challan.payments',
+            'challan.payments.reversals',
+            'reversals.approver',
         ]);
 
         $this->assertVisible($request, $payment);
@@ -73,6 +74,12 @@ class ReceiptController extends Controller
             'challan' => $payment->challan,
             'settings' => Setting::current(),
             'balanceAfter' => $this->balanceAfter($payment),
+            // How much of THIS collection has since been given back. Passed
+            // separately rather than folded into the amount, because a receipt
+            // whose figure silently shrank would be the worst of both worlds:
+            // it would contradict the copy the student is holding AND give no
+            // hint why. The template stamps it instead.
+            'reversed' => $payment->reversedAmount(),
         ], 'a5');
     }
 
@@ -111,12 +118,38 @@ class ReceiptController extends Controller
      * monotonic while two collections can share a timestamp to the second. On
      * imported history the received_at values are backdated, and id order is
      * still the order the rows were written.
+     *
+     * ── Reversals, and why they are filtered by date ──────────────────────
+     *
+     * Net of reversals, but only of reversals that already EXISTED when this
+     * payment was taken. Both halves of that matter and they pull in opposite
+     * directions:
+     *
+     *   Counting all reversals would rewrite history. Reverse payment #1 today
+     *   and last month's receipt #1 reprints with a different balance from the
+     *   copy in the student's file — the exact contradiction the paragraph
+     *   above exists to prevent.
+     *
+     *   Counting none would understate the balance on every LATER receipt.
+     *   Reverse #1, then take #2, and receipt #2 would credit the student for
+     *   money the institute handed back, telling them they owe less than they
+     *   do. That is the direction that loses the institute money and gets
+     *   discovered by an argument at the counter.
+     *
+     * Filtering on `created_at <= this payment's created_at` gives the ledger
+     * as it stood at the moment of this collection, which is what the receipt
+     * is a record of. A reversal of THIS payment is stamped on the document
+     * separately (see `reversed` in render()) rather than folded into the sum.
      */
     private function balanceAfter(Payment $payment): int
     {
+        $asOf = $payment->created_at;
+
         $collectedByThen = (int) $payment->challan->payments
             ->where('id', '<=', $payment->id)
-            ->sum('amount');
+            ->sum(fn (Payment $earlier) => $earlier->amount - (int) $earlier->reversals
+                ->filter(fn ($reversal) => $asOf !== null && $reversal->created_at <= $asOf)
+                ->sum('amount'));
 
         return max(0, $payment->challan->net_amount - $collectedByThen);
     }

@@ -38,7 +38,15 @@ final class RevenueShare
      */
     public static function ofPayment(): string
     {
-        return self::share('payments.amount');
+        // NET of reversals, not gross. This one substitution is what makes
+        // every apportioned figure in the application — the Reports screen's
+        // revenue-by-course, the staff dashboard's, the owner console's, the
+        // course drawer's and both officer scorecards — report
+        // `gross − reversals` without any of them knowing reversals exist.
+        //
+        // That is the whole reason apportionment was single-sourced here in the
+        // first place. Five call sites, one place to be right.
+        return self::share(NetReceipts::ofPayment());
     }
 
     /** Summed across the rows of a grouped query. */

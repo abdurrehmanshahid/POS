@@ -10,6 +10,7 @@ use App\Models\Payment;
 use App\Models\Student;
 use App\Models\User;
 use App\Support\Clock;
+use App\Support\NetReceipts;
 use App\Support\RevenueShare;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Carbon;
@@ -156,7 +157,11 @@ class Analytics
         // every advance it had taken but not yet settled.
         $received = (int) Payment::query()
             ->whereIn('payments.challan_id', $this->everyInvoice()->select('challans.id'))
-            ->sum('amount');
+            // Net of reversals, matching Ledger::received() and the whole of
+            // Reporting. The owner's console and the staff dashboard answering
+            // differently about the institute's own revenue is the exact defect
+            // class this codebase has already been bitten by twice.
+            ->sum(DB::raw(NetReceipts::ofPayment()));
 
         return [
             'challans' => (int) $agg->challans,
@@ -295,7 +300,7 @@ class Analytics
         $paid = Payment::query()
             ->where('payments.received_at', '>=', $since)
             ->groupBy(DB::raw($period))
-            ->select(DB::raw("$period as ym"), DB::raw('SUM(payments.amount) as total'))
+            ->select(DB::raw("$period as ym"), DB::raw(NetReceipts::sum().' as total'))
             ->pluck('total', 'ym');
 
         // Materialise every month so a quiet month renders as a zero bar rather

@@ -4,11 +4,13 @@ namespace App\Models;
 
 use App\Services\Ledger;
 use App\Support\Clock;
+use App\Support\NetReceipts;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Support\Facades\DB;
 
 /**
  * Exactly one challan per admission (spec §2.8). Money is integer PKR; net is
@@ -185,9 +187,23 @@ class Challan extends Model
      */
     public function paidAmount(): int
     {
-        return (int) ($this->relationLoaded('payments')
-            ? $this->payments->sum('amount')
-            : $this->payments()->sum('amount'));
+        // NET of reversals. `payments.amount` is the gross handover and never
+        // changes — a correction is a row in `payment_reversals` — so reading
+        // it raw here would report money the institute has given back as money
+        // it still holds. Every balance, every status flip and every ageing
+        // bucket derives from this method, so getting it wrong here is wrong
+        // everywhere at once.
+        if ($this->relationLoaded('payments')) {
+            // Sum in PHP off the loaded collection, so a table of challans does
+            // not fire a query per row. `netAmount()` itself answers from the
+            // `reversals` relation when it is loaded, so callers that render
+            // payment history should eager-load `payments.reversals`; when they
+            // have not, this costs one query per payment rather than per row,
+            // which is the same shape as before and no worse.
+            return (int) $this->payments->sum(fn ($payment) => $payment->netAmount());
+        }
+
+        return (int) $this->payments()->sum(DB::raw(NetReceipts::ofPayment()));
     }
 
     /** What is still owed. Never negative: an overpayment is not a debt. */

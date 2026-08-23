@@ -56,6 +56,15 @@
         .banner-amount { font-size: 17px; font-weight: bold; color: #12132a; margin-top: 2px; }
         .banner-words { font-size: 7.5px; color: #555; margin-top: 2px; font-style: italic; }
 
+        /* Shown only when this collection has since been reversed.
+           Loud on purpose. A reprint of a receipt for money that was handed
+           back, with nothing on the face of it to say so, is a document that
+           misrepresents — and it is the copy a parent would produce in an
+           argument at the counter. */
+        .reversed { background: #FBEAEA; border-bottom: 1px solid #E2B4B4; padding: 6px 8px; text-align: center; }
+        .reversed-title { font-size: 9px; font-weight: bold; color: #8C1D1D; letter-spacing: .5px; text-transform: uppercase; }
+        .reversed-detail { font-size: 7.5px; color: #8C1D1D; margin-top: 2px; line-height: 1.3; }
+
         table.kv { width: 100%; border-collapse: collapse; }
         table.kv td { padding: 3px 8px; border-bottom: 1px solid #eef0f7; vertical-align: top; }
         td.k { color: #555; width: 42%; }
@@ -92,6 +101,31 @@
                     <div class="banner-amount">{{ Format::money($payment->amount) }}</div>
                     <div class="banner-words">{{ $payment->method }}</div>
                 </div>
+
+                {{-- Inside the @foreach, so BOTH the student copy and the office
+                     copy carry the stamp. A correction visible on only one of
+                     them is worse than none: the two documents would disagree,
+                     and the counter would be holding the one that looks clean.
+
+                     The amount above is what was handed over and it stays that
+                     way — `payments` is append-only and a reprint must match the
+                     copy the student already holds. What a later correction
+                     changes is not the figure but the STANDING of the document,
+                     so it is stamped rather than subtracted. --}}
+                @if ($reversed > 0)
+                    <div class="reversed">
+                        <div class="reversed-title">
+                            {{ $reversed >= $payment->amount ? 'Reversed in full' : 'Partly reversed' }}
+                        </div>
+                        <div class="reversed-detail">
+                            {{ Format::money($reversed) }} of this payment has been reversed.
+                            @if ($reversed < $payment->amount)
+                                {{ Format::money($payment->amount - $reversed) }} stands.
+                            @endif
+                            This receipt is no longer proof of the full amount shown above.
+                        </div>
+                    </div>
+                @endif
 
                 <table class="kv">
                     <tr><td class="k">Receipt No</td><td class="v">{{ $payment->receiptNo() }}</td></tr>

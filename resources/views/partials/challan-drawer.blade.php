@@ -1,9 +1,16 @@
 {{--
   Shared challan/registration drawer + mark-paid dialog + cancel dialog.
   The including Livewire component must define: public props drawerId, payId,
-  payMethod, cancelAdmId, cancelReason, cancelError; methods closeDrawer,
-  askPay, confirmPay, askCancel, confirmCancel; and pass view vars
-  $selected, $payChallan, $canPay, $canCancel, $payMethod, $cancelAdmId, $cancelError.
+  payMethod, cancelAdmId, cancelReason, cancelError, reverseId, reverseAmount,
+  reverseReason, reverseError; methods closeDrawer, askPay, confirmPay,
+  askCancel, confirmCancel, askReverse, confirmReverse; and pass view vars
+  $selected, $payChallan, $reversePayment, $canPay, $canCancel, $canReverse,
+  $payMethod, $cancelAdmId, $cancelError, $reverseAmount, $reverseReason,
+  $reverseError.
+
+  The reversal half comes from the ReversesPayments trait, exactly as the
+  payment half comes from CollectsPayments — both screens include this file, so
+  behaviour written into one component and not the other is how the two drift.
 --}}
 @php
     use App\Support\Format;
@@ -65,12 +72,37 @@
                     @endif
                     <div style="display:flex;justify-content:space-between;padding:10px 0 4px;font-size:var(--fs-base);border-top:2px solid var(--border)"><span style="font-weight:700;color:var(--ink)">Net payable</span><span class="tnum" style="font-weight:800;color:var(--navy)">{{ Format::money($selected->net_amount) }}</span></div>
 
-                    {{-- Collections, one line per handover of money. --}}
+                    {{-- Collections, one line per handover of money.
+
+                         The GROSS amount is shown struck through when part or
+                         all of it has been reversed, with the correction on its
+                         own line beneath. Showing only the net would leave the
+                         counter looking at a number that quietly disagrees with
+                         the receipt in the student's hand and no way to explain
+                         the difference — which is exactly the conversation a
+                         cashier cannot afford to lose. --}}
                     @foreach ($selected->payments->sortBy('received_at') as $p)
+                        @php $reversed = $p->reversedAmount(); @endphp
                         <div style="display:flex;justify-content:space-between;padding:7px 0;font-size:var(--fs-xs);border-top:1px solid var(--surface3)">
                             <span style="color:var(--muted)">{{ Format::date($p->received_at) }} · {{ $p->method }}<div style="font-size:var(--fs-2xs);color:var(--faint)">received by {{ $p->receiver?->name ?? 'system' }}</div></span>
                             <span style="display:flex;align-items:center;gap:8px">
-                                <span class="tnum" style="font-weight:600;color:var(--paid)">{{ Format::money($p->amount) }}</span>
+                                @if ($reversed > 0)
+                                    <span class="tnum" style="font-weight:600;color:var(--faint);text-decoration:line-through">{{ Format::money($p->amount) }}</span>
+                                    <span class="tnum" style="font-weight:700;color:{{ $p->netAmount() > 0 ? 'var(--paid)' : 'var(--over)' }}">{{ Format::money($p->netAmount()) }}</span>
+                                @else
+                                    <span class="tnum" style="font-weight:600;color:var(--paid)">{{ Format::money($p->amount) }}</span>
+                                @endif
+
+                                {{-- Reversing is a supervisor act and the button
+                                     only exists for one. Hidden rather than
+                                     disabled: an officer has no use for an
+                                     affordance they can never take. --}}
+                                @if ($canReverse && $p->netAmount() > 0)
+                                    <button wire:click="askReverse({{ $p->id }})"
+                                            class="btn-icon" title="Reverse this payment (supervisor)">
+                                        <x-icon name="reverse" :size="15" />
+                                    </button>
+                                @endif
                                 {{-- One receipt per handover of money, not one per challan: a
                                      fee settled in three instalments is three receipts, and the
                                      student is entitled to the one for the money they just paid.
@@ -89,6 +121,18 @@
                                 </a>
                             </span>
                         </div>
+
+                        {{-- One line per correction, naming who authorised it
+                             and why. `payment_reversals` is append-only, so this
+                             list only ever grows and is the whole audit story
+                             for this handover, visible without leaving the
+                             screen. --}}
+                        @foreach ($p->reversals->sortBy('created_at') as $r)
+                            <div style="display:flex;justify-content:space-between;padding:4px 0 6px 12px;font-size:var(--fs-2xs);color:var(--over)">
+                                <span>Reversed {{ Format::date($r->created_at) }} · {{ $r->reason }}<div style="color:var(--faint)">approved by {{ $r->approver?->name ?? 'removed account' }}</div></span>
+                                <span class="tnum" style="font-weight:600">− {{ Format::money($r->amount) }}</span>
+                            </div>
+                        @endforeach
                     @endforeach
 
                     @if ($selected->balance() > 0 && $selected->paidAmount() > 0)
@@ -193,6 +237,81 @@
                     <button class="btn btn-primary" wire:click="confirmPay"
                             wire:loading.attr="disabled" wire:target="confirmPay"
                             @disabled(! $payMethod || $payAmount < 1 || $payAmount > $payChallan->balance())>Confirm payment</button>
+                </div>
+            </div>
+        </div>
+    </div>
+@endif
+
+{{-- Reverse-payment dialog.
+
+     Supervisor only, and shaped like a decision rather than a form: the
+     original collection is restated in full at the top, because the whole risk
+     here is reversing the payment next to the one you meant. --}}
+@if ($reversePayment)
+    @php $reversible = $reversePayment->amount - $reversePayment->reversedAmount(); @endphp
+    <div class="dialog-backdrop" wire:click.self="$set('reverseId', null)">
+        <div class="dialog">
+            <div class="dialog-body">
+                <h3 style="font-size:var(--fs-md);font-weight:700;color:var(--ink);margin:0 0 4px">Reverse a payment</h3>
+                <p style="font-size:var(--fs-sm);color:var(--muted);margin:0 0 16px">
+                    Receipt <b class="tnum">{{ $reversePayment->receiptNo() }}</b> ·
+                    {{ $reversePayment->challan?->student?->name }}
+                </p>
+
+                <div style="background:var(--surface2);border-radius:10px;padding:12px 14px;margin-bottom:16px">
+                    <div style="display:flex;justify-content:space-between;padding:3px 0;font-size:var(--fs-sm)">
+                        <span style="color:var(--muted)">Collected {{ Format::date($reversePayment->received_at) }} · {{ $reversePayment->method }}</span>
+                        <span class="tnum" style="font-weight:700;color:var(--ink2)">{{ Format::money($reversePayment->amount) }}</span>
+                    </div>
+                    @if ($reversePayment->reversedAmount() > 0)
+                        <div style="display:flex;justify-content:space-between;padding:3px 0;font-size:var(--fs-sm)">
+                            <span style="color:var(--muted)">Already reversed</span>
+                            <span class="tnum" style="font-weight:700;color:var(--over)">− {{ Format::money($reversePayment->reversedAmount()) }}</span>
+                        </div>
+                    @endif
+                    <div style="display:flex;justify-content:space-between;padding:6px 0 2px;border-top:1px solid var(--border);font-size:var(--fs-sm)">
+                        <span style="font-weight:700;color:var(--ink)">Reversible</span>
+                        <span class="tnum" style="font-weight:800;color:var(--navy)">{{ Format::money($reversible) }}</span>
+                    </div>
+                </div>
+
+                <div class="label">Amount to reverse</div>
+                <input type="number" wire:model.live="reverseAmount" min="1" max="{{ $reversible }}"
+                       class="input tnum" style="margin-bottom:6px">
+                @if ($reverseAmount > 0 && $reverseAmount < $reversible)
+                    <div style="font-size:var(--fs-2xs);color:var(--due);font-weight:600;margin-bottom:14px">
+                        Partial · {{ Format::money($reversible - $reverseAmount) }} of this payment will still stand
+                    </div>
+                @else
+                    <div style="height:14px"></div>
+                @endif
+
+                <div class="label">Reason</div>
+                {{-- Required, and not for tidiness. A correction with no stated
+                     cause is indistinguishable from tampering to whoever reads
+                     the ledger six months from now, and that person may be an
+                     auditor. It is written verbatim into the activity log. --}}
+                <input type="text" wire:model.live="reverseReason" maxlength="255"
+                       class="input" placeholder="e.g. Amount mistyped at the counter — 50,000 entered for 5,000"
+                       style="margin-bottom:14px">
+
+                <div style="font-size:var(--fs-2xs);color:var(--muted);margin-bottom:16px;line-height:1.45">
+                    The original payment and its receipt are <b>not deleted</b> — nothing here ever is.
+                    This records an offsetting entry, every money total drops by it, and the receipt
+                    reprints stamped as reversed. It cannot be undone; correcting a reversal means
+                    taking a fresh payment.
+                </div>
+
+                @if ($reverseError)
+                    <div style="background:var(--over-bg);border:1px solid var(--over-br);border-radius:8px;padding:9px 12px;margin-bottom:14px;font-size:var(--fs-xs);color:var(--over)">{{ $reverseError }}</div>
+                @endif
+
+                <div style="display:flex;gap:10px;justify-content:flex-end">
+                    <button class="btn btn-ghost" wire:click="$set('reverseId', null)">Cancel</button>
+                    <button class="btn btn-danger" wire:click="confirmReverse"
+                            wire:loading.attr="disabled" wire:target="confirmReverse"
+                            @disabled(trim($reverseReason) === '' || $reverseAmount < 1 || $reverseAmount > $reversible)>Reverse payment</button>
                 </div>
             </div>
         </div>

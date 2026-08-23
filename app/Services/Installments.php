@@ -133,8 +133,12 @@ class Installments
         // and the previous version re-queried the payments table and re-summed
         // the schedule for every instalment it settled, so a two-part plan held
         // that lock across five queries instead of two.
-        $payments = $challan->payments()->orderBy('received_at')->orderBy('id')->get();
-        $unapplied = (int) $payments->sum('amount');
+        $payments = $challan->payments()->with('reversals')->orderBy('received_at')->orderBy('id')->get();
+        // Net of reversals. An instalment settled by money that has since been
+        // given back is not settled, and leaving it marked paid would hide a
+        // real debt from the ageing report and the overdue query — the two
+        // places the institute goes to find out who owes what.
+        $unapplied = (int) $payments->sum(fn ($payment) => $payment->netAmount());
 
         $threshold = 0;
 

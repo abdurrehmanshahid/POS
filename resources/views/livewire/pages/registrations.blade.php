@@ -10,13 +10,14 @@ use App\Services\Operations;
 use App\Services\RegistrationService;
 use App\Support\Concerns\CollectsPayments;
 use App\Support\Concerns\GuardsDoubleSubmit;
+use App\Support\Concerns\ReversesPayments;
 use App\Support\Contact;
 use App\Support\Matcher;
 use Illuminate\Database\Eloquent\Builder;
 use Livewire\Volt\Component;
 
 new class extends Component {
-    use CollectsPayments, GuardsDoubleSubmit;
+    use CollectsPayments, GuardsDoubleSubmit, ReversesPayments;
 
     // List + shared drawer state
     public string $q = '';
@@ -602,12 +603,24 @@ new class extends Component {
             'canCreate' => $user->can('registrations.create'),
             'canPay' => $user->can('challans.pay'),
             'canCancel' => $user->can('registrations.create'),
+            // Supervisor only, and identical to the Challans screen — both
+            // include the same drawer partial, so both must supply it.
+            'canReverse' => $user->can('payments.reverse'),
             'scopeLabel' => $canAll ? 'All registrations' : 'My registrations',
             'rows' => $admissions,
             'selected' => $this->drawerId
-                ? $this->scopedChallans()->with(['admission.student', 'admission.course.trainer', 'admission.cohort', 'admission.enroller', 'discountApprover', 'auditLogs.actor', 'installments', 'payments.receiver'])->find($this->drawerId)
+                // `payments.reversals` eager loaded for the same reason as on
+                // the Challans screen: the ledger block shows each handover net
+                // of corrections, and netAmount() answers from the loaded
+                // relation rather than one query per payment.
+                ? $this->scopedChallans()->with(['admission.student', 'admission.course.trainer', 'admission.cohort', 'admission.enroller', 'discountApprover', 'auditLogs.actor', 'installments', 'payments.receiver', 'payments.reversals.approver'])->find($this->drawerId)
                 : null,
-            'payChallan' => $this->payId ? $this->scopedChallans()->with(['admission.student', 'payments'])->find($this->payId) : null,
+            'payChallan' => $this->payId ? $this->scopedChallans()->with(['admission.student', 'payments.reversals'])->find($this->payId) : null,
+            'reversePayment' => $this->reverseId
+                ? \App\Models\Payment::with(['reversals', 'challan.student'])
+                    ->whereIn('challan_id', $this->scopedChallans()->select('challans.id'))
+                    ->find($this->reverseId)
+                : null,
         ], $wizard);
     }
 }; ?>
