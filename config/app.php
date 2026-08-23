@@ -61,14 +61,20 @@ return [
     |
     | Beside `url` above, because the two are halves of one question: how this
     | application is addressed from outside. Anything terminating TLS in front
-    | of it — Vercel's edge, an nginx on the institute's own box — talks to PHP
-    | over plain HTTP, so PHP sees `http` on port 80 whatever the parent typed.
-    | The truth arrives in `X-Forwarded-*`, and this says whose word to take.
+    | of it — in this deployment, the nginx on the institute's own box — talks
+    | to PHP over plain HTTP, so PHP sees `http` on port 80 whatever the parent
+    | typed. The truth arrives in `X-Forwarded-*`, and this says whose word to
+    | take.
     |
-    | `*` believes whoever is speaking. Correct on a platform whose edge
-    | addresses are unpublished and change without notice, and safe there
-    | precisely BECAUSE that edge is the only way in. Pin the proxy anywhere the
-    | app can also be reached directly:
+    | `*` believes whoever is speaking. That is defensible only on a platform
+    | whose edge is the ONLY way in, and this box is not one: it answers on its
+    | own static IP as well as through nginx, so `*` means a forged
+    | X-Forwarded-For steps straight around the per-IP login brake.
+    |
+    | The default below is `*` for local development, which makes an ABSENT key
+    | dangerous rather than merely unset — so `deploy.sh` and
+    | `php artisan deploy:preflight` both refuse a production deploy where this
+    | is missing, not only where it is wrong. Pin the proxy:
     |
     |     TRUSTED_PROXIES=127.0.0.1
     |     TRUSTED_PROXIES=10.0.0.0/8,192.168.1.10

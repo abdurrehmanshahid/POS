@@ -6,6 +6,7 @@ use App\Services\Audit;
 use App\Services\DatabaseBackup;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Process;
 use Illuminate\Support\Number;
 
 /**
@@ -36,7 +37,108 @@ class BackupRun extends Command
 
     private DatabaseBackup $backup;
 
+    /**
+     * The open lock handle, held for the life of the process.
+     *
+     * Kept as a property purely so PHP does not garbage-collect the resource
+     * and release the flock out from under a dump that is still running.
+     *
+     * @var resource|null
+     */
+    private $lock = null;
+
+    /**
+     * Take the lock, do the work, release the lock — whatever the work did.
+     *
+     * The release is explicit rather than left to process exit, and that is not
+     * tidiness. flock() attaches to the open file description, so a second
+     * `fopen` of the same path inside ONE process gets a second description and
+     * blocks on the first. Every artisan invocation is its own process in
+     * production, so relying on exit looked fine — and then the test suite, one
+     * process running the command eight times, saw seven of them no-op with a
+     * cheerful "another backup is already running". Anything else that ever
+     * calls this twice in a process (a queued job, `schedule:run` on a busy
+     * tick) would have hit exactly the same wall, silently.
+     */
     public function handle(DatabaseBackup $backup): int
+    {
+        if (! $this->acquireLock()) {
+            return self::SUCCESS;
+        }
+
+        try {
+            return $this->takeBackup($backup);
+        } finally {
+            $this->releaseLock();
+        }
+    }
+
+    /**
+     * @return bool false when another dump holds the lock and this run should stand down
+     */
+    private function acquireLock(): bool
+    {
+        // ---- The lock ------------------------------------------------------
+        //
+        // Three things start this command: the hourly scheduler, the mandatory
+        // dump at the top of deploy.sh, and a human at a prompt. Any two of
+        // them can coincide — a release approved on the hour is not a rare
+        // event — and two writers producing dumps into one directory at once
+        // is how you get a pile of half-written archives that all look fine in
+        // `ls`.
+        //
+        // The lock is taken HERE rather than wrapped around one caller, because
+        // a lock only one of three paths takes is not a lock. The schedule's
+        // `withoutOverlapping` stays as well: it is a cache entry that keeps
+        // the scheduler from stacking, whereas this is a kernel lock that also
+        // covers the two callers the scheduler knows nothing about.
+        //
+        // LOCK_NB: a backup that queues behind another backup is a backup
+        // nobody is waiting for. Exiting SUCCESS rather than FAILURE is
+        // deliberate — a dump was taken, by the other process, moments ago.
+        // Failing would page an operator about a system working correctly, and
+        // an alert that cries wolf is an alert that gets muted.
+        $lockPath = (string) config('backup.lock');
+
+        if ($lockPath === '') {
+            return true;
+        }
+
+        @mkdir(dirname($lockPath), 0775, true);
+        $lock = @fopen($lockPath, 'c');
+
+        if ($lock === false) {
+            // Not fatal. An unopenable lock file means the box was provisioned
+            // before /etc/tmpfiles.d/institute.conf existed, and refusing to
+            // back up over it would turn a missing safety rail into a missing
+            // backup — strictly the worse of the two.
+            $this->warn("Cannot open the backup lock at {$lockPath}; proceeding without it.");
+
+            return true;
+        }
+
+        if (! flock($lock, LOCK_EX | LOCK_NB)) {
+            fclose($lock);
+            $this->warn('Another backup is already running; this run is a no-op.');
+
+            return false;
+        }
+
+        $this->lock = $lock;
+
+        return true;
+    }
+
+    private function releaseLock(): void
+    {
+        if (is_resource($this->lock)) {
+            flock($this->lock, LOCK_UN);
+            fclose($this->lock);
+            $this->lock = null;
+        }
+    }
+
+    private function takeBackup(DatabaseBackup $backup): int
     {
         $this->backup = $backup;
 
@@ -156,7 +258,65 @@ class BackupRun extends Command
             $pruned > 0 ? " · pruned {$pruned}" : '',
         ));
 
+        $this->copyOffBox($path);
+
         return self::SUCCESS;
+    }
+
+    /**
+     * Push the dump off the machine it was taken on.
+     *
+     * Reached only after everything above succeeded, which is the whole design:
+     * a dump that failed its size floor has already been deleted, and a
+     * truncated archive pushed off-box would overwrite the last good copy with
+     * a broken one. Copying only what we have just verified means the remote
+     * can never be worse than the local.
+     *
+     * `--max-age 2h` rather than a full sync: at one dump an hour this uploads
+     * the one or two files that are new, so the copy is seconds regardless of
+     * how many dumps are on the box. A full sync would also be a way to
+     * propagate a local deletion to the remote, and the remote's retention is
+     * deliberately the bucket's business, not this command's.
+     *
+     * Never `rclone move`, and never a local delete on success. The two
+     * retentions are independent: seven days on the box for a fast restore,
+     * thirty days off it for the disk-died case.
+     *
+     * A failure here is a WARNING, not a command failure. The dump exists and
+     * is good; what is missing is the second copy. Returning FAILURE would make
+     * the deploy that called this refuse, and refusing to deploy because an
+     * object store had a bad minute is a worse outcome than a logged warning
+     * that the operator's backup check will surface within the hour.
+     */
+    private function copyOffBox(string $path): void
+    {
+        $remote = trim((string) config('backup.rclone_remote'));
+
+        if ($remote === '') {
+            // Loud rather than silent. A box with no off-box copy has backups
+            // and no disaster recovery, and that fact should appear in the log
+            // every hour until somebody fixes it.
+            $this->warn('BACKUP_RCLONE_REMOTE is not set — this dump stays on the same disk as the database it protects.');
+
+            return;
+        }
+
+        $result = Process::timeout(300)->run([
+            'rclone', 'copy', rtrim($path, '/'), $remote, '--max-age', '2h',
+        ]);
+
+        if ($result->successful()) {
+            $this->line("  off-box copy -> {$remote}");
+
+            return;
+        }
+
+        $this->warn("Off-box copy to {$remote} FAILED (exit {$result->exitCode()}). The local dump is good; there is no remote copy of it.");
+        logger()->critical('Off-box backup copy failed', [
+            'remote' => $remote,
+            'exit' => $result->exitCode(),
+            'stderr' => $result->errorOutput(),
+        ]);
     }
 
     /**

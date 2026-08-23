@@ -1,11 +1,18 @@
 #!/usr/bin/env bash
 #
-# One-shot provisioning for the institute POS on an Oracle Cloud Always Free VM.
+# One-shot provisioning for the institute POS on an AWS Lightsail instance.
 #
-# Target: Ubuntu 24.04 LTS (ARM64, Ampere A1). Native packages throughout —
-# nginx, PHP-FPM and MySQL run as ordinary systemd services. There is no Docker
-# here and nothing to pull at boot: a container runtime is one more thing that
-# can fail at 9am on a Monday for reasons unrelated to the application.
+# Target: Ubuntu 24.04 LTS, x86-64, the $24/month Mumbai bundle (4GB / 2 vCPU /
+# 80GB). Native packages throughout — nginx, PHP-FPM and MySQL run as ordinary
+# systemd services. There is no Docker here and nothing to pull at boot: a
+# container runtime is one more thing that can fail at 9am on a Monday for
+# reasons unrelated to the application.
+#
+# This replaces an earlier Oracle Cloud / Ampere A1 target. Nothing here may
+# assume ARM64: the packages installed below are all architecture-neutral apt
+# packages, and the one third-party installer (NodeSource) selects its own
+# architecture. The check in §0 exists so that a future hardcoded download
+# cannot quietly reintroduce the assumption.
 #
 # Safe to re-run. Every step checks before it acts, so this doubles as the
 # repair tool when somebody has changed something by hand.
@@ -13,7 +20,8 @@
 #   sudo bash deploy/provision.sh
 #
 # What it will ask for: nothing. What it will print at the end: the database
-# password it generated, once. Record it.
+# password it generated (once) and the MySQL version (which is the version CI
+# has to gate on). Record both.
 #
 set -euo pipefail
 
@@ -30,6 +38,24 @@ warn() { printf '\033[1;33m[!]\033[0m %s\n' "$*"; }
 die()  { printf '\033[1;31m[x]\033[0m %s\n' "$*" >&2; exit 1; }
 
 [[ $EUID -eq 0 ]] || die "Run with sudo."
+
+# ---------------------------------------------------------------------------
+# 0. Where are we, actually
+# ---------------------------------------------------------------------------
+# Stated rather than assumed. The previous target was Ampere A1 (arm64) and the
+# current one is not, so an installer that silently fetches the wrong binary is
+# a live risk rather than a hypothetical one. Anything added below that
+# downloads a release asset must select on this value, not on a literal.
+ARCH="$(dpkg --print-architecture)"
+log "Architecture: ${ARCH}"
+
+if [[ "$ARCH" != "amd64" ]]; then
+    warn "This script is written and rehearsed for amd64 (x86-64); found ${ARCH}."
+    warn "Every apt package below is architecture-neutral, so it will most likely work,"
+    warn "but nothing here has been proved on ${ARCH}. Proceed knowingly."
+fi
+
+grep -q "24.04" /etc/os-release || warn "Not Ubuntu 24.04. The PHP, MySQL and systemd assumptions below are written for it."
 
 # ---------------------------------------------------------------------------
 # 1. PHP 8.4
@@ -83,13 +109,26 @@ if ! command -v composer >/dev/null; then
     rm -f /tmp/composer-setup.php
 fi
 
-# Node, for `npm run build`. The Tailwind/Vite bundle is built on the box rather
-# than shipped as a pipeline artefact: one code path, nothing to keep in step,
-# and on two Ampere cores the build is under two minutes. If that ever becomes
-# the slow part of a deploy, build in CI and set BUILD_ASSETS=no.
-if ! command -v npm >/dev/null; then
-    log "Installing Node 20"
-    curl -fsSL https://deb.nodesource.com/setup_20.x | bash - >/dev/null 2>&1
+# Node 24, kept only as a fallback.
+#
+# Production no longer builds assets: CI builds them, the pipeline stages them
+# under /var/www/institute-builds/<sha>, and deploy.sh runs with BUILD_ASSETS=no.
+# Node stays on the box for the one case where a human has to release without a
+# pipeline — `BUILD_ASSETS=yes bash deploy/deploy.sh` — because discovering npm
+# is absent during that particular emergency is not the moment for it.
+#
+# 24, not 20: Node 20 reached end of life on 30 April 2026, and Vite 8 requires
+# ^20.19.0 || >=22.12.0. 24 is the Active LTS line and satisfies both. The
+# NodeSource setup script selects its own architecture, so there is nothing
+# arch-specific to pin here.
+#
+# Removing Node from production entirely is on the week-two list, once the
+# immutable artifact removes the fallback's reason to exist.
+NODE_MAJOR=24
+
+if ! command -v node >/dev/null || [[ "$(node -v | sed 's/^v\([0-9]*\).*/\1/')" -lt "$NODE_MAJOR" ]]; then
+    log "Installing Node ${NODE_MAJOR}"
+    curl -fsSL "https://deb.nodesource.com/setup_${NODE_MAJOR}.x" | bash - >/dev/null 2>&1
     apt-get install -y -qq nodejs
 fi
 
@@ -105,6 +144,28 @@ log "Installing MySQL 8"
 apt-get install -y -qq mysql-server
 
 systemctl enable --now mysql
+
+# MySQL must not listen on anything but loopback. Ubuntu's package already
+# defaults to 127.0.0.1, but this is the assertion that stops a hand-edit or a
+# future package change from quietly exposing the money database to the
+# internet. The Lightsail firewall does not forward 3306 either; this is the
+# second of the two layers, and neither one alone is a control.
+MYSQL_BIND_CONF="/etc/mysql/mysql.conf.d/zz-institute-bind.cnf"
+if [[ ! -f "$MYSQL_BIND_CONF" ]]; then
+    log "Pinning MySQL to loopback"
+    cat > "$MYSQL_BIND_CONF" <<'BIND'
+# Loopback only. The application is on this box; nothing else may connect.
+# Deliberately NOT a place to tune innodb_buffer_pool_size — see docs/DEPLOYMENT.md §7.3.
+[mysqld]
+bind-address = 127.0.0.1
+mysqlx = 0
+BIND
+    systemctl restart mysql
+fi
+
+if ss -lntp 2>/dev/null | grep -qE ':3306\s' && ! ss -lntp 2>/dev/null | grep -qE '127\.0\.0\.1:3306'; then
+    die "MySQL is listening on a non-loopback address. Refusing to continue — fix ${MYSQL_BIND_CONF} first."
+fi
 
 DB_PASS_FILE="/root/.institute-db-password"
 
@@ -149,11 +210,27 @@ mkdir -p "$APP_DIR"
 chown -R "$APP_USER:$APP_USER" "$APP_DIR"
 
 # Backups live outside the application directory so a deploy that wipes and
-# re-clones the app cannot take the dumps with it.
+# re-clones the app cannot take the dumps with it. This must match BACKUP_PATH
+# in .env — deploy.sh refuses to run if it does not.
 BACKUP_DIR="/var/backups/institute"
 mkdir -p "$BACKUP_DIR"
 chown "$APP_USER:$APP_USER" "$BACKUP_DIR"
 chmod 750 "$BACKUP_DIR"
+
+# Where the pipeline stages a release's compiled Vite assets, one directory per
+# commit SHA, before deploy.sh activates them inside maintenance mode.
+#
+# NOT /tmp. systemd-tmpfiles cleans /tmp on a schedule and on boot, and a build
+# that silently evaporates between the push and the deploy is exactly the
+# failure you do not want to be quiet — the deploy would refuse, correctly, but
+# for a reason nobody could reproduce afterwards.
+#
+# 0750 and owned by the app account: the pipeline writes here as this user and
+# nothing else on the box has any business reading a release before it ships.
+BUILD_STAGE_DIR="/var/www/institute-builds"
+mkdir -p "$BUILD_STAGE_DIR"
+chown "$APP_USER:$APP_USER" "$BUILD_STAGE_DIR"
+chmod 750 "$BUILD_STAGE_DIR"
 
 # ---------------------------------------------------------------------------
 # 5. PHP-FPM pool
@@ -169,11 +246,34 @@ listen.owner = www-data
 listen.group = www-data
 listen.mode = 0660
 
-; Static sizing on a 12GB box with one application. Dynamic scaling exists to
-; share a machine between tenants; here it only adds a cold first request.
-pm = static
-pm.max_children = 12
+; Sized for this box and this workload: 4GB of RAM and nine staff accounts.
+;
+; The previous setting was `pm = static` with 12 children, carried over from a
+; 12GB Ampere target. `static` keeps every child resident permanently, so that
+; was 12 x 256M = 3GB of PHP reserved on a 4GB machine whether anybody was
+; using the counter or not, leaving MySQL to fight the page cache for what was
+; left. On a nine-person counter most of those processes were idle all day.
+;
+; `ondemand` starts a child when a request needs one and reaps it after
+; process_idle_timeout. The cost is a fork on the first request after a quiet
+; spell, which is microseconds against a Livewire round trip. The benefit is
+; that idle costs nothing, which is the shape of this workload: bursts at
+; enrolment time, long quiet stretches otherwise.
+;
+; 6 children x 256M = 1.5GB worst case, against 4GB with 2GB of swap behind it.
+; Nine staff cannot generate more than six concurrent PHP requests in practice;
+; if they ever do, requests queue in the socket backlog rather than the box
+; going to swap, which is the failure mode you want.
+pm = ondemand
+pm.max_children = 6
+pm.process_idle_timeout = 10s
 pm.max_requests = 500
+
+; 256M, unchanged, and deliberately not reduced alongside the worker count.
+; One dompdf render of the fee voucher peaks near 56MB and a phpspreadsheet
+; export in the same process adds to it. Fewer workers is a concurrency
+; decision; per-request headroom is a correctness one, and they are unrelated.
+php_admin_value[memory_limit] = 256M
 
 ; Slow requests land in the log with a stack trace rather than only as a user
 ; saying "the receipt screen hangs sometimes".
@@ -250,33 +350,78 @@ ln -sf /etc/nginx/sites-available/institute /etc/nginx/sites-enabled/institute
 rm -f /etc/nginx/sites-enabled/default
 
 # ---------------------------------------------------------------------------
-# 7. Oracle Cloud's iptables
+# 7. Local firewall, as defence in depth only
 # ---------------------------------------------------------------------------
-# The single most common reason an Oracle VM "isn't reachable" while every
-# dashboard says it should be. Their Ubuntu image ships a default INPUT policy
-# that drops everything except SSH, *in addition to* the cloud Security List.
-# Opening the port in the OCI console alone changes nothing until this runs.
-log "Opening ports 80 and 443 in the local firewall"
+# Lightsail's external firewall is the real control and it lives in the console,
+# not here. This block exists because the previous target (Oracle) shipped an
+# image whose INPUT chain dropped everything except SSH, so opening a port in
+# the cloud console alone changed nothing. Lightsail's image does not do that.
+#
+# So the block is kept — a second layer costs nothing and one day the image may
+# change again — but it is now:
+#
+#   * conditional: it only inserts ACCEPT rules, never a policy, never a DROP;
+#   * position-safe: the old code inserted at index 6, which is an error
+#     ("Index of insertion too big") on the empty ruleset Lightsail actually
+#     ships, and `set -e` would have aborted provisioning right here;
+#   * incapable of locking out SSH, because it adds nothing that could.
+#
+# If the chain has a terminal DROP/REJECT we insert above it; otherwise we
+# append. Either way the result is additive.
+log "Allowing ports 80 and 443 in the local firewall (defence in depth)"
 
-if command -v netfilter-persistent >/dev/null || apt-get install -y -qq iptables-persistent; then
+if ! command -v iptables >/dev/null; then
+    warn "iptables is not present. Skipping the local firewall layer; Lightsail's console firewall is the control."
+else
     for port in 80 443; do
-        if ! iptables -C INPUT -p tcp --dport "$port" -j ACCEPT 2>/dev/null; then
-            # Inserted at position 6, above the image's catch-all REJECT rule.
-            iptables -I INPUT 6 -p tcp --dport "$port" -m state --state NEW,ESTABLISHED -j ACCEPT
+        if iptables -C INPUT -p tcp --dport "$port" -j ACCEPT 2>/dev/null; then
+            continue
+        fi
+
+        # Line number of the first terminal rule, if there is one. `grep -n` on
+        # the numbered listing rather than parsing --list-rules, because we need
+        # the index iptables itself would use for -I.
+        TERMINAL_AT="$(iptables -L INPUT --line-numbers -n 2>/dev/null \
+            | awk '$2 == "DROP" || $2 == "REJECT" { print $1; exit }')"
+
+        if [[ -n "$TERMINAL_AT" ]]; then
+            iptables -I INPUT "$TERMINAL_AT" -p tcp --dport "$port" -m conntrack --ctstate NEW,ESTABLISHED -j ACCEPT
+        else
+            # Empty or all-ACCEPT chain — Lightsail's default. Appending is
+            # correct and, on a chain with an ACCEPT policy, a no-op in effect.
+            iptables -A INPUT -p tcp --dport "$port" -m conntrack --ctstate NEW,ESTABLISHED -j ACCEPT
         fi
     done
-    netfilter-persistent save >/dev/null 2>&1 || true
+
+    # Persist only if the package is already there. Installing
+    # iptables-persistent non-interactively freezes the CURRENT ruleset as the
+    # boot ruleset, and on a box where somebody is mid-way through a manual
+    # change that is a way to persist a lockout. Left to the operator.
+    if command -v netfilter-persistent >/dev/null; then
+        netfilter-persistent save >/dev/null 2>&1 || warn "Could not persist iptables rules; they will not survive a reboot."
+    else
+        warn "iptables-persistent is not installed, so these rules are not saved across reboots."
+        warn "That is acceptable: Lightsail's console firewall is the control, and it is stateful."
+    fi
 fi
 
-warn "Also open 80/443 in the OCI console: Networking > VCN > Security Lists > Ingress Rules."
-warn "Both layers must allow the port. Neither one alone is enough."
+warn "The REAL firewall is the Lightsail console: Instance > Networking > IPv4 Firewall."
+warn "  22/tcp  -> your admin IP only    80/tcp -> anywhere    443/tcp -> anywhere"
+warn "IPv4 and IPv6 are SEPARATE rule sets in Lightsail. Configure both, or disable IPv6"
+warn "on the instance (Networking > IPv6 > Disable), which is what docs/DEPLOYMENT.md recommends."
+warn "Never open 3306. MySQL is pinned to loopback above and nothing outside this box may reach it."
 
 # ---------------------------------------------------------------------------
 # 8. Swap
 # ---------------------------------------------------------------------------
-# Oracle's images ship with none. MySQL plus PHP-FPM plus a composer install
-# during a deploy is exactly the spike that gets a process OOM-killed, and the
-# one it kills is usually mysqld.
+# Lightsail's Ubuntu image ships with none, and 4GB is not a lot of headroom.
+# MySQL plus PHP-FPM plus a composer install during a deploy is exactly the
+# spike that gets a process OOM-killed, and the one the kernel picks is usually
+# mysqld — the single process on this box whose death costs money.
+#
+# 2G is insurance against the spike, not a substitute for RAM. If the box is
+# swapping steadily rather than during a deploy, that is a signal to look at
+# pm.max_children, not to add more swap.
 if ! swapon --show | grep -q .; then
     log "Creating a 2G swap file"
     fallocate -l 2G /swapfile
@@ -338,6 +483,27 @@ RestartSec=5
 WantedBy=multi-user.target
 UNIT
 
+# ---------------------------------------------------------------------------
+# 9b. Lock files
+# ---------------------------------------------------------------------------
+# deploy.sh takes /run/institute-deploy.lock and backup:run takes
+# /run/institute-backup.lock, and both run as the unprivileged app account. /run
+# is root-owned, so neither could create its own lock file — the deploy would
+# die on the very first line with a permission error.
+#
+# tmpfiles.d rather than a plain `touch`, because /run is a tmpfs: a file
+# created here by hand disappears at the next reboot and the first deploy after
+# that reboot fails for a reason nobody connects to the reboot.
+log "Registering the deploy and backup lock files"
+
+cat > /etc/tmpfiles.d/institute.conf <<TMPFILES
+# type path                            mode user       group      age argument
+f /run/institute-deploy.lock 0644 ${APP_USER} ${APP_USER} - -
+f /run/institute-backup.lock 0644 ${APP_USER} ${APP_USER} - -
+TMPFILES
+
+systemd-tmpfiles --create /etc/tmpfiles.d/institute.conf
+
 systemctl daemon-reload
 systemctl enable --now institute-scheduler.timer
 
@@ -366,6 +532,50 @@ APT::Periodic::Unattended-Upgrade "1";
 CONF
 
 # ---------------------------------------------------------------------------
+# 10b. Time synchronisation — this one is not housekeeping
+# ---------------------------------------------------------------------------
+# TOTP codes are a function of the clock. If this box drifts more than about
+# thirty seconds, every enrolled account stops being able to log in at the same
+# moment — including the only /superadmin account, which is also the account you
+# would need in order to fix anything. There is no recovery path from inside the
+# application; you would be SSHing in to reset the clock while nine staff stand
+# at a counter that will not open.
+#
+# So this fails the provision rather than warning. A box whose clock is not
+# synchronised is not provisioned.
+#
+# The server clock stays UTC. Storage is UTC everywhere by design; the
+# application localises for display and routes/console.php schedules against
+# config('institute.timezone'). Setting the box to Asia/Karachi would
+# re-interpret money history and is exactly what must not happen.
+log "Ensuring the system clock is synchronised"
+
+apt-get install -y -qq systemd-timesyncd >/dev/null 2>&1 || true
+timedatectl set-timezone UTC
+timedatectl set-ntp true 2>/dev/null || true
+systemctl enable --now systemd-timesyncd >/dev/null 2>&1 || true
+
+# timesyncd needs a moment to complete its first exchange on a fresh instance.
+for attempt in 1 2 3 4 5 6 7 8 9 10; do
+    if timedatectl show --property=NTPSynchronized --value 2>/dev/null | grep -q '^yes$'; then
+        break
+    fi
+    sleep 3
+done
+
+if ! timedatectl show --property=NTPSynchronized --value 2>/dev/null | grep -q '^yes$'; then
+    timedatectl status || true
+    die "System clock is NOT synchronised (timedatectl: NTPSynchronized=no).
+    Two-factor authentication is computed from this clock, so drift locks every
+    enrolled account — including /superadmin — out simultaneously, with no way
+    back in through the application. Fix time sync before provisioning further:
+      systemctl status systemd-timesyncd
+      journalctl -u systemd-timesyncd -n 50"
+fi
+
+log "Clock: $(timedatectl show --property=TimeUSec --value 2>/dev/null || date -u) (UTC, synchronised)"
+
+# ---------------------------------------------------------------------------
 # 11. Log rotation
 # ---------------------------------------------------------------------------
 cat > /etc/logrotate.d/institute <<ROTATE
@@ -389,10 +599,28 @@ apt-get install -y -qq fail2ban
 systemctl enable --now fail2ban >/dev/null 2>&1 || true
 
 # ---------------------------------------------------------------------------
+# 13. certbot
+# ---------------------------------------------------------------------------
+# Installed here, run later. `certbot --nginx` needs DNS already pointing at
+# this instance, which is a human step that happens after provisioning, so this
+# only puts the tool and its renewal timer in place. Installing it now means the
+# TLS step is one command with nothing to fetch, at the point in the evening
+# when fetching things is least welcome.
+log "Installing certbot"
+apt-get install -y -qq certbot python3-certbot-nginx
+systemctl enable --now certbot.timer >/dev/null 2>&1 || true
+
+# ---------------------------------------------------------------------------
 # Done
 # ---------------------------------------------------------------------------
 nginx -t
 systemctl restart "php${PHP_VERSION}-fpm" nginx
+
+# The MySQL version is not trivia. Ubuntu 24.04's `mysql-server` metapackage
+# resolves to the 8.0.x line, NOT 8.4, and the CI leg that gates production has
+# to be the version production actually runs. Printed here so the operator can
+# copy it into docs/DEPLOYMENT.md §7.3 rather than assuming.
+MYSQL_VERSION="$(mysql --version 2>/dev/null || echo 'unknown')"
 
 cat <<SUMMARY
 
@@ -403,19 +631,39 @@ $(log "Provisioning complete")
   Password    ${DB_PASS}
               (also at ${DB_PASS_FILE}, root-only)
 
+  MySQL       ${MYSQL_VERSION}
+              ^ THIS is the version the required CI leg must match. Ubuntu
+                24.04 ships the 8.0.x line; do not "upgrade production to 8.4
+                so CI matches". Record it in docs/DEPLOYMENT.md §7.3.
+
   App dir     ${APP_DIR}
   Backups     ${BACKUP_DIR}
+  Build stage ${BUILD_STAGE_DIR}
   PHP socket  /run/php/php${PHP_VERSION}-institute.sock
+  Architecture ${ARCH}
+  Clock       UTC, NTP-synchronised (2FA depends on this)
+
+Record off-box, in a password manager, BEFORE going further — see
+docs/PRODUCTION-EMERGENCY.md. A database dump without APP_KEY is not a backup:
+APP_KEY decrypts every stored TOTP secret, and without it a perfect restore
+locks out every enrolled account.
 
 Next:
-  1. Put the code in ${APP_DIR} and write .env  (see docs/DEPLOYMENT-ORACLE.md §4)
-     Include BACKUP_PATH=${BACKUP_DIR} — deploy.sh refuses without it, because
-     the default writes dumps inside the application tree instead of here.
-  2. bash deploy/deploy.sh
+  1. Put the code in ${APP_DIR} and write .env
+     (docs/DEPLOYMENT.md §4, and .env.production.example in the repo)
+     BACKUP_PATH=${BACKUP_DIR}   — deploy.sh refuses without it
+     BACKUP_KEEP=168             — backups are HOURLY now; 14 would keep 14 hours
+  2. artisan migrate --force, then ONLY these seeders, by name:
+       db:seed --class=RolePermissionSeeder --force
+       db:seed --class=SuperAdminSeeder --force
+     NEVER bare db:seed — DemoDataSeeder invents students and fake revenue.
   3. certbot --nginx -d your.domain   ← only after DNS points here
-  4. systemctl enable --now institute-queue
+  4. Set SESSION_SECURE_COOKIE=true, then deploy again
+  5. systemctl enable --now institute-queue
+  6. Register this box as the Azure DevOps 'production' Environment VM resource
 
-Health:  curl -sf http://localhost/up && echo OK
+Health:  curl -sf http://localhost/up    && echo "up OK"
+         curl -sf http://localhost/ready && echo "ready OK"
 Logs:    journalctl -u institute-scheduler -n 50
          tail -f /var/log/nginx/institute-error.log
 

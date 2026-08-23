@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Controllers\ReadinessController;
 use App\Http\Middleware\EnsureActiveUser;
 use App\Http\Middleware\EnsurePermission;
 use App\Http\Middleware\EnsureTwoFactorEnrolled;
@@ -15,6 +16,30 @@ return Application::configure(basePath: dirname(__DIR__))
         commands: __DIR__.'/../routes/console.php',
         health: '/up',
         then: function () {
+            /*
+             * Readiness, beside liveness.
+             *
+             * `health: '/up'` above registers Laravel's own probe and, in doing
+             * so, calls PreventRequestsDuringMaintenance::except('/up') — so
+             * /up answers 200 throughout a deploy. That is right for liveness
+             * (is the process alive) and no use at all for the question an
+             * uptime monitor actually needs answered (can this thing serve a
+             * fee payment right now).
+             *
+             * /ready is registered here rather than in routes/web.php on
+             * purpose: the `web` group starts a session, and SESSION_DRIVER is
+             * `database`, so a monitor polling every five minutes would write
+             * 288 junk rows a day into the database it is checking. Outside the
+             * group it still picks up the GLOBAL middleware stack, which is
+             * where PreventRequestsDuringMaintenance lives — so it correctly
+             * returns 503 for the duration of every deploy, with no exception
+             * registered for it.
+             *
+             * It returns a bare 200 or a bare 503 and nothing else; see
+             * ReadinessController for why an empty body is the whole point.
+             */
+            Route::get('/ready', ReadinessController::class)->name('ready');
+
             // The super admin panel is a separate guard on its own prefix.
             Route::middleware('web')->group(base_path('routes/superadmin.php'));
         },

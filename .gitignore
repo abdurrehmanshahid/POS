@@ -28,6 +28,10 @@ coverage/
 .env
 .env.*
 !.env.example
+# The production TEMPLATE, which carries no values — only the keys, the required
+# settings and the reasoning. `.env.*` above would otherwise swallow it, and a
+# template nobody can find is a template nobody uses.
+!.env.production.example
 *.pem
 *.key
 secrets.*
@@ -65,6 +69,9 @@ Thumbs.db
 /public/storage
 /storage/*.key
 /storage/pail
+# The default BACKUP_LOCK_PATH (config/backup.php). Production points it at
+# /run/institute-backup.lock instead; this is the laptop/test-suite fallback.
+/storage/framework/institute-backup.lock
 /bootstrap/cache/*.php
 _ide_helper.php
 .phpunit.result.cache
@@ -80,6 +87,20 @@ database/database.sqlite
 # Local worktrees & tooling scratch
 .claude/
 .playwright-mcp/
+
+# Debugging screenshots. Two of these (challan-view.png, students-azeem.png)
+# were committed to the repository root from a browser-testing session and sat
+# there for a fortnight. They are working notes, not source: unreferenced by any
+# view, controller or document, and each one a 136KB binary that every clone
+# pays for forever. Screenshots belong in the pull request, not in the tree.
+/*.png
+/*.jpg
+/*.jpeg
+/*.webp
+/screenshot*
+# ...but the application's own assets are source and must stay. The rules above
+# are anchored to the repository root precisely so they cannot reach these.
+!/public/assets/*.png
 
 # Design handoff bundle (reference only — large binaries, not app source)
 /bbt-pos-student-registration-frontend/

@@ -15,7 +15,27 @@ permissions:
   contents: read
 
 # ---------------------------------------------------------------------------
-# Why this file is shaped the way it is
+# NON-PRODUCTION CI. This file does not deploy anything, and must not be given
+# the ability to.
+#
+# `azure-pipelines.yml` is the authoritative production pipeline: it holds the
+# `production` Environment, the manual approval, the branch control, the
+# exclusive lock and the deployment job that runs on the Lightsail box. This
+# file is a second opinion on a commit, nothing more.
+#
+# It exists because the repository pushes to GitHub and Azure DevOps on the same
+# `git push`, so a second run of the matrix is free. Keep it EQUIVALENT to the
+# Azure `verify` stage — same PHP versions, same drivers, same MySQL versions,
+# same steps. If the two are allowed to drift, the one nobody reads becomes a
+# check that cannot fail, which is worse than no check because it is still
+# trusted.
+#
+# What it deliberately does NOT contain: any deploy step, any production
+# credential, any reference to the Lightsail instance. If a release ever needs
+# to happen from here, that is a change to the release architecture and not a
+# change to this file.
+#
+# ── The required status check ──────────────────────────────────────────────
 #
 # The single required status check on `main` is the job named exactly "CI".
 # That name is configured in branch protection, which lives in GitHub settings
@@ -37,7 +57,7 @@ permissions:
 
 jobs:
   tests:
-    name: PHP ${{ matrix.php }} · ${{ matrix.db }}
+    name: PHP ${{ matrix.php }} · ${{ matrix.db }}${{ matrix.mysql-image && format(' ({0})', matrix.mysql-image) || '' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
@@ -65,16 +85,32 @@ jobs:
           # SQL in four services (Ledger, Reporting, Analytics, DatabaseBackup)
           # and in the identifier-prefix migration. Those branches are exactly
           # the code no amount of SQLite testing can reach.
+          #
+          # 8.0 is the PRODUCTION-PARITY leg: deploy/provision.sh installs
+          # Ubuntu 24.04's `mysql-server` metapackage, which resolves to the
+          # 8.0.x line, not 8.4. Gate on the version the counter actually runs.
           - php: '8.4'
             db: mysql
+            mysql-image: 'mysql:8.0'
+          # 8.4 stays for forward compatibility. Do NOT upgrade production to
+          # 8.4 to make this the only MySQL leg — Ubuntu's supported package is
+          # the lower-risk option right now.
+          - php: '8.4'
+            db: mysql
+            mysql-image: 'mysql:8.4'
 
     services:
       # Declared for every leg because GitHub Actions cannot start a service
-      # conditionally on a matrix value. The SQLite legs ignore it; a few
-      # seconds of container start is cheaper than maintaining a second
-      # near-identical job that drifts out of step with this one.
+      # conditionally on a matrix value. The SQLite legs ignore it and fall back
+      # to the 8.0 image they never connect to; a few seconds of container start
+      # is cheaper than maintaining a second near-identical job that drifts out
+      # of step with this one.
+      #
+      # Azure does this with a conditional `docker run` instead, because there
+      # the matrix value IS readable at step level. The two files agree on what
+      # is tested, not on the mechanism.
       mysql:
-        image: mysql:8.4
+        image: ${{ matrix.mysql-image || 'mysql:8.0' }}
         env:
           MYSQL_ROOT_PASSWORD: root
           MYSQL_DATABASE: institute_testing
@@ -169,7 +205,10 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v7
         with:
-          node-version: 20
+          # 24, matching azure-pipelines.yml and provision.sh. Node 20 reached
+          # end of life on 30 April 2026, and Vite 8 requires
+          # ^20.19.0 || >=22.12.0.
+          node-version: 24
           cache: npm
 
       - name: Install dependencies
@@ -179,6 +218,16 @@ jobs:
         # A real gate: the production bundle has to compile. There is no npm
         # test script in this project, so none is pretended at here.
         run: npm run build
+
+      - name: Verify the Vite manifest exists
+        # The Azure pipeline publishes public/build as the artifact its deploy
+        # stage unpacks under the release SHA, and deploy.sh refuses on a
+        # missing manifest.json. Asserting the shape here too means a build that
+        # silently emits nothing fails on whichever CI a person is looking at.
+        run: |
+          test -f public/build/manifest.json \
+            || { echo "::error::Vite produced no public/build/manifest.json"; exit 1; }
+          find public/build -type f
 
   CI:
     # The required status check. Keep this name.
@@ -200,3 +249,5 @@ jobs:
             exit 1
           fi
           echo "All checks passed."
+          echo "NOTE: this gate proves the commit is good. It does NOT deploy."
+          echo "Production releases go through azure-pipelines.yml only."

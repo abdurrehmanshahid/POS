@@ -1,20 +1,31 @@
 # ---------------------------------------------------------------------------
-# Azure Pipelines mirror of .github/workflows/ci.yml
+# Institute POS — the authoritative production pipeline.
 #
-# The repository pushes to GitHub and Azure DevOps on the same `git push`, so
-# both need to be able to prove a commit is good. This file is a translation of
-# the GitHub workflow, not a second opinion: the same PHP versions, the same two
-# drivers, the same steps in the same order. When one changes, change both. If
-# they are ever allowed to drift, the one nobody reads becomes a check that
-# cannot fail, which is worse than no check because it is still trusted.
+# Azure DevOps is the deployment system. `.github/workflows/ci.yml` still exists
+# and still runs the test matrix, because the repository pushes to both remotes
+# on the same `git push` and a second opinion on a commit is free — but it
+# deploys nothing and must never be given the ability to. There is exactly one
+# path to production and it is this file.
 #
-# The matrix is the point. Production runs MySQL and the suite runs SQLite,
-# and this codebase hand-writes driver-specific SQL in four services. The MySQL
-# leg has already earned its place once: it caught `admissions.status =>
-# 'active'`, a value absent from the column's enum, which would have failed
-# every one of the 478 roll-import rows on MySQL while passing on SQLite —
-# because the CHECK constraint was lost when a later migration rebuilt the
-# table. SQLite alone could never have told us.
+#   commit
+#     -> Verify        four legs; PHP 8.4 x MySQL 8.0 is the one that gates
+#     -> CI            the required check, named exactly `CI`
+#     -> BuildAssets   Node 24, npm ci && npm run build, published as an artifact
+#     -> [approval]    a human, in the `production` Environment
+#     -> Deploy        runs ON the Lightsail box as an Environment VM resource
+#     -> Smoke         a Microsoft-hosted agent fetches the public https /ready
+#
+# ── What is NOT in this file, deliberately ────────────────────────────────
+#
+# Approval, branch control and the exclusive lock are Azure DevOps Environment
+# checks. They live in the UI, on Pipelines > Environments > production, and
+# they cannot be expressed here. A YAML file cannot gate itself: anything this
+# file could say about who may approve it is something a pull request could
+# change. docs/DEPLOYMENT.md §8 has the click-by-click.
+#
+# The server-side `flock` in deploy.sh is the second half of the exclusive lock,
+# and it is the half that matters — the Environment lock does not cover a human
+# who SSHes in and runs a release by hand.
 # ---------------------------------------------------------------------------
 
 trigger:
@@ -25,48 +36,107 @@ pr:
   branches:
     include: [main]
 
-# Supersede an in-flight run when a newer commit lands on the same branch.
-# Equivalent to the GitHub workflow's `concurrency` block.
 name: $(Build.SourceBranchName)-$(Build.BuildId)
 
+variables:
+  # The exact revision this run tested, threaded all the way to `git reset
+  # --hard` on the server. Not a branch name: `origin/main` is a race, because
+  # a commit can land between the approval and the deploy, and the pipeline log
+  # would look identical either way.
+  RELEASE_SHA: $(Build.SourceVersion)
+
+  # The public address the external smoke test fetches. Not a secret; it is
+  # printed on every fee voucher.
+  PRODUCTION_HOST: pos.bbt.edu.pk
+
+  # Must match BUILD_STAGE_DIR in deploy/deploy.sh and the directory
+  # deploy/provision.sh creates.
+  BUILD_STAGE_DIR: /var/www/institute-builds
+
 stages:
+
+  # =========================================================================
+  # Verify
+  # =========================================================================
   - stage: verify
     displayName: Verify
     jobs:
+
       # -------------------------------------------------------------------
       - job: tests
         displayName: Tests
-        timeoutInMinutes: 15
+        timeoutInMinutes: 20
         pool:
-          vmImage: ubuntu-latest
+          vmImage: ubuntu-24.04
 
         strategy:
           # Report every broken combination in one run rather than stopping at
           # the first. "php and mysql both fail" is a different diagnosis from
           # "php fails".
           #
-          # dbName is carried in the matrix rather than derived from dbDriver
+          # dbName and mysqlImage are carried in the matrix rather than derived
           # further down. A `${{ if eq(variables['dbDriver'], ...) }}` is
-          # evaluated at compile time, before the matrix exists, so it would
-          # have resolved to nothing on every leg and handed the suite an empty
-          # database name.
+          # evaluated at COMPILE time, before the matrix exists, so it would
+          # resolve to nothing on every leg and hand the suite an empty database
+          # name.
           matrix:
+
+            # THE PRODUCTION-PARITY LEG. deploy/provision.sh installs Ubuntu
+            # 24.04's `mysql-server` metapackage, which resolves to the 8.0.x
+            # line — not 8.4. This is the version the counter actually runs on,
+            # so this is the leg the gate has to care about.
+            #
+            # Do NOT upgrade production to 8.4 to make the other leg match.
+            # Ubuntu's supported package is the lower-risk option, and "change
+            # production so CI is tidier" is the wrong direction of travel.
+            php84_mysql80:
+              phpVersion: '8.4'
+              dbDriver: mysql
+              dbName: institute_testing
+              mysqlImage: 'mysql:8.0'
+              legIsRequired: 'yes'
+
+            # Forward compatibility, not the gate. Kept because it has already
+            # earned its place once: it caught `admissions.status => 'active'`,
+            # a value absent from the column's enum, which would have failed
+            # every one of the 478 roll-import rows on MySQL while passing on
+            # SQLite — the CHECK constraint had been lost when a later migration
+            # rebuilt the table. SQLite alone could never have told us.
+            php84_mysql84:
+              phpVersion: '8.4'
+              dbDriver: mysql
+              dbName: institute_testing
+              mysqlImage: 'mysql:8.4'
+              legIsRequired: 'no'
+
+            # The fast legs. This codebase hand-writes driver-specific SQL in
+            # four services, so SQLite is not redundant with MySQL — it is the
+            # other branch of those conditionals.
             php84_sqlite:
               phpVersion: '8.4'
               dbDriver: sqlite
               dbName: ':memory:'
+              mysqlImage: ''
+              legIsRequired: 'yes'
+
+            # 8.5 on the fast driver only. Testing only the floor lets a
+            # deprecation land unnoticed; testing only the newest lets in syntax
+            # the floor cannot parse. Production stays on 8.4 regardless — the
+            # sudoers file names php8.4-fpm literally.
             php85_sqlite:
               phpVersion: '8.5'
               dbDriver: sqlite
               dbName: ':memory:'
-            php84_mysql:
-              phpVersion: '8.4'
-              dbDriver: mysql
-              dbName: institute_testing
+              mysqlImage: ''
+              legIsRequired: 'no'
 
         steps:
+          # PHP from the SAME ondrej PPA that deploy/provision.sh uses. That is
+          # deliberate and worth the extra minute: CI and production take their
+          # runtime from one source, so "it passed in CI" and "it runs on the
+          # box" are statements about the same build of PHP.
           - script: |
-              sudo update-alternatives --set php /usr/bin/php$(phpVersion) || true
+              set -e
               sudo add-apt-repository -y ppa:ondrej/php
               sudo apt-get update -qq
               sudo apt-get install -y --no-install-recommends \
@@ -79,7 +149,8 @@ stages:
             displayName: Set up PHP $(phpVersion)
             # Extensions listed explicitly rather than trusting the image's
             # defaults: gd and zip for dompdf and phpspreadsheet, sqlite3 and
-            # mysql for the two legs. sodium ships in the ondrej cli package.
+            # mysql for the two drivers. sodium ships in the ondrej cli package
+            # and the encrypted two-factor casts need it.
 
           - task: Cache@2
             displayName: Cache Composer packages
@@ -104,29 +175,37 @@ stages:
             # phpunit.xml supplies the test database. This exists for APP_KEY,
             # which the encrypted two-factor casts genuinely require and which
             # .env.example deliberately ships blank.
+            #
+            # .env.example, NOT .env.production.example: this is a CI runner, it
+            # has no MySQL on 127.0.0.1 at this point, no TLS and no backup
+            # directory, and the production template asserts all three.
 
           - script: vendor/bin/pint --test
             displayName: Check code style
             # Its own step so a style failure is never mistaken for broken
             # behaviour, or the other way round.
 
+          # A container started per leg rather than an Azure service container.
+          # `services:` is resolved at compile time and cannot read a matrix
+          # value, so declaring it would start MySQL on the SQLite legs too and
+          # — worse — could not vary the image between the 8.0 and 8.4 legs,
+          # which is the entire reason both legs exist.
           - script: |
+              set -e
               docker run -d --name mysql -p 3306:3306 \
                 -e MYSQL_ROOT_PASSWORD=root \
-                -e MYSQL_DATABASE=institute_testing \
-                mysql:8.4
-              for i in $(seq 1 30); do
+                -e MYSQL_DATABASE=$(dbName) \
+                $(mysqlImage)
+              for i in $(seq 1 45); do
                 if docker exec mysql mysqladmin ping -h 127.0.0.1 -uroot -proot --silent 2>/dev/null; then
-                  echo "MySQL is up"; exit 0
+                  echo "MySQL is up:"; docker exec mysql mysql -uroot -proot -e "SELECT VERSION();"
+                  exit 0
                 fi
                 sleep 2
               done
-              echo "MySQL did not become ready within 60s"; exit 1
-            displayName: Start and wait for MySQL
+              echo "MySQL did not become ready within 90s"; docker logs mysql; exit 1
+            displayName: Start $(mysqlImage)
             condition: eq(variables['dbDriver'], 'mysql')
-            # Started only on the leg that needs it. GitHub Actions declares the
-            # service for every leg because it cannot condition on a matrix
-            # value; here we can, so we do.
 
           - script: php artisan test
             displayName: Run the test suite
@@ -141,6 +220,11 @@ stages:
             # <env> entries do not overwrite a variable that already exists in
             # the environment. That is what lets one suite run against both
             # drivers without a second config file to keep in step.
+            #
+            # This suite uses RefreshDatabase. It runs HERE and only here.
+            # It must never be pointed at `institute_pos` on the production box:
+            # it would drop every table in it. Production is smoke-tested
+            # through a browser, never through PHPUnit.
 
           - script: |
               set -e
@@ -162,22 +246,69 @@ stages:
             # release, rather than here.
             #
             # Down, then up again: a down() that half-reverses passes the first
-            # leg and fails the second on the duplicate it left behind. Cheap,
-            # and it turns "rollbacks work" from a claim in a comment into a
-            # check that has to stay true.
+            # leg and fails the second on the duplicate it left behind.
 
       # -------------------------------------------------------------------
-      - job: assets
-        displayName: Frontend build
-        timeoutInMinutes: 10
+      - job: CI
+        displayName: CI
+        dependsOn: [tests]
+        # `always()` so the gate still runs when something upstream failed,
+        # which is precisely when its verdict matters. A skipped required check
+        # can read as "not failing".
+        condition: always()
         pool:
-          vmImage: ubuntu-latest
+          vmImage: ubuntu-24.04
+
+        steps:
+          - checkout: none
+          - script: |
+              echo "tests: $(dependencies.tests.result)"
+              if [ "$(dependencies.tests.result)" != "Succeeded" ]; then
+                echo "##vso[task.logissue type=error]The test matrix did not pass."
+                exit 1
+              fi
+              echo "All required checks passed."
+            displayName: Verify every required check passed
+            # THIS JOB'S NAME IS THE REQUIRED CHECK.
+            #
+            # `CI` is configured as the required status check in the branch
+            # policy on main, which lives in Azure DevOps project settings and
+            # NOT in this repository. Renaming this job silently stops
+            # protecting the branch: the policy goes on waiting for a check that
+            # no longer exists, or is quietly dropped, depending on the setting.
+            #
+            # `dependsOn: [tests]` covers the whole matrix — Azure rolls every
+            # leg's result into one job result, so a failure on ANY leg,
+            # required or forward-compatibility, fails this gate. That is
+            # intentional: an optional leg is optional in what it proves, not in
+            # whether it is allowed to be broken.
+
+  # =========================================================================
+  # Build the assets, once, in one place
+  # =========================================================================
+  # Nothing generated enters git — public/build is git-ignored and stays that
+  # way. It is built here and shipped as an artifact, because npm on the
+  # production box is a dependency production should not have and a build there
+  # is a build nobody reviewed.
+  - stage: build_assets
+    displayName: Build assets
+    dependsOn: verify
+    condition: succeeded()
+    jobs:
+      - job: assets
+        displayName: Vite build (Node 24)
+        timeoutInMinutes: 15
+        pool:
+          vmImage: ubuntu-24.04
 
         steps:
           - task: NodeTool@0
-            displayName: Set up Node
+            displayName: Set up Node 24
             inputs:
-              versionSpec: '20'
+              versionSpec: '24.x'
+            # 24, not 20. Node 20 reached end of life on 30 April 2026 and
+            # Vite 8 requires ^20.19.0 || >=22.12.0. provision.sh installs the
+            # same major on the box for its emergency fallback path.
 
           - task: Cache@2
             displayName: Cache npm
@@ -187,102 +318,167 @@ stages:
               path: $(HOME)/.npm
 
           - script: npm ci
-            displayName: Install dependencies
+            displayName: npm ci
 
           - script: npm run build
-            displayName: Build
-            # A real gate: the production bundle has to compile. There is no
-            # npm test script in this project, so none is pretended at here.
+            displayName: npm run build
 
-      # -------------------------------------------------------------------
-      - job: CI
-        displayName: CI
-        dependsOn: [tests, assets]
-        # Runs even when something upstream failed, which is precisely when its
-        # verdict matters. A skipped gate can read as "not failing".
-        condition: always()
-        pool:
-          vmImage: ubuntu-latest
-
-        steps:
           - script: |
-              echo "tests:  $(Agent.JobStatus)"
-              if [ "$(dependencies.tests.result)" != "Succeeded" ] || \
-                 [ "$(dependencies.assets.result)" != "Succeeded" ]; then
-                echo "##vso[task.logissue type=error]One or more required checks did not pass."
-                exit 1
-              fi
-              echo "All checks passed."
-            displayName: Verify every check passed
-            # Set this job as the required check in the branch policy for main,
-            # the same way the GitHub job named "CI" is the required check
-            # there. Everything real runs in the jobs above; this is the gate.
+              set -e
+              test -f public/build/manifest.json \
+                || { echo "##vso[task.logissue type=error]Vite produced no public/build/manifest.json"; exit 1; }
+              echo "manifest.json present:"
+              cat public/build/manifest.json
+              echo
+              find public/build -type f | sed 's/^/  /'
+            displayName: Verify the Vite manifest exists
+            # The artifact is only useful if it has the shape deploy.sh expects.
+            # deploy.sh preflight refuses on a missing
+            # ${BUILD_STAGE_DIR}/<sha>/manifest.json, and this is the step that
+            # makes that refusal impossible to reach for a reason as dull as
+            # "the build silently emitted nothing". Verified against the real
+            # output: manifest.json sits at the ROOT of public/build, with
+            # assets/ beside it.
 
-  # -------------------------------------------------------------------------
-  # Deploy
-  # -------------------------------------------------------------------------
-  # Only from main, only when `verify` went green. The stage does nothing
-  # clever: it runs deploy/deploy.sh on the server over SSH, which is the same
-  # script a human runs by hand. One deploy path, exercised on every release —
-  # a separate "emergency manual procedure" is one nobody has rehearsed.
+          - task: PublishPipelineArtifact@1
+            displayName: Publish build-assets
+            inputs:
+              targetPath: 'public/build'
+              artifact: 'build-assets'
+              publishLocation: 'pipeline'
+            # The CONTENTS of public/build, so the artifact unpacks to
+            # <sha>/manifest.json rather than <sha>/build/manifest.json.
+
+  # =========================================================================
+  # Deploy — on the box itself
+  # =========================================================================
+  # This runs on the Lightsail instance, registered as a Virtual Machine
+  # resource in the `production` Environment. NOT over SSH from a hosted agent.
   #
-  # Setup this stage needs, once:
+  # The reason is the firewall. An SSH-from-hosted-agent design needs port 22
+  # reachable from Microsoft's address ranges, which in practice means 22 open
+  # to the world. A VM agent dials OUT to Azure DevOps and polls for work, so 22
+  # stays restricted to the administrator's own IP and there is no inbound
+  # deployment path at all.
   #
-  #   1. Project Settings > Service connections > New > SSH
-  #      Name it `institute-prod`. Host = the Oracle VM's public IP,
-  #      user = `ubuntu`, private key = the one you gave the instance at
-  #      creation.
-  #
-  #   2. Pipelines > Environments > New > name it `production`.
-  #      Add an Approval check on it if you want a human to press go. Leave it
-  #      without one for hands-off deploys. Either way the deploy itself is
-  #      identical; the difference is only who starts it.
-  #
-  # The server must be able to `git fetch` this repository — give the box a
-  # read-only deploy key, or a PAT in the remote URL.
-  # -------------------------------------------------------------------------
-  - stage: deploy
+  # The agent runs as the `institute` service account, which already has exactly
+  # three sudo grants (reload php8.4-fpm, restart/status institute-queue) and
+  # nothing else. Registering the agent as root to "make the pipeline simpler"
+  # would hand every future pipeline edit unrestricted control of the box.
+  - stage: deploy_production
     displayName: Deploy to production
-    dependsOn: verify
+    dependsOn: build_assets
     condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
 
     jobs:
       - deployment: production
-        displayName: Release
-        environment: production
-        pool:
-          vmImage: ubuntu-latest
+        displayName: Release $(RELEASE_SHA)
+        timeoutInMinutes: 30
+        environment:
+          name: production
+          resourceType: VirtualMachine
+          resourceName: institute-prod
+          # Approval, branch control and the exclusive lock are configured on
+          # this Environment in the Azure DevOps UI. They are not expressible
+          # here, and that is the point — see the header of this file.
 
         strategy:
           runOnce:
             deploy:
               steps:
+                # The repository is already on the box; the agent does not need
+                # its own copy, and checking one out here would clone into the
+                # agent's work directory rather than /var/www/institute.
                 - checkout: none
 
-                - task: SSH@0
-                  displayName: Run deploy.sh on the server
+                - task: DownloadPipelineArtifact@2
+                  displayName: Download the tested build
                   inputs:
-                    sshEndpoint: institute-prod
-                    runOptions: commands
-                    # `sudo -u institute` because the app files are owned by the
-                    # service account, not by the SSH user. deploy.sh takes the
-                    # backup, migrates, rebuilds caches and health-checks; it
-                    # exits non-zero if the site does not come back, which fails
-                    # this task and shows up in the pipeline rather than in a
-                    # phone call from the counter.
-                    commands: |
-                      cd /var/www/institute && sudo -u institute bash deploy/deploy.sh
-                    readyTimeout: '30000'
-                    failOnStdErr: false
+                    artifact: 'build-assets'
+                    path: '$(Pipeline.Workspace)/build-assets'
 
-                - task: SSH@0
-                  displayName: Confirm the site answers
-                  inputs:
-                    sshEndpoint: institute-prod
-                    runOptions: commands
-                    # Deliberately a second, independent check after the script
-                    # has finished and released everything. deploy.sh checking
-                    # its own work is necessary but not sufficient.
-                    commands: |
-                      curl -sf --max-time 15 http://127.0.0.1/up > /dev/null && echo "health: OK"
-                    readyTimeout: '30000'
+                - script: |
+                    set -euo pipefail
+
+                    STAGE="$(BUILD_STAGE_DIR)/$(RELEASE_SHA)"
+
+                    test -f "$(Pipeline.Workspace)/build-assets/manifest.json" \
+                      || { echo "##vso[task.logissue type=error]Downloaded artifact has no manifest.json"; exit 1; }
+
+                    # Replaced, not merged: a partial directory from a failed
+                    # earlier attempt would satisfy deploy.sh's manifest check
+                    # while missing half the chunks.
+                    rm -rf "$STAGE"
+                    mkdir -p "$STAGE"
+                    cp -a "$(Pipeline.Workspace)/build-assets/." "$STAGE/"
+
+                    test -f "$STAGE/manifest.json" \
+                      || { echo "##vso[task.logissue type=error]Staging did not produce $STAGE/manifest.json"; exit 1; }
+
+                    echo "Staged $(find "$STAGE" -type f | wc -l) files at $STAGE"
+                  displayName: Stage assets under the exact SHA
+
+                - script: |
+                    set -euo pipefail
+                    cd /var/www/institute
+
+                    # RELEASE_SHA is mandatory and has no fallback. deploy.sh
+                    # verifies the commit exists (git cat-file) and that the
+                    # staged build is present BEFORE it takes a backup or enters
+                    # maintenance mode.
+                    #
+                    # BUILD_ASSETS=no: this box does not compile assets. The
+                    # tested build is already staged above.
+                    RELEASE_SHA="$(RELEASE_SHA)" \
+                    BUILD_ASSETS=no \
+                    BUILD_STAGE_DIR="$(BUILD_STAGE_DIR)" \
+                      bash deploy/deploy.sh
+                  displayName: deploy.sh RELEASE_SHA=$(RELEASE_SHA)
+                  # The agent already runs as `institute`, so there is no
+                  # `sudo -u institute` here — and there must not be, because
+                  # the sudoers file grants three systemctl commands and not a
+                  # shell.
+
+  # =========================================================================
+  # Independent external smoke test
+  # =========================================================================
+  # From a Microsoft-hosted agent, over the public internet, on purpose.
+  #
+  # deploy.sh already checks localhost /up and public /ready from the box
+  # itself. That is necessary and not sufficient: a check that originates on the
+  # server shares the server's DNS resolver, bypasses the Lightsail firewall
+  # entirely, and can succeed on a box nobody outside can reach. This one
+  # crosses DNS, the firewall, TLS, nginx, PHP-FPM, Laravel and MySQL, which is
+  # the same path a member of staff takes.
+  - stage: external_smoke
+    displayName: External smoke test
+    dependsOn: deploy_production
+    condition: succeeded()
+    jobs:
+      - job: smoke
+        displayName: Public GET /ready
+        pool:
+          vmImage: ubuntu-24.04
+        steps:
+          - checkout: none
+          - script: |
+              set -euo pipefail
+              URL="https://$(PRODUCTION_HOST)/ready"
+
+              # Retried, because PHP-FPM has just been reloaded and the first
+              # request after `artisan up` can land microseconds early.
+              for attempt in 1 2 3 4 5; do
+                CODE="$(curl -s -o /dev/null -w '%{http_code}' --max-time 20 "$URL" || echo 000)"
+                echo "attempt ${attempt}: ${URL} -> ${CODE}"
+                if [ "$CODE" = "200" ]; then
+                  echo "Production is publicly ready."
+                  exit 0
+                fi
+                sleep 6
+              done
+
+              echo "##vso[task.logissue type=error]${URL} did not return 200."
+              echo "503 here usually means the deploy left maintenance mode ON — check the deploy job's tail."
+              echo "000 means DNS, TLS or the Lightsail firewall, not the application."
+              exit 1
+            displayName: Fetch https://$(PRODUCTION_HOST)/ready

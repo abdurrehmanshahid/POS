@@ -101,9 +101,11 @@ class AppServiceProvider extends ServiceProvider
      * WHY SO NARROW. Two broader controls were tried first and both were worse:
      *
      *   `trustHosts()` rejects a mismatched Host with a 400. That also rejects
-     *   every Vercel preview deployment (served on `*.vercel.app`, never the
-     *   custom APP_URL) and any nginx left on its own documented default of
-     *   `proxy_set_header Host $proxy_host`. And `.env.example` ships
+     *   any nginx left on its own documented default of
+     *   `proxy_set_header Host $proxy_host`, and any second address staff
+     *   legitimately reach the box on — the static IP before DNS propagates,
+     *   say, which is exactly when you are least able to debug a bare 400.
+     *   And `.env.example` ships
      *   `APP_URL=http://localhost`, so APP_ENV=production with APP_URL
      *   forgotten takes the entire site down with a bare 400 and nothing in the
      *   log naming why.
