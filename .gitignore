@@ -38,7 +38,19 @@ secrets.*
 
 # Logs
 *.log
-logs/
+# Anchored, and for exactly the reason the /vendor/ note above gives. Unanchored
+# `logs/` matches at ANY depth, so it swallowed `storage/logs/` — the directory
+# Laravel writes laravel.log into. Every other storage directory ships a
+# `.gitignore` placeholder so a fresh clone has it; that one could not, because
+# this rule ignored the placeholder too.
+#
+# The consequence was not cosmetic. `git clone` into /var/www/institute (which
+# is step 10 of the production bootstrap) produced a tree with no storage/logs,
+# so ReadinessController found a required path missing and /ready answered 503 —
+# meaning the health check at the end of the very first deploy on a fresh box
+# would have failed, on a brand-new correctly-provisioned machine. CI caught it
+# because CI is the only place that ever runs from a genuinely clean checkout.
+/logs/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
