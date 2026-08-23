@@ -2,9 +2,9 @@
 
 namespace App\Http\Controllers;
 
-use App\Services\Reporting;
+use App\Services\ReportBook;
+use App\Support\Csv;
 use App\Support\Download;
-use App\Support\Format;
 use App\Support\Period;
 use Illuminate\Http\Request;
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
@@ -12,21 +12,46 @@ use PhpOffice\PhpSpreadsheet\Style\Alignment;
 use PhpOffice\PhpSpreadsheet\Style\Fill;
 use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
 use Symfony\Component\HttpFoundation\StreamedResponse;
+use ZipArchive;
 
 /**
- * Reports to a real multi-sheet .xlsx.
+ * The report, as a file, in whichever of three shapes the reader can open.
  *
  * The prototype's Export button raised a toast and downloaded nothing, which is
  * worse than having no button: it tells the user their report is on its way.
  *
- * Money is written as a NUMBER with a currency format, never as the string
- * "Rs 20,000". A formatted string cannot be summed, sorted or charted, so an
- * accountant's first action after opening the file would be to strip it back
- * out again.
+ * Three formats, because the report is five sections and CSV is one table:
+ *
+ *   xlsx  one workbook, five sheets, money formatted and column widths set.
+ *         The richest of the three and still the default, because it is what
+ *         the reports screen has shipped and what people already have saved.
+ *   csv   one file, the sections stacked and labelled. Opens on a double click
+ *         anywhere, including on a machine with no Excel at all.
+ *   zip   one .csv per section. The only shape that keeps each section a clean
+ *         rectangle, which is what a pivot table or an import job needs.
+ *
+ * None of them queries anything. {@see ReportBook} builds the tables once and
+ * all three write out the same description, so the three files cannot disagree
+ * with each other or with the screen. Adding a fourth format is a writer, not
+ * another set of queries.
+ *
+ * Money is written as a NUMBER — 20000, never "Rs 20,000" and never "20,000".
+ * A formatted string cannot be summed, sorted or charted, so an accountant's
+ * first action after opening the file would be to strip it back out again. In
+ * the .xlsx a number format makes it read as 20,000 without it ceasing to be a
+ * number; in the CSVs a thousands separator would be a field separator, so the
+ * bare integer is the only correct answer there anyway.
  */
 class ReportExportController extends Controller
 {
-    public function __invoke(Request $request, Reporting $reporting): StreamedResponse
+    /**
+     * `format` accepts only these. Anything else falls back to the first rather
+     * than 400s, matching `Period::resolve`, which quietly returns 'month' for
+     * nonsense: a mistyped query string should still hand back a report.
+     */
+    private const FORMATS = ['xlsx', 'csv', 'zip'];
+
+    public function __invoke(Request $request, ReportBook $book): StreamedResponse
     {
         $user = $request->user();
 
@@ -40,35 +65,52 @@ class ReportExportController extends Controller
             $request->query('to'),
         );
 
-        $book = new Spreadsheet;
-        $book->getProperties()
+        $format = (string) $request->query('format', 'xlsx');
+        if (! in_array($format, self::FORMATS, true)) {
+            $format = self::FORMATS[0];
+        }
+
+        // Built BEFORE the response so a query that throws produces a 500 the
+        // error handler can render, rather than an exception raised halfway
+        // through a stream the browser has already begun saving as a file.
+        $sections = $book->build($user, $period);
+
+        $stem = 'BBT Report '.$period->from->format('Y-m-d').' to '.$period->to->format('Y-m-d');
+
+        return match ($format) {
+            'csv' => $this->csv($sections, $stem.'.csv'),
+            'zip' => $this->zip($sections, $stem.'.zip'),
+            default => $this->xlsx($sections, $stem.'.xlsx', $period),
+        };
+    }
+
+    // ---- Writers -------------------------------------------------------------
+
+    /**
+     * @param  list<array<string, mixed>>  $sections
+     */
+    private function xlsx(array $sections, string $filename, Period $period): StreamedResponse
+    {
+        $spreadsheet = new Spreadsheet;
+        $spreadsheet->getProperties()
             ->setCreator(config('institute.name', 'Big Binary Tech Institute'))
             ->setTitle('Institute report '.$period->rangeLabel());
 
-        $canSeeMoney = $user->can('revenue.view');
-
-        $this->summarySheet($book, $reporting, $user, $period, $canSeeMoney);
-
-        if ($canSeeMoney) {
-            $this->collectionsSheet($book, $reporting, $user, $period);
-            $this->coursesSheet($book, $reporting, $user, $period);
+        foreach ($sections as $i => $section) {
+            // Sheet 0 already exists; every later one has to be created. Doing
+            // this the other way round leaves an empty "Worksheet" at the front.
+            $sheet = $i === 0 ? $spreadsheet->getActiveSheet() : $spreadsheet->createSheet();
+            $this->writeSheet($sheet, $section);
         }
 
-        $this->duesSheet($book, $reporting, $user);
-
-        if ($canSeeMoney && $user->can('scope.all')) {
-            $this->officersSheet($book, $reporting, $period);
-        }
-
-        $book->setActiveSheetIndex(0);
-        $filename = 'BBT Report '.$period->from->format('Y-m-d').' to '.$period->to->format('Y-m-d').'.xlsx';
+        $spreadsheet->setActiveSheetIndex(0);
 
         // Named through the helper: this filename carries SPACES, which is
         // exactly the case an unquoted disposition cannot express, so it is the
         // most likely of all of them to arrive as an unnamed blob.
         return Download::named(
-            response()->streamDownload(function () use ($book) {
-                (new Xlsx($book))->save('php://output');
+            response()->streamDownload(function () use ($spreadsheet) {
+                (new Xlsx($spreadsheet))->save('php://output');
             }, $filename, [
                 'Content-Type' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
                 'Cache-Control' => 'no-store, no-cache',
@@ -77,147 +119,177 @@ class ReportExportController extends Controller
         );
     }
 
-    // ---- Sheets --------------------------------------------------------------
-
-    private function summarySheet(Spreadsheet $book, Reporting $r, $user, Period $period, bool $money): void
+    /**
+     * Every section stacked into one sheet, each behind its own title row.
+     *
+     * @param  list<array<string, mixed>>  $sections
+     */
+    private function csv(array $sections, string $filename): StreamedResponse
     {
-        $sheet = $book->getActiveSheet();
-        $sheet->setTitle('Summary');
+        return Download::named(
+            response()->streamDownload(function () use ($sections) {
+                echo Csv::BOM;
 
-        $sheet->setCellValue('A1', config('institute.name', 'Big Binary Tech Institute'));
-        $sheet->getStyle('A1')->getFont()->setBold(true)->setSize(14);
-        $sheet->setCellValue('A2', 'Report period: '.$period->label().' ('.$period->rangeLabel().')');
-        $sheet->setCellValue('A3', 'Generated: '.now()->format('d M Y H:i'));
-        $sheet->setCellValue('A4', 'Scope: '.($user->can('scope.all') ? 'All registrations' : 'Own enrolments only'));
+                foreach ($sections as $i => $section) {
+                    // Two blank rows between sections. Excel's "format as table"
+                    // and pandas' `read_csv` both treat a blank line as a break,
+                    // so this is what makes the stack separable again later.
+                    if ($i > 0) {
+                        echo "\r\n\r\n";
+                    }
 
-        if (! $money) {
-            $sheet->setCellValue('A6', 'Money figures are not included: this account does not hold the revenue permission.');
-            $sheet->getColumnDimension('A')->setWidth(70);
-
-            return;
-        }
-
-        $s = $r->summary($user, $period);
-
-        $rows = [
-            ['Metric', 'Value'],
-            ['Collected in period', $s['collected']],
-            ['Payments received', $s['payments']],
-            ['Average per day', $s['per_day']],
-            ['Collected today', $s['today']],
-            ['Billed in period', $s['billed']],
-            ['Challans issued', $s['issued_count']],
-            ['Days in period', $s['days']],
-        ];
-
-        $this->writeTable($sheet, $rows, 6, [1 => 'money'], [2, 3, 6, 7]);
-        $sheet->getColumnDimension('A')->setWidth(28);
-        $sheet->getColumnDimension('B')->setWidth(18);
+                    echo Csv::row([$section['title']]);
+                    echo $this->sectionBody($section);
+                }
+            }, $filename, [
+                'Content-Type' => 'text/csv; charset=UTF-8',
+                'Cache-Control' => 'no-store, no-cache',
+            ]),
+            $filename,
+        );
     }
 
-    private function collectionsSheet(Spreadsheet $book, Reporting $r, $user, Period $period): void
+    /**
+     * One .csv per section, so each stays a clean rectangle.
+     *
+     * @param  list<array<string, mixed>>  $sections
+     */
+    private function zip(array $sections, string $filename): StreamedResponse
     {
-        $sheet = $book->createSheet();
-        $sheet->setTitle('Daily collections');
+        return Download::named(
+            response()->streamDownload(function () use ($sections) {
+                // ZipArchive writes to a path, never to a stream, so the archive
+                // is assembled on disk and then handed out. It is small — five
+                // text files — and the temp file is removed on the way out even
+                // if the client disconnects mid-download, which is why unlink
+                // sits in `finally` rather than after `readfile`.
+                $tmp = tempnam(sys_get_temp_dir(), 'bbt-report-');
 
-        $rows = [['Date', 'Period', 'Collected']];
-        foreach ($r->collectionSeries($user, $period) as $b) {
-            $rows[] = [$b->date, $b->label.' '.$b->sub, $b->total];
-        }
-        $this->writeTable($sheet, $rows, 1, [2 => 'money']);
+                try {
+                    $zip = new ZipArchive;
+                    $zip->open($tmp, ZipArchive::OVERWRITE);
 
-        $start = count($rows) + 3;
-        $sheet->setCellValue('A'.$start, 'By payment method');
-        $sheet->getStyle('A'.$start)->getFont()->setBold(true);
+                    foreach ($sections as $i => $section) {
+                        // Numbered because a zip listing sorts by name: without
+                        // the prefix "Summary" lands between "Revenue by course"
+                        // and the rest, and the reading order of the report is
+                        // lost for the sake of the alphabet.
+                        $entry = sprintf('%02d %s.csv', $i + 1, $section['title']);
 
-        $methodRows = [['Method', 'Payments', 'Total']];
-        foreach ($r->byPaymentMethod($user, $period) as $m) {
-            $methodRows[] = [$m->method, $m->count, $m->total];
-        }
-        $this->writeTable($sheet, $methodRows, $start + 1, [2 => 'money'], [1]);
+                        $zip->addFromString($entry, Csv::BOM.$this->sectionBody($section));
+                    }
 
-        foreach (['A' => 14, 'B' => 16, 'C' => 16] as $col => $w) {
-            $sheet->getColumnDimension($col)->setWidth($w);
-        }
+                    $zip->close();
+
+                    readfile($tmp);
+                } finally {
+                    @unlink($tmp);
+                }
+            }, $filename, [
+                'Content-Type' => 'application/zip',
+                'Cache-Control' => 'no-store, no-cache',
+            ]),
+            $filename,
+        );
     }
 
-    private function coursesSheet(Spreadsheet $book, Reporting $r, $user, Period $period): void
+    // ---- Rendering -----------------------------------------------------------
+
+    /**
+     * A section's preamble, note and tables as CSV records — everything except
+     * the section's own title, which the two CSV shapes place differently: the
+     * stacked file needs it as a row, the zip carries it in the entry name.
+     *
+     * @param  array<string, mixed>  $section
+     */
+    private function sectionBody(array $section): string
     {
-        $sheet = $book->createSheet();
-        $sheet->setTitle('Revenue by course');
+        $out = '';
 
-        $rows = [['Code', 'Course', 'Enrolments', 'Collected']];
-        foreach ($r->revenueByCourse($user, $period, 100) as $c) {
-            $rows[] = [$c->code, $c->title, $c->enrolments, $c->total];
+        foreach ($section['preamble'] as $line) {
+            $out .= Csv::row([$line]);
         }
-        $this->writeTable($sheet, $rows, 1, [3 => 'money'], [2]);
 
-        $sheet->getColumnDimension('A')->setWidth(12);
-        $sheet->getColumnDimension('B')->setWidth(42);
-        $sheet->getColumnDimension('C')->setWidth(13);
-        $sheet->getColumnDimension('D')->setWidth(16);
+        if ($section['preamble'] !== []) {
+            $out .= "\r\n";
+        }
+
+        if ($section['note'] !== null) {
+            $out .= Csv::row([$section['note']]);
+        }
+
+        foreach ($section['tables'] as $i => $table) {
+            if ($i > 0) {
+                $out .= "\r\n";
+            }
+
+            if ($table['heading'] !== null) {
+                $out .= Csv::row([$table['heading']]);
+            }
+
+            foreach ($table['rows'] as $row) {
+                $out .= Csv::row($row);
+            }
+        }
+
+        return $out;
     }
 
-    private function duesSheet(Spreadsheet $book, Reporting $r, $user): void
+    /**
+     * One section onto one worksheet, preserving the layout the .xlsx has
+     * shipped with: preamble from A1, a blank row, then the tables two rows
+     * apart with their headings above them.
+     *
+     * @param  array<string, mixed>  $section
+     */
+    private function writeSheet($sheet, array $section): void
     {
-        $sheet = $book->createSheet();
-        $sheet->setTitle('Outstanding dues');
+        $sheet->setTitle($section['title']);
 
-        $dues = $r->duesAgeing($user);
-
-        $ageing = [['Ageing bucket', 'Challans', 'Amount']];
-        foreach ($dues['buckets'] as $b) {
-            $ageing[] = [$b['label'], $b['count'], $b['total']];
+        foreach ($section['preamble'] as $i => $line) {
+            $sheet->setCellValue('A'.($i + 1), $line);
         }
-        $this->writeTable($sheet, $ageing, 1, [2 => 'money'], [1]);
 
-        $start = count($ageing) + 3;
-        $sheet->setCellValue('A'.$start, 'By student');
-        $sheet->getStyle('A'.$start)->getFont()->setBold(true);
-
-        $rows = [['Student ID', 'Student', 'Courses', 'Days overdue', 'Owes']];
-        foreach ($dues['students'] as $s) {
-            $rows[] = [$s->code, $s->name, $s->courses, $s->days_late, $s->amount];
+        if ($section['preamble'] !== []) {
+            $sheet->getStyle('A1')->getFont()->setBold(true)->setSize(14);
         }
-        $this->writeTable($sheet, $rows, $start + 1, [4 => 'money'], [3]);
 
-        foreach (['A' => 14, 'B' => 26, 'C' => 40, 'D' => 14, 'E' => 16] as $col => $w) {
-            $sheet->getColumnDimension($col)->setWidth($w);
+        // A blank row between the preamble and the first table; a sheet with no
+        // preamble starts its table at row 1 rather than leaving row 1 empty.
+        $row = $section['preamble'] === [] ? 1 : count($section['preamble']) + 2;
+
+        if ($section['note'] !== null) {
+            $sheet->setCellValue('A'.$row, $section['note']);
+        }
+
+        foreach ($section['tables'] as $i => $table) {
+            if ($i > 0) {
+                // Two blank rows, then the heading, then the table under it.
+                $row += 2;
+                $sheet->setCellValue('A'.$row, $table['heading']);
+                $sheet->getStyle('A'.$row)->getFont()->setBold(true);
+                $row++;
+            }
+
+            $this->writeTable($sheet, $table, $row);
+            $row += count($table['rows']);
+        }
+
+        foreach ($section['widths'] as $col => $width) {
+            $sheet->getColumnDimension($col)->setWidth($width);
         }
     }
-
-    private function officersSheet(Spreadsheet $book, Reporting $r, Period $period): void
-    {
-        $sheet = $book->createSheet();
-        $sheet->setTitle('Officer performance');
-
-        $rows = [['Officer', 'Username', 'Enrolments', 'Billed', 'Collected', 'Outstanding', 'Collection %', 'Avg discount']];
-        foreach ($r->officerPerformance($period) as $o) {
-            $rows[] = [
-                $o->name, $o->username, $o->enrolments,
-                $o->billed, $o->received, $o->outstanding,
-                $o->collection_rate, $o->avg_discount,
-            ];
-        }
-        $this->writeTable($sheet, $rows, 1, [3 => 'money', 4 => 'money', 5 => 'money', 7 => 'money'], [2, 6]);
-
-        foreach (['A' => 24, 'B' => 16, 'C' => 13, 'D' => 15, 'E' => 15, 'F' => 15, 'G' => 14, 'H' => 15] as $col => $w) {
-            $sheet->getColumnDimension($col)->setWidth($w);
-        }
-    }
-
-    // ---- Helpers ---------------------------------------------------------------
 
     /**
      * Write a header row plus data, styling the header and applying number
      * formats by zero-based column index.
      *
-     * @param  array<int, array<int, mixed>>  $rows  first row is the header
-     * @param  array<int, string>  $moneyCols  zero-based index => 'money'
-     * @param  array<int, int>  $intCols  zero-based indexes formatted as integers
+     * @param  array<string, mixed>  $table  `rows`, first of which is the header
      */
-    private function writeTable($sheet, array $rows, int $startRow, array $moneyCols = [], array $intCols = []): void
+    private function writeTable($sheet, array $table, int $startRow): void
     {
+        $rows = $table['rows'];
+
         if ($rows === []) {
             return;
         }
@@ -242,13 +314,13 @@ class ReportExportController extends Controller
 
         // Whole rupees, thousands-separated. Stored as numbers so the sheet can
         // total and chart them (spec §0: integer PKR, no decimals anywhere).
-        foreach (array_keys($moneyCols) as $i) {
+        foreach ($table['money'] as $i) {
             $col = chr(65 + $i);
             $sheet->getStyle($col.$dataStart.':'.$col.$dataEnd)
                 ->getNumberFormat()->setFormatCode('#,##0');
         }
 
-        foreach ($intCols as $i) {
+        foreach ($table['ints'] as $i) {
             $col = chr(65 + $i);
             $sheet->getStyle($col.$dataStart.':'.$col.$dataEnd)
                 ->getNumberFormat()->setFormatCode('0');

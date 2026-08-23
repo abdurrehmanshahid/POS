@@ -96,10 +96,22 @@ new class extends Component {
 
         <span class="tnum" style="font-size:var(--fs-xs);color:var(--muted);white-space:nowrap">{{ $period->rangeLabel() }}</span>
 
-        <a href="{{ route('reports.export', array_filter(['period' => $selectedKey, 'from' => $from, 'to' => $to])) }}"
-           class="btn btn-ghost">
-            <x-icon name="download" :size="16" /> Export Excel
-        </a>
+        {{-- Three formats, one report. Links rather than wire:click, because a
+             browser only saves a file from a real navigation. The period the
+             screen is showing rides along in the query string, so the file and
+             the figures above it always cover the same window. --}}
+        @php
+            $exportParams = array_filter(['period' => $selectedKey, 'from' => $from, 'to' => $to]);
+        @endphp
+        <div class="segmented">
+            <span class="segmented-label"><x-icon name="download" :size="14" /> Export</span>
+            <a href="{{ route('reports.export', $exportParams + ['format' => 'csv']) }}"
+               title="One CSV file, all sections stacked">CSV</a>
+            <a href="{{ route('reports.export', $exportParams + ['format' => 'zip']) }}"
+               title="A zip holding one CSV per section">CSV (zip)</a>
+            <a href="{{ route('reports.export', $exportParams + ['format' => 'xlsx']) }}"
+               title="Excel workbook, one sheet per section">Excel</a>
+        </div>
     </div>
 
     @if ($canSeeMoney)

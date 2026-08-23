@@ -177,8 +177,9 @@ document says code was verified, it was verified on the date given.
 | Collections by payment method | BE | `Services/Reporting.php::byPaymentMethod` | SHIPPED (was BUG-01) |
 | Revenue by course | BE | `Services/Reporting.php::revenueByCourse` | SHIPPED (was BUG-01) |
 | Officer performance scorecards | BE | `Services/Reporting.php::officerPerformance` | SHIPPED (was BUG-01) |
-| Multi sheet xlsx report export | BE | `ReportExportController.php` | SHIPPED (was BUG-01) |
+| Report export, xlsx + csv + zip of csv | BE | `ReportExportController.php`, `ReportBook.php` | SHIPPED (was BUG-01; csv/zip added 2026-08-23 for US-7.3) |
 | Students CSV export | BE | `StudentExportController.php` | SHIPPED (was BUG-03) |
+| Step up ticket on institute exports | BE | — | NOT BUILT (US-7.3 acceptance, see backlog) |
 | Super admin institute analytics | BE | `Services/Analytics.php` | SHIPPED (was BUG-02) |
 | Reconciliation assertion | BE | `Services/Analytics.php::ledger` | SHIPPED (was BUG-14) |
 | Dashboard revenue trend | BE | `Services/Ledger.php::revenueTrend` | SHIPPED (was GAP-02) |

@@ -149,11 +149,20 @@ td.tnum, th.tnum { white-space: nowrap; }
    choices reads as a single control and lines up with the buttons beside it. */
 .segmented { display:inline-flex; align-items:center; gap:2px; padding:3px;
   background:var(--surface3); border:1px solid var(--border); border-radius:11px; }
-.segmented button { height:2.67em; padding:0 1.1em; border:none; border-radius:8px;
+/* `a` as well as `button`: the export control is a group of real links, because
+   a browser can only save a file from a navigation. Same pixels either way, so
+   the two controls in the toolbar stay one shape. */
+.segmented button, .segmented a { height:2.67em; padding:0 1.1em; border:none; border-radius:8px;
   background:transparent; color:var(--muted); font-size:var(--fs-xs); font-weight:600;
-  cursor:pointer; white-space:nowrap; transition:background .12s, color .12s; }
-.segmented button:hover { color:var(--ink); }
-.segmented button.on { background:var(--surface); color:var(--ink); font-weight:700; box-shadow:var(--sh1); }
+  cursor:pointer; white-space:nowrap; transition:background .12s, color .12s;
+  display:inline-flex; align-items:center; gap:.45em; text-decoration:none; }
+.segmented button:hover, .segmented a:hover { color:var(--ink); }
+.segmented button.on, .segmented a.on { background:var(--surface); color:var(--ink); font-weight:700; box-shadow:var(--sh1); }
+.segmented a:focus-visible, .segmented button:focus-visible { outline:2px solid var(--iris); outline-offset:2px; }
+/* A quiet label in front of a group, so "CSV / Zip / Excel" is not three
+   unexplained words sitting in the toolbar. */
+.segmented-label { font-size:var(--fs-2xs); font-weight:700; color:var(--muted);
+  padding:0 .55em 0 .75em; letter-spacing:.02em; }
 
 /* ---- Toolbar -----------------------------------------------------------
    Shared row for filters + actions. Fixed 42px height on every child so the

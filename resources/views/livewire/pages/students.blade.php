@@ -244,7 +244,7 @@ new class extends Component {
                 <x-icon name="search" :size="15" />
                 <input wire:model.live.debounce.200ms="q" placeholder="Search ID, name, CNIC, phone…" class="input">
             </div>
-            <a href="{{ route('students.export') }}" class="btn btn-ghost"><x-icon name="download" :size="16" />Export Excel</a>
+            <a href="{{ route('students.export') }}" class="btn btn-ghost"><x-icon name="download" :size="16" />Export CSV</a>
             @if ($canCreate)
                 <button class="btn btn-accent" wire:click="newStudent"><x-icon name="plus" :size="16" />Add student</button>
             @endif

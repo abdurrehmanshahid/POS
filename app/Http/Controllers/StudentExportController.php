@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\Student;
+use App\Support\Csv;
 use App\Support\Download;
 use App\Support\Format;
 use Illuminate\Http\Request;
@@ -43,9 +44,8 @@ class StudentExportController extends Controller
         // forms rather than relying on either being inferred. This filename has
         // a space in it, so an unquoted disposition cannot express it at all.
         return Download::named(response()->streamDownload(function () use ($students) {
-            $out = fopen('php://output', 'w');
-            fwrite($out, "\xEF\xBB\xBF"); // UTF-8 BOM
-            $this->putRow($out, [
+            echo Csv::BOM;
+            echo Csv::row([
                 'Student ID', 'Name', 'Type', 'Guardian', 'CNIC', 'Phone', 'Joined',
                 'Enrolled By', 'Courses', 'Outstanding (Rs)', 'Fee Status',
             ]);
@@ -64,31 +64,12 @@ class StudentExportController extends Controller
 
                 $status = $adm->isEmpty() ? 'No enrolment' : ($outstanding <= 0 ? 'Cleared' : 'Owes');
 
-                $this->putRow($out, [
+                echo Csv::row([
                     $s->student_code, $s->name, $s->typeLabel(), $s->guardian_name, $s->cnic,
                     $s->phone, Format::date($s->created_at), $enroller, $courses,
                     number_format($outstanding), $status,
                 ]);
             }
-            fclose($out);
         }, $filename, $headers), $filename);
-    }
-
-    private function putRow($out, array $fields): void
-    {
-        // CRLF line endings with standard quoting.
-        fwrite($out, $this->csvLine($fields)."\r\n");
-    }
-
-    private function csvLine(array $fields): string
-    {
-        return implode(',', array_map(function ($f) {
-            $f = (string) $f;
-            if (preg_match('/[",\r\n]/', $f)) {
-                return '"'.str_replace('"', '""', $f).'"';
-            }
-
-            return $f;
-        }, $fields));
     }
 }

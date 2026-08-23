@@ -1,5 +1,30 @@
 # Deploying the Institute POS to AWS Lightsail
 
+> **Reading this for a non-Lightsail VPS (Hostinger KVM, Hetzner, Contabo)?**
+>
+> Everything that touches the *application* is provider-neutral and needs no
+> change: `deploy/provision.sh`, `deploy/deploy.sh`, the pipeline, the backup
+> story (rclone to Cloudflare R2), TLS via certbot, and the agent registration
+> in §"Register the box as a VM resource" below. Nothing in this system calls an
+> AWS API or reads an instance metadata service.
+>
+> Three things in THIS document are Lightsail-shaped and do not carry over:
+>
+> 1. **Creating the instance** (§1 below) — use the provider's own flow, but
+>    start from a **bare Ubuntu 24.04 image**. A one-click "Laravel", CyberPanel
+>    or hPanel image already ships nginx/PHP/MySQL and will fight `provision.sh`
+>    for the same ports and config paths.
+> 2. **The firewall.** Lightsail puts a network ACL in front of the instance and
+>    this document treats it as the real control, with `provision.sh` §7 as
+>    defence in depth. On a plain VPS that inverts: there may be no external
+>    layer at all, so the host firewall becomes the only one. MySQL is pinned to
+>    loopback by `provision.sh` §3 regardless, so the database is not exposed
+>    either way — but SSH exposure and the `ufw`/iptables story need a decision
+>    before go-live rather than after.
+> 3. **Static IP and snapshots** — the provider's equivalents differ. Snapshots
+>    are not a substitute for the R2 backup either way: a weekly snapshot on a
+>    fee-collection system means up to seven days of payments lost.
+
 Target: **Ubuntu 24.04 LTS, x86, Asia Pacific (Mumbai)**, the **$24/month**
 bundle — 4 GB RAM, 2 vCPU, 80 GB SSD. Everything runs as an ordinary systemd
 service: nginx, PHP-FPM and MySQL, installed from packages. **There is no Docker
@@ -552,7 +577,7 @@ change.
 
 #### 2. Register the box as a VM resource
 
-On the Lightsail instance, **as the `institute` service account**, not as root:
+On the server, **as the `institute` service account**, not as root:
 
 ```bash
 sudo -u institute -H bash

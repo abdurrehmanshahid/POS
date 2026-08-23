@@ -470,8 +470,8 @@ if [[ $HEALTHY -ne 1 ]]; then
 fi
 
 # The localhost /up check above proves PHP-FPM answered. It cannot prove DNS
-# resolves, the Lightsail firewall lets anyone in, TLS is valid, or that MySQL
-# is reachable — every one of which can be broken while /up returns 200.
+# resolves, the firewall lets anyone in, TLS is valid, or that MySQL is
+# reachable — every one of which can be broken while /up returns 200.
 #
 # /ready is the application's own readiness route: it runs SELECT 1 and checks
 # the storage paths, and returns a bare 200 or a bare 503. Fetched over the
@@ -499,7 +499,10 @@ if [[ $READY -ne 1 ]]; then
     warn "The code is deployed and serving. What is broken is outside the application:"
     warn "  DNS        dig +short \$(echo ${READY_URL} | awk -F/ '{print \$3}')"
     warn "  TLS        curl -vI ${READY_URL} 2>&1 | grep -i 'certificate\|SSL'"
-    warn "  Firewall   Lightsail console > Networking > IPv4 Firewall (and IPv6, separately)"
+    # On a plain VPS ufw is the ONLY firewall — there is no provider-side
+    # network ACL in front of it to catch a mistake here, which is why
+    # provision.sh §7 configures it rather than treating it as optional.
+    warn "  Firewall   sudo ufw status verbose   (and the provider's own panel, if it has one)"
     warn "  Database   ${PHP} artisan tinker --execute='DB::select(\"select 1\");'"
     die "Deployed, but not reachable from outside. Investigate before telling the counter it is up."
 fi

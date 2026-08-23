@@ -950,6 +950,43 @@ State: `done`
 - **Acceptance:** Exports match the on screen figures for the same parameters and
   refuse to stream without a valid step up ticket.
 
+**Delivered (2026-08-23), and where it differs from the text above.**
+
+The student directory ships as CSV as written. The report did not: it shipped as
+a multi sheet `.xlsx`, because the report is five sections and CSV is one table.
+That was a real gap against this story rather than a considered deviation, and
+the fix was not to throw the workbook away — it is richer, and people have saved
+copies of it — but to make the format a choice at the point of download:
+
+| `?format=` | Shape | For |
+| --- | --- | --- |
+| `xlsx` (default) | one workbook, five sheets, money number formatted | the screen's own reader |
+| `csv` | one file, sections stacked behind title rows, blank line between | opening anywhere, with or without Excel |
+| `zip` | one `.csv` per section, numbered to hold reading order | pivot tables and import jobs, which need a clean rectangle |
+
+`ReportBook` builds the tables once and all three writers render that same
+description, so the story's own warning is enforced structurally rather than by
+discipline: there is no second set of queries to drift. Permission filtering
+decides which sections are *constructed*, so a fourth format cannot reintroduce
+a money sheet for an account without `revenue.view`.
+
+Money is a bare integer in both CSV shapes. A thousands separator inside a CSV
+is a field separator, so "119,000" would not merely look wrong, it would shift
+every column after it by one.
+
+**Still outstanding on this story.** Neither institute export consumes a
+`DownloadTicket`; only the super admin backup routes do. The acceptance line
+above says they should, so this story is not fully met and the step up gate is
+still to be built.
+
+**Open decision: CSV formula injection.** A field beginning `=`, `+`, `-` or `@`
+is evaluated by Excel on open, and student names reach these files. The standard
+mitigation is a leading apostrophe, which is visible in the cell — and the Phone
+column is full of `+92…` numbers that would all acquire one. So the fix costs
+something real and visible, and the choice between a mangled phone column and an
+executable name field belongs to whoever owns the file, not to the exporter.
+Recorded here rather than taken silently in `App\Support\Csv`.
+
 ---
 
 ## Epic 8: Super admin console and platform operations

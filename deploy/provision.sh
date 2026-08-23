@@ -1,12 +1,24 @@
 #!/usr/bin/env bash
 #
-# One-shot provisioning for the institute POS on an AWS Lightsail instance.
+# One-shot provisioning for the institute POS on a plain Ubuntu VPS.
 #
-# Target: Ubuntu 24.04 LTS, x86-64, the $24/month Mumbai bundle (4GB / 2 vCPU /
-# 80GB). Native packages throughout — nginx, PHP-FPM and MySQL run as ordinary
-# systemd services. There is no Docker here and nothing to pull at boot: a
-# container runtime is one more thing that can fail at 9am on a Monday for
-# reasons unrelated to the application.
+# Target: Ubuntu 24.04 LTS, x86-64, 4GB RAM / 2 vCPU / 40GB or better. Native
+# packages throughout — nginx, PHP-FPM and MySQL run as ordinary systemd
+# services. There is no Docker here and nothing to pull at boot: a container
+# runtime is one more thing that can fail at 9am on a Monday for reasons
+# unrelated to the application.
+#
+# Nothing here is tied to a provider. It has been rehearsed on AWS Lightsail
+# and it wants nothing Lightsail has — no metadata service, no provider SDK,
+# no cloud-init hooks — so Hostinger KVM, Contabo, Hetzner or a box under a
+# desk are all the same script. What it DOES assume is a CLEAN image: an
+# install that already ships nginx, PHP or a control panel (CyberPanel, hPanel,
+# a "Laravel" one-click) will fight §1 and §6 for the same ports and config
+# paths. Start from bare Ubuntu 24.04.
+#
+# The one provider-shaped difference is the firewall. Lightsail puts a network
+# ACL in front of the instance, so ufw there is a second line of defence; on a
+# plain VPS ufw in §7 is the ONLY thing between MySQL and the internet.
 #
 # This replaces an earlier Oracle Cloud / Ampere A1 target. Nothing here may
 # assume ARM64: the packages installed below are all architecture-neutral apt

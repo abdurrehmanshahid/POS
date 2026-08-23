@@ -4,6 +4,8 @@ namespace Tests\Feature;
 
 use App\Models\Challan;
 use App\Models\Course;
+use App\Models\Role;
+use App\Models\RolePermission;
 use App\Models\Student;
 use App\Models\User;
 use App\Services\ChallanActions;
@@ -15,6 +17,8 @@ use Database\Seeders\DatabaseSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
 use Livewire\Livewire;
+use PhpOffice\PhpSpreadsheet\IOFactory;
+use PHPUnit\Framework\Attributes\DataProvider;
 use Tests\TestCase;
 
 /**
@@ -449,6 +453,214 @@ class ReportsTest extends TestCase
         $this->actingAs($this->officer())
             ->get(route('reports.export'))
             ->assertForbidden();
+    }
+
+    // ---- The other two formats (US-7.3 asked for CSV) -------------------------
+
+    /**
+     * US-7.3 asks for the report as CSV. The report is five sections and CSV is
+     * one table, so the stacked file labels each section and separates them
+     * with a blank line — which is what makes it separable again by hand, by
+     * Excel's "format as table", or by `pandas.read_csv`.
+     */
+    public function test_the_csv_export_stacks_every_labelled_section(): void
+    {
+        $response = $this->actingAs($this->admin())
+            ->get(route('reports.export', ['period' => 'year', 'format' => 'csv']));
+
+        $response->assertOk();
+        $response->assertHeader('content-type', 'text/csv; charset=UTF-8');
+        $this->assertStringContainsString('.csv', $response->headers->get('content-disposition'));
+
+        $body = $response->streamedContent();
+
+        // Without the BOM, Excel on a Windows machine set to a local codepage
+        // renders every non-ASCII name as mojibake.
+        $this->assertStringStartsWith("\xEF\xBB\xBF", $body);
+
+        foreach (['Summary', 'Daily collections', 'Revenue by course', 'Outstanding dues', 'Officer performance'] as $section) {
+            $this->assertStringContainsString($section, $body, "The {$section} section is missing from the CSV.");
+        }
+
+        // Section headers, so the stack is machine-separable rather than a wall.
+        $this->assertStringContainsString("Metric,Value\r\n", $body);
+        $this->assertStringContainsString("Date,Period,Collected\r\n", $body);
+        $this->assertStringContainsString('By payment method', $body);
+        $this->assertStringContainsString('By student', $body);
+
+        // CRLF, per RFC 4180 and per what Excel on Windows expects.
+        $this->assertStringContainsString("\r\n", $body);
+    }
+
+    /**
+     * Money stays a NUMBER. A thousands separator inside a CSV is a field
+     * separator, so "119,000" would not merely look wrong — it would shift
+     * every column after it by one.
+     */
+    public function test_the_csv_writes_money_as_a_bare_integer(): void
+    {
+        $body = $this->actingAs($this->admin())
+            ->get(route('reports.export', ['period' => 'year', 'format' => 'csv']))
+            ->streamedContent();
+
+        $collected = app(Reporting::class)->summary($this->admin(), Period::resolve('year'))['collected'];
+        $this->assertGreaterThan(999, $collected, 'This test is vacuous unless the figure is big enough to be separated.');
+
+        $this->assertStringContainsString('Collected in period,'.$collected."\r\n", $body);
+        $this->assertStringNotContainsString(number_format($collected), $body);
+    }
+
+    /** One .csv per section, numbered so a zip listing keeps the reading order. */
+    public function test_the_zip_export_holds_one_csv_per_section(): void
+    {
+        $response = $this->actingAs($this->admin())
+            ->get(route('reports.export', ['period' => 'year', 'format' => 'zip']));
+
+        $response->assertOk();
+        $response->assertHeader('content-type', 'application/zip');
+
+        $path = tempnam(sys_get_temp_dir(), 'bbt-zip-test-');
+        file_put_contents($path, $response->streamedContent());
+
+        $zip = new \ZipArchive;
+        $this->assertTrue($zip->open($path) === true, 'The response is not a readable zip archive.');
+
+        $entries = [];
+        for ($i = 0; $i < $zip->numFiles; $i++) {
+            $entries[] = $zip->getNameIndex($i);
+        }
+
+        $this->assertSame([
+            '01 Summary.csv',
+            '02 Daily collections.csv',
+            '03 Revenue by course.csv',
+            '04 Outstanding dues.csv',
+            '05 Officer performance.csv',
+        ], $entries);
+
+        // Each entry is a real CSV with its own BOM, not an empty placeholder.
+        $summary = $zip->getFromName('01 Summary.csv');
+        $this->assertStringStartsWith("\xEF\xBB\xBF", $summary);
+        $this->assertStringContainsString("Metric,Value\r\n", $summary);
+
+        $zip->close();
+        @unlink($path);
+    }
+
+    /**
+     * The property the whole refactor exists to hold: three writers, one set of
+     * queries. If a figure is ever computed twice it will differ here first.
+     */
+    public function test_all_three_formats_agree_on_the_figures(): void
+    {
+        $collected = app(Reporting::class)->summary($this->admin(), Period::resolve('year'))['collected'];
+
+        $csv = $this->actingAs($this->admin())
+            ->get(route('reports.export', ['period' => 'year', 'format' => 'csv']))->streamedContent();
+        $this->assertStringContainsString('Collected in period,'.$collected, $csv);
+
+        $path = tempnam(sys_get_temp_dir(), 'bbt-zip-agree-');
+        file_put_contents($path, $this->actingAs($this->admin())
+            ->get(route('reports.export', ['period' => 'year', 'format' => 'zip']))->streamedContent());
+        $zip = new \ZipArchive;
+        $zip->open($path);
+        $this->assertStringContainsString('Collected in period,'.$collected, $zip->getFromName('01 Summary.csv'));
+        $zip->close();
+        @unlink($path);
+
+        $book = tempnam(sys_get_temp_dir(), 'bbt-xlsx-agree-').'.xlsx';
+        file_put_contents($book, $this->actingAs($this->admin())
+            ->get(route('reports.export', ['period' => 'year', 'format' => 'xlsx']))->streamedContent());
+        $sheet = IOFactory::load($book)->getSheetByName('Summary');
+        $this->assertSame($collected, (int) $sheet->getCell('B7')->getValue());
+        @unlink($book);
+    }
+
+    /**
+     * A mistyped query string should still hand back a report rather than a
+     * 400, which is how `Period::resolve` already treats a nonsense period.
+     */
+    public function test_an_unknown_format_falls_back_to_the_workbook(): void
+    {
+        $this->actingAs($this->admin())
+            ->get(route('reports.export', ['period' => 'year', 'format' => 'exe']))
+            ->assertOk()
+            ->assertHeader('content-type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    }
+
+    /**
+     * The permission gate decides which sections EXIST, not which get written,
+     * so a format added later cannot leak a money sheet back in. Asserted on
+     * every format rather than on the default one.
+     */
+    #[DataProvider('exportFormats')]
+    public function test_every_format_is_permission_gated(string $format): void
+    {
+        $this->assertFalse($this->officer()->can('reports.view'));
+
+        $this->actingAs($this->officer())
+            ->get(route('reports.export', ['format' => $format]))
+            ->assertForbidden();
+    }
+
+    /** @return list<array{0:string}> */
+    public static function exportFormats(): array
+    {
+        return [['xlsx'], ['csv'], ['zip']];
+    }
+
+    /**
+     * Roles are editable data, so "may read reports, may not see money" is a
+     * configuration a real institute can build in the role editor. The money
+     * sections must then not exist in ANY format — the gate decides which
+     * sections are constructed, not which of them get written out, so this is
+     * the test that stops a fourth format leaking them back in.
+     */
+    #[DataProvider('exportFormats')]
+    public function test_a_reports_only_account_gets_no_money_in_any_format(string $format): void
+    {
+        $role = Role::create(['id' => 'role_auditor_1', 'name' => 'Auditor', 'tone' => 'navy']);
+        foreach (['dashboard.view', 'reports.view', 'students.view'] as $key) {
+            RolePermission::create(['role_id' => $role->id, 'permission_key' => $key]);
+        }
+
+        $auditor = User::where('username', 'fatimanoor')->firstOrFail();
+        $auditor->forceFill(['role_id' => $role->id])->save();
+        $auditor->refresh();
+
+        $this->assertTrue($auditor->can('reports.view'));
+        $this->assertFalse($auditor->can('revenue.view'));
+
+        $response = $this->actingAs($auditor)
+            ->get(route('reports.export', ['period' => 'year', 'format' => $format]));
+        $response->assertOk();
+
+        $text = $format === 'xlsx'
+            ? $this->sheetNames($response->streamedContent())
+            : $response->streamedContent();
+
+        // Outstanding dues is NOT money-gated (an officer chasing a payment
+        // needs it), so it stays. The three revenue sections must be gone.
+        foreach (['Daily collections', 'Revenue by course', 'Officer performance'] as $section) {
+            $this->assertStringNotContainsString($section, $text, "{$section} leaked into the {$format} export.");
+        }
+
+        $this->assertStringContainsString('Outstanding dues', $text);
+
+        if ($format === 'csv') {
+            $this->assertStringContainsString('does not hold the revenue permission', $text);
+        }
+    }
+
+    /** Sheet names of a streamed .xlsx, as one string to assert against. */
+    private function sheetNames(string $bytes): string
+    {
+        $path = tempnam(sys_get_temp_dir(), 'bbt-sheets-').'.xlsx';
+        file_put_contents($path, $bytes);
+        $names = implode("\n", IOFactory::load($path)->getSheetNames());
+        @unlink($path);
+
+        return $names;
     }
 
     public function test_choosing_custom_reveals_its_date_inputs(): void
