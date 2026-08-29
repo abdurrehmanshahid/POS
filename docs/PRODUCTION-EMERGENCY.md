@@ -18,7 +18,7 @@ reason this page exists at all.
 | | |
 | --- | --- |
 | System | Institute POS — enrolments, fee challans, part-payments, receipts |
-| Production URL | `https://pos.bbt.edu.pk` |
+| Production URL | `https://pos.bigbinaryerp.com` |
 | Users | ~9 staff accounts, ~450 students |
 | Host | AWS **Lightsail**, region **Asia Pacific (Mumbai)** `ap-south-1` |
 | Instance name | `institute-prod` _(fill in the console name if it differs)_ |
@@ -27,9 +27,9 @@ reason this page exists at all.
 | App directory | `/var/www/institute` |
 | Service account | `institute` |
 | Database | MySQL 8.0 on the same box, loopback only, `institute_pos` |
-| CI/CD | Azure DevOps — org `bigbinarytech`, project `bigbinarytech-POS` |
-| Pipeline | `azure-pipelines.yml`, Environment `production`, VM resource `institute-prod` |
-| Source | Azure DevOps (authoritative) and GitHub `GhazanfarSheikh/POS` (mirror) |
+| CI/CD | GitHub Actions |
+| Pipeline | `.github/workflows/ci.yml`, Environment `production`, self-hosted runner labelled `institute-prod` |
+| Source | GitHub `GhazanfarSheikh/POS` — the only remote. Azure DevOps retired 2026-08-29, `decisions.md` D54 |
 
 ---
 
@@ -44,9 +44,9 @@ Fill the right-hand column in **once**, by hand, and never in this repository.
 | Super-admin recovery credential | No way into `/superadmin` to fix anything | `_______________` |
 | SSH private key (`ubuntu@`) | No way onto the box at all | `_______________` |
 | rclone remote config | No access to the off-box backups | Password manager, and `~institute/.config/rclone/rclone.conf` (mode 0600) |
-| AWS / Lightsail login | Cannot rebuild the instance or move the static IP | `_______________` |
+| Hostinger login | Cannot rebuild the VPS or reach the browser console | `_______________` |
 | Domain registrar login | Cannot repoint DNS at a replacement | `_______________` |
-| Azure DevOps access | Cannot deploy | `_______________` |
+| GitHub access | Cannot deploy | `_______________` |
 
 **Who can reach them:** `_______________` and `_______________`.
 At least two people. One is not a plan.
@@ -61,7 +61,7 @@ rule. Copies are pushed hourly after each successful dump.
 ## 3. Is it actually down?
 
 ```bash
-curl -s -o /dev/null -w '%{http_code}\n' https://pos.bbt.edu.pk/ready
+curl -s -o /dev/null -w '%{http_code}\n' https://pos.bigbinaryerp.com/ready
 ```
 
 | Code | Means | Do |
@@ -117,7 +117,7 @@ taking money against it.
 
 Do **not** run `php artisan up` to "see if it works". Ask, in order:
 
-1. **Did it get past the backup?** Read the tail of the Azure DevOps deploy job.
+1. **Did it get past the backup?** Read the tail of the GitHub Actions deploy job.
    Everything that can refuse refuses *before* the backup — a missing release
    SHA, a missing staged build, unsafe `.env`, an unsynchronised clock. If it
    refused there, **nothing was changed**; fix the cause and re-run the pipeline.
@@ -188,7 +188,7 @@ grep '^APP_KEY=' /var/www/institute/.env
 sudo -u institute php8.4 artisan config:cache
 sudo systemctl start institute-queue institute-scheduler.timer
 sudo -u institute php8.4 artisan up
-curl -s -o /dev/null -w '%{http_code}\n' https://pos.bbt.edu.pk/ready   # want 200
+curl -s -o /dev/null -w '%{http_code}\n' https://pos.bigbinaryerp.com/ready   # want 200
 
 # 6. THE STEP THAT ACTUALLY PROVES IT: open /superadmin in a browser and
 #    complete a TOTP login with an existing account. Until that succeeds you
@@ -213,8 +213,9 @@ it is written out here.
 5. Write `.env` from `.env.production.example`, with the **original `APP_KEY`**
    from the password manager.
 6. Restore the newest off-box dump (§6).
-7. `certbot --nginx -d pos.bbt.edu.pk`.
-8. Re-register the box as the Azure DevOps `production` Environment VM resource.
+7. `certbot --nginx -d pos.bigbinaryerp.com`.
+8. Re-register the box as a self-hosted runner in the `production` Environment,
+   labelled `institute-prod`, running as `institute`.
 9. Prove it with a `/superadmin` TOTP login before telling the counter it is up.
 
 Full detail in [DEPLOYMENT.md](DEPLOYMENT.md).

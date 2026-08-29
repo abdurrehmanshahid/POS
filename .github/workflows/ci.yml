@@ -15,25 +15,42 @@ permissions:
   contents: read
 
 # ---------------------------------------------------------------------------
-# NON-PRODUCTION CI. This file does not deploy anything, and must not be given
-# the ability to.
+# THE production pipeline. Verify, build, deploy, and an independent external
+# smoke test — the whole release path, in one file.
 #
-# `azure-pipelines.yml` is the authoritative production pipeline: it holds the
-# `production` Environment, the manual approval, the branch control, the
-# exclusive lock and the deployment job that runs on the Lightsail box. This
-# file is a second opinion on a commit, nothing more.
+# It replaced `azure-pipelines.yml`, which was the authoritative pipeline until
+# 2026-08-29 and was retired because the Azure DevOps account had no credits.
+# See `decisions.md` D54. The architecture is unchanged; only the runner is.
 #
-# It exists because the repository pushes to GitHub and Azure DevOps on the same
-# `git push`, so a second run of the matrix is free. Keep it EQUIVALENT to the
-# Azure `verify` stage — same PHP versions, same drivers, same MySQL versions,
-# same steps. If the two are allowed to drift, the one nobody reads becomes a
-# check that cannot fail, which is worse than no check because it is still
-# trusted.
+# ── Why the deploy runs ON the box, not over SSH ───────────────────────────
 #
-# What it deliberately does NOT contain: any deploy step, any production
-# credential, any reference to the Lightsail instance. If a release ever needs
-# to happen from here, that is a change to the release architecture and not a
-# change to this file.
+# The deploy job targets a SELF-HOSTED RUNNER installed on the production box.
+# GitHub never connects inward: the runner dials OUT and polls for work.
+#
+# That is a security decision, not a convenience one. An SSH-from-hosted-runner
+# design needs port 22 reachable from GitHub's published address ranges, which
+# in practice means 22 open to the world on a box that bills course fees. With a
+# self-hosted runner, 22 stays restricted to the administrator's own IP (`ufw`,
+# checklist P3-05) and there is no inbound deployment path at all.
+#
+# The runner runs as the `institute` service account, which holds exactly three
+# sudo grants — reload php8.4-fpm, restart and status institute-queue — and
+# nothing else. Installing it as root to "make the pipeline simpler" would hand
+# every future edit of this file unrestricted control of the box.
+#
+# ── What is NOT in this file, deliberately ─────────────────────────────────
+#
+# The approval, the branch restriction and the one-at-a-time guarantee are
+# configured on the `production` Environment in GitHub settings. They cannot
+# live here and that is the point: a workflow file cannot meaningfully gate
+# itself, because anything it said about who may approve it is something a pull
+# request could change.
+#
+#   Environment `production`  ->  Required reviewers      (a human presses go)
+#                             ->  Deployment branches: main only
+#   `concurrency` below       ->  one release at a time
+#   `flock` in deploy.sh      ->  the lock that actually matters, because it
+#                                 also covers a human running a release by hand
 #
 # ── The required status check ──────────────────────────────────────────────
 #
@@ -54,6 +71,16 @@ permissions:
 # money layer. A check that cannot fail is worse than no check, because it is
 # trusted. Every step below either asserts something or is not here.
 # ---------------------------------------------------------------------------
+
+env:
+  # Flipping this to 'true' is a COMMIT, not a click, so enabling production
+  # deployment carries an author and a reviewer in the history and reverting is
+  # one revert. Do NOT make it a workflow_dispatch input. It is a convenience
+  # gate, NOT the security control — the Environment's reviewers and branch
+  # restriction are.
+  DEPLOY_ENABLED: 'false'
+  PRODUCTION_HOST: pos.bigbinaryerp.com
+  BUILD_STAGE_DIR: /var/www/institute-builds
 
 jobs:
   tests:
@@ -106,9 +133,8 @@ jobs:
       # is cheaper than maintaining a second near-identical job that drifts out
       # of step with this one.
       #
-      # Azure does this with a conditional `docker run` instead, because there
-      # the matrix value IS readable at step level. The two files agree on what
-      # is tested, not on the mechanism.
+      # A few seconds of container start on the SQLite legs is cheaper than a
+      # second near-identical job that drifts out of step with this one.
       mysql:
         image: ${{ matrix.mysql-image || 'mysql:8.0' }}
         env:
@@ -220,14 +246,26 @@ jobs:
         run: npm run build
 
       - name: Verify the Vite manifest exists
-        # The Azure pipeline publishes public/build as the artifact its deploy
-        # stage unpacks under the release SHA, and deploy.sh refuses on a
-        # missing manifest.json. Asserting the shape here too means a build that
-        # silently emits nothing fails on whichever CI a person is looking at.
+        # The next step publishes public/build as the artifact the deploy job
+        # unpacks under the release SHA, and deploy.sh refuses on a missing
+        # manifest.json. Asserting the shape here means a build that silently
+        # emits nothing fails in `assets`, where it is obvious, rather than in
+        # `deploy`, where it looks like a deployment problem.
         run: |
           test -f public/build/manifest.json \
             || { echo "::error::Vite produced no public/build/manifest.json"; exit 1; }
           find public/build -type f
+
+      - name: Publish build-assets
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-assets
+          # The CONTENTS of public/build, so the artifact unpacks to
+          # <sha>/manifest.json rather than <sha>/build/manifest.json — which is
+          # the shape deploy.sh's preflight looks for.
+          path: public/build/
+          if-no-files-found: error
+          retention-days: 14
 
   CI:
     # The required status check. Keep this name.
@@ -249,5 +287,136 @@ jobs:
             exit 1
           fi
           echo "All checks passed."
-          echo "NOTE: this gate proves the commit is good. It does NOT deploy."
-          echo "Production releases go through azure-pipelines.yml only."
+          echo "This gate proves the commit is good. Deployment is a separate"
+          echo "job below, gated on the production Environment's approval."
+
+  # =========================================================================
+  # Deploy — on the box itself
+  # =========================================================================
+  deploy:
+    name: Deploy to production
+    needs: [CI]
+    if: >-
+      github.event_name == 'push' &&
+      github.ref == 'refs/heads/main' &&
+      needs.CI.result == 'success'
+    runs-on: [self-hosted, institute-prod]
+    timeout-minutes: 30
+
+    # The `production` Environment carries the required reviewer and the
+    # branch restriction. Those are UI settings, on purpose — see the header.
+    environment:
+      name: production
+      url: https://${{ env.PRODUCTION_HOST }}
+
+    # One release at a time. cancel-in-progress is false because cancelling a
+    # deploy mid-migration is worse than queueing behind it. This is the first
+    # of two layers; the `flock` in deploy.sh is the one that matters, because
+    # it also covers a human who SSHes in and runs a release by hand.
+    concurrency:
+      group: production-deploy
+      cancel-in-progress: false
+
+    steps:
+      # The repository is already on the box at /var/www/institute. Checking one
+      # out here would clone into the runner's work directory instead, and
+      # deploy.sh operates on the real tree.
+      - name: Skip checkout
+        run: echo "The repository lives at /var/www/institute; the runner does not need a copy."
+
+      - name: Refuse unless DEPLOY_ENABLED
+        run: |
+          if [ "${DEPLOY_ENABLED}" != "true" ]; then
+            echo "DEPLOY_ENABLED is '${DEPLOY_ENABLED}'. Refusing to deploy."
+            echo "Set it to 'true' in .github/workflows/ci.yml — deliberately a commit."
+            exit 1
+          fi
+
+      - name: Download the tested build
+        uses: actions/download-artifact@v4
+        with:
+          name: build-assets
+          path: ${{ runner.temp }}/build-assets
+
+      - name: Stage assets under the exact SHA
+        run: |
+          set -euo pipefail
+          STAGE="${BUILD_STAGE_DIR}/${GITHUB_SHA}"
+
+          test -f "${RUNNER_TEMP}/build-assets/manifest.json" \
+            || { echo "::error::Downloaded artifact has no manifest.json"; exit 1; }
+
+          # Replaced, not merged: a partial directory from a failed earlier
+          # attempt would satisfy deploy.sh's manifest check while missing half
+          # the chunks.
+          rm -rf "$STAGE"
+          mkdir -p "$STAGE"
+          cp -a "${RUNNER_TEMP}/build-assets/." "$STAGE/"
+
+          test -f "$STAGE/manifest.json" \
+            || { echo "::error::Staging did not produce $STAGE/manifest.json"; exit 1; }
+
+          echo "Staged $(find "$STAGE" -type f | wc -l) files at $STAGE"
+
+      - name: deploy.sh
+        run: |
+          set -euo pipefail
+          cd /var/www/institute
+
+          # RELEASE_SHA is mandatory and has no fallback. deploy.sh verifies the
+          # commit exists (git cat-file) and that the staged build is present
+          # BEFORE it takes a backup or enters maintenance mode.
+          #
+          # BUILD_ASSETS=no: this box does not compile assets. The tested build
+          # is already staged above.
+          RELEASE_SHA="${GITHUB_SHA}" \
+          BUILD_ASSETS=no \
+          BUILD_STAGE_DIR="${BUILD_STAGE_DIR}" \
+            bash deploy/deploy.sh
+        # The runner already runs as `institute`, so there is no
+        # `sudo -u institute` here — and there must not be, because the sudoers
+        # file grants three systemctl commands and not a shell.
+
+  # =========================================================================
+  # Independent external smoke test
+  # =========================================================================
+  # From a GitHub-hosted runner, over the public internet, on purpose.
+  #
+  # deploy.sh already checks localhost /up and public /ready from the box
+  # itself. That is necessary and not sufficient: a check that originates on the
+  # server shares the server's DNS resolver, bypasses the host firewall
+  # entirely, and can succeed on a box nobody outside can reach. This one
+  # crosses DNS, the firewall, TLS, nginx, PHP-FPM, Laravel and MySQL — the same
+  # path a member of staff takes.
+  smoke:
+    name: External smoke test
+    needs: [deploy]
+    # A skipped `deploy` already skips this, but the condition is stated rather
+    # than inherited: the one failure mode worth ruling out is a green
+    # "External smoke test" beside a deployment that never ran.
+    if: needs.deploy.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Public GET /ready
+        run: |
+          set -euo pipefail
+          URL="https://${PRODUCTION_HOST}/ready"
+
+          # Retried, because PHP-FPM has just been reloaded and the first
+          # request after `artisan up` can land microseconds early.
+          for attempt in 1 2 3 4 5; do
+            CODE="$(curl -s -o /dev/null -w '%{http_code}' --max-time 20 "$URL" || echo 000)"
+            echo "attempt ${attempt}: ${URL} -> ${CODE}"
+            if [ "$CODE" = "200" ]; then
+              echo "Production is publicly ready."
+              exit 0
+            fi
+            sleep 6
+          done
+
+          echo "::error::${URL} did not return 200."
+          echo "503 here usually means the deploy left maintenance mode ON - check the deploy job's tail."
+          echo "000 means DNS, TLS or the host firewall, not the application."
+          exit 1

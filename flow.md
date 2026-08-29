@@ -13,9 +13,8 @@ these steps is shaped the way it is.
 
 ```
   developer
-     │  git push  (one push, two remotes)
-     ├──────────────► GitHub  — non-production CI only, deploys nothing
-     └──────────────► Azure DevOps — the authoritative pipeline
+     │  git push
+     └──────────────► GitHub Actions — the authoritative pipeline
                               │
                               ▼
                       ┌───────────────┐
@@ -29,7 +28,7 @@ these steps is shaped the way it is.
                       └───────┬───────┘
                               ▼
                       ┌───────────────┐
-                      │  APPROVAL     │  a human, in the Azure Environment
+                      │  APPROVAL     │  a human, in the GitHub Environment
                       └───────┬───────┘
                               ▼
                       ┌───────────────┐
@@ -73,7 +72,7 @@ reverses, and the one that would have caught the `attendances_student_id_index`
 bug that took 276 tests down with it.
 
 The job named exactly **`CI`** then gates the whole stage. That name is
-configured in Azure DevOps branch policy, outside this repository — renaming the
+configured in GitHub branch protection, outside this repository — renaming the
 job silently stops protecting `main`.
 
 **Where it stops:** any leg red ⇒ `CI` red ⇒ nothing builds, nothing deploys.
@@ -103,7 +102,7 @@ would refuse anyway, one step later and less clearly.
 
 ## 3. Approval
 
-A human approves in **Azure DevOps → Pipelines → Environments → production**.
+A human approves in **GitHub → Settings → Environments → production**.
 
 Three controls live there, in the UI, and **cannot be expressed in YAML** — a
 pipeline file cannot meaningfully gate itself, because anything it said about
@@ -119,10 +118,10 @@ who may approve it is something a pull request could change:
 
 ## 4. Deploy — on the box itself
 
-The deployment job runs on the Lightsail instance registered as an Environment
-**Virtual Machine resource**, not over SSH from a hosted agent. The agent dials
-*out* to Azure DevOps, so port 22 stays restricted to the administrator's IP and
-there is no inbound deployment path at all.
+The deployment job runs on a **self-hosted runner** installed on the production
+box, not over SSH from a hosted runner. The runner dials *out* to GitHub, so
+port 22 stays restricted to the administrator's IP and there is no inbound
+deployment path at all.
 
 ### 4a. Stage the assets
 
@@ -146,7 +145,7 @@ LOCK  →  PREFLIGHT  →  backup  →  maintenance ON  →  code  →  assets
 ```
 
 **Lock.** A non-blocking `flock` on `/run/institute-deploy.lock`, held for the
-life of the process. The Azure exclusive lock is the first layer; this is the
+life of the process. The GitHub concurrency group is the first layer; this is the
 one that also covers a human running a release by hand.
 
 **Preflight — nothing here may touch the site.** Every knowable precondition,
@@ -204,7 +203,7 @@ in the same activity log as every other such change.
 
 ## 5. External smoke
 
-A Microsoft-hosted agent fetches `https://pos.bbt.edu.pk/ready` over the public
+A Microsoft-hosted agent fetches `https://pos.bigbinaryerp.com/ready` over the public
 internet. `deploy.sh` already checked it from the box, which is necessary and
 not sufficient: a check originating on the server shares its DNS resolver and
 bypasses the Lightsail firewall entirely.
@@ -262,7 +261,7 @@ Honest status, as of this work:
 - The **rehearsal is mandatory and must pass twice** on a disposable instance at
   the exact production spec, the second time with no manual repairs. See
   [DEPLOYMENT.md](docs/DEPLOYMENT.md).
-- The Azure DevOps Environment, VM resource, approval, branch control and
-  exclusive lock are **documented, not configured** — they need console access.
+- The GitHub Environment, self-hosted runner, required reviewers and branch
+  restriction are **documented, not configured** — they need browser access.
 - No AWS resource, DNS record, TLS certificate, monitor or backup bucket has
   been created.

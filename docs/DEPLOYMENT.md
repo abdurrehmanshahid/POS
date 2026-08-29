@@ -102,7 +102,7 @@ charged only if you leave one allocated and detached. It is reassignable: if the
 instance is ever rebuilt from a snapshot, move the same IP to the replacement
 and DNS does not have to change or propagate.
 
-Point `pos.bbt.edu.pk` (an `A` record) at it before running certbot in §6.
+Point `pos.bigbinaryerp.com` (an `A` record) at it before running certbot in §6.
 
 ### 2.4 Firewall — the part with the trap
 
@@ -187,7 +187,9 @@ enrolled account — including the only `/superadmin` account — out at once.
 ```bash
 sudo -u institute git clone <this-repo> /var/www/institute
 cd /var/www/institute
-sudo -u institute cp .env.example .env
+sudo -u institute cp .env.production.example .env   # NOT .env.example: the local
+                                                    # template ships APP_ENV=local,
+                                                    # APP_DEBUG=true, BACKUP_KEEP=14
 sudo -u institute php8.4 artisan key:generate
 sudo -u institute nano .env
 ```
@@ -197,7 +199,7 @@ APP_NAME="Big Binary Tech Institute"
 APP_ENV=production          # REQUIRED: 'local' exposes the passwordless demo logins
 APP_DEBUG=false             # REQUIRED: an error page otherwise prints the DB password
 APP_KEY=base64:…            # generated above, ONCE
-APP_URL=https://pos.bbt.edu.pk   # REQUIRED https://
+APP_URL=https://pos.bigbinaryerp.com   # REQUIRED https://
 
 TRUSTED_PROXIES=127.0.0.1   # nginx is on this box. NEVER '*' — see below
 
@@ -322,7 +324,7 @@ immediately, saying so.
 Only after DNS points at the static IP:
 
 ```bash
-sudo certbot --nginx -d pos.bbt.edu.pk
+sudo certbot --nginx -d pos.bigbinaryerp.com
 ```
 
 Renewal installs its own systemd timer. Verify it once:
@@ -467,10 +469,12 @@ run it.
 
 ## 8. CI and the release pipeline
 
-`azure-pipelines.yml` is the primary. `.github/workflows/ci.yml` is a deliberate
-mirror, because the repository pushes to both on the same `git push`. **When one
-changes, change both.** If they drift, the one nobody reads becomes a check that
-cannot fail, which is worse than no check because it is still trusted.
+`.github/workflows/ci.yml` is the **only** pipeline. `azure-pipelines.yml` was
+deleted on 2026-08-29 (`decisions.md` D54) — the Azure DevOps organisation had
+no credits, so it could never have run. There is deliberately no mirror now:
+two definitions of the same thing drift, and the one nobody reads becomes a
+check that cannot fail, which is worse than no check because it is still
+trusted.
 
 The required status check is the job named exactly **`CI`**. That name is
 configured in branch policy, outside this repository, so renaming it silently
@@ -478,41 +482,37 @@ stops protecting `main`.
 
 ### Registering the pipeline, and the `DEPLOY_ENABLED` gate
 
-**A YAML file in the repository is not a pipeline.** Azure DevOps does not
-discover `azure-pipelines.yml` on its own; the pipeline is a separate object
-that has to be created and pointed at the file. Until somebody does that,
-`azure-pipelines.yml` has never been parsed, let alone run, and the only thing
-actually testing the code is the GitHub mirror.
+Unlike Azure DevOps, GitHub Actions **does** discover a workflow on its own:
+`.github/workflows/ci.yml` runs from the moment it is on `main`. There is no
+pipeline object to create. What still has to be created by a human is everything
+that gates it — see "One-time GitHub setup" below.
 
-Create it: **Pipelines → New pipeline → Azure Repos Git → `bigbinarytech-POS` →
-Existing Azure Pipelines YAML file → `/azure-pipelines.yml` → Save** (Save, not
-"Save and run", so the first run is deliberate).
-
-`DEPLOY_ENABLED` in the variables block is `'false'` until a production box
-exists. `verify` and `build_assets` need no server — they run on Microsoft's
-hosted agents — so the pipeline is useful from the moment it is registered.
-`deploy_production` and `external_smoke` skip cleanly rather than failing on a
-missing Environment.
+`DEPLOY_ENABLED` in the workflow's `env:` block is `'false'` until a production
+box exists. The `tests` and `assets` jobs need no server — they run on
+GitHub-hosted runners — so the workflow is useful from the first push. `deploy`
+and `smoke` skip cleanly rather than failing on a missing runner.
 
 This exists because a pipeline that is red on every run is a pipeline nobody
 reads, and the cost of that is not the noise: it is that a **real** failure in
-`verify` gets waved through on the day it matters.
+the test matrix gets waved through on the day it matters.
 
 Turning it on is a commit, not a click, so enabling production deployment
 carries an author and a reviewer in the history and reverting is one revert.
-Do **not** mark it settable at queue time. It is a convenience gate, **not** the
-security control — the approval, branch control and exclusive lock on the
-Environment are, and those are configured in the UI (see below).
+Do **not** make it a `workflow_dispatch` input. It is a convenience gate, **not**
+the security control — the required reviewers, the branch restriction and the
+concurrency group are, and the first two are configured in the UI (see below).
 
 ```text
-Verify  ──►  Build  ──►  Deploy
-  │            │            │
-  │            │            └─ copy assets to /var/www/institute-builds/<sha>
-  │            │               ssh: RELEASE_SHA=<sha> BUILD_ASSETS=no deploy.sh
-  │            │               independent public GET https://…/ready
-  │            └─ Node 24 · npm ci · npm run build · publish `build-assets`
-  └─ PHP 8.4 × MySQL 8.0 (required) · 8.4 × MySQL 8.4 · 8.4 × sqlite · 8.5 × sqlite
-     pint --test · artisan test · migrations roll back and forward again
+CI  ──►  assets  ──►  deploy  ──►  smoke
+ │         │            │           │
+ │         │            │           └─ GitHub-hosted runner, public GET
+ │         │            │              https://…/ready
+ │         │            └─ self-hosted runner ON the box, as `institute`
+ │         │               stage build-assets to /var/www/institute-builds/<sha>
+ │         │               RELEASE_SHA=<sha> BUILD_ASSETS=no deploy.sh
+ │         └─ Node 24 · npm ci · npm run build · upload `build-assets`
+ └─ PHP 8.4 × MySQL 8.0 (production parity) · 8.4 × MySQL 8.4 · 8.4 × sqlite
+    · 8.5 × sqlite · pint --test · artisan test
 ```
 
 ### The matrix
@@ -534,7 +534,7 @@ package is the lower-risk option.
 Nothing generated enters git; `public/build` is git-ignored and stays that way.
 
 ```text
-Azure CI (Node 24)  npm ci && npm run build  ->  public/build/
+GitHub CI (Node 24) npm ci && npm run build  ->  public/build/
         └─ publish pipeline artifact `build-assets`
               └─ deploy stage copies to /var/www/institute-builds/<sha>/
                     └─ deploy.sh activates it, inside maintenance mode
@@ -553,45 +553,58 @@ content-hashed filenames only *usually* save you.
 
 ### The deploy runs ON the box, not over SSH
 
-The deployment job targets the Lightsail instance registered as an Azure DevOps
-Environment **Virtual Machine resource**. It does not SSH in from a hosted agent.
+The deployment job targets a **self-hosted runner** installed on the production
+box, labelled `institute-prod`. It does not SSH in from a hosted runner.
 
 That is a security decision, not a convenience one. An SSH-from-hosted-agent
 design needs port 22 reachable from Microsoft's published address ranges, which
 in practice means 22 open to the world on a box that bills course fees. A VM
-agent dials **out** to Azure DevOps and polls for work, so 22 stays restricted
-to the administrator's own IP and there is no inbound deployment path at all.
+self-hosted runner dials **out** to GitHub and polls for work, so 22 stays
+restricted to the administrator's own IP and there is no inbound deployment path
+at all.
 
-### One-time Azure DevOps setup (a human does this once)
+### One-time GitHub setup (a human does this once)
 
-**These are UI settings. They are deliberately NOT in `azure-pipelines.yml`,
-and they cannot be** — a pipeline file cannot meaningfully gate itself, because
-anything it said about who may approve it is something a pull request could
-change.
+**These are UI settings. They are deliberately NOT in the workflow file, and
+they cannot be** — a workflow cannot meaningfully gate itself, because anything
+it said about who may approve it is something a pull request could change.
 
 #### 1. Create the environment
 
-**Pipelines → Environments → New environment**
-- Name: **`production`** (exactly — the YAML references it)
-- Resource: **Virtual machines** → Linux → **Copy** the registration script
+**Settings → Environments → New environment**
+- Name: **`production`** (exactly — the workflow references it)
 
-#### 2. Register the box as a VM resource
+Add both protections on it:
 
-On the server, **as the `institute` service account**, not as root:
+| Setting | Value | Why |
+| --- | --- | --- |
+| **Required reviewers** | you and one other | a human presses go on money software |
+| **Deployment branches** | Selected → `main` | stops a feature branch reaching production |
+
+One-at-a-time is already in the workflow as `concurrency: production-deploy`.
+It is the **first** of two layers. The second is the `flock` in `deploy.sh`, and
+it is the one that matters — the GitHub concurrency group does not cover a human
+who SSHes in and runs a release by hand.
+
+#### 2. Register the self-hosted runner
+
+**Settings → Actions → Runners → New self-hosted runner → Linux x64.** On the
+server, **as the `institute` service account**, not as root:
 
 ```bash
 sudo -u institute -H bash
-cd ~ && mkdir -p azagent && cd azagent
-# paste the registration script copied from the Environments page
+cd ~ && mkdir -p actions-runner && cd actions-runner
+# paste the download commands GitHub shows, then:
+./config.sh --url https://github.com/<owner>/<repo> \
+            --token <REGISTRATION_TOKEN> \
+            --labels institute-prod \
+            --unattended
 ```
 
-When it prompts:
-
-| Prompt | Answer |
-| --- | --- |
-| Environment name | `production` |
-| Resource name | **`institute-prod`** (exactly — the YAML references it) |
-| Tags | none needed |
+The **`institute-prod` label is load-bearing**: the deploy job is
+`runs-on: [self-hosted, institute-prod]`. A runner without it is invisible to
+the workflow and the job queues indefinitely rather than failing — which reads
+as a hang, not as a misconfiguration.
 
 Then install it as a service so it survives a reboot:
 
@@ -601,48 +614,35 @@ sudo ./svc.sh start
 sudo ./svc.sh status
 ```
 
-> **Run the agent as `institute`, not root.** That account already holds exactly
-> three sudo grants — reload `php8.4-fpm`, restart and status `institute-queue` —
-> and nothing else. Registering the agent as root to "simplify the pipeline"
-> hands every future YAML edit unrestricted control of the box.
+> **Run the runner as `institute`, not root.** That account holds exactly three
+> sudo grants — reload `php8.4-fpm`, restart and status `institute-queue` — and
+> nothing else. Registering it as root to "simplify the pipeline" hands every
+> future edit of the workflow unrestricted control of the box.
 >
-> The registration token is a **PAT with Environment (read & manage) scope only**.
-> It is used once, at registration, and must never be committed. Revoke it after
-> the agent is running.
+> The registration token is single-use and expires in about an hour, so unlike
+> a PAT there is nothing to revoke afterwards. It must still never be committed.
 
-#### 3. Add the three checks
+#### 3. Branch protection on `main`
 
-**Environments → production → ⋮ → Approvals and checks:**
+**Settings → Branches → Branch protection rules:**
+- Require status checks to pass, and require the check named exactly **`CI`**
 
-| Check | Setting | Why |
-| --- | --- | --- |
-| **Approvals** | add yourself and one other approver | A human presses go on money software |
-| **Branch control** | Allowed branches: `refs/heads/main` | Stops a feature branch reaching production |
-| **Exclusive lock** | enable | One pipeline at a time |
+Renaming that job silently stops protecting the branch: the rule goes on waiting
+for a check that no longer exists.
 
-The exclusive lock is the **first** of two layers. The second is the `flock` in
-`deploy.sh`, and it is the one that matters — the Azure lock does not cover a
-human who SSHes in and runs a release by hand.
+#### 4. Repository access from the box
 
-#### 4. Branch policy on `main`
-
-**Repos → Branches → `main` → Branch policies:**
-- Build validation against this pipeline
-- Required status check named exactly **`CI`**
-
-Renaming that job silently stops protecting the branch.
-
-#### 5. Repository access from the box
-
-The box still needs to `git fetch` this repository. Use a **read-only SSH deploy
+The box still needs to `git fetch` this repository. Use a **read-only deploy
 key**, never a developer's PAT and never write access:
 
 ```bash
 sudo -u institute ssh-keygen -t ed25519 -N "" -f ~institute/.ssh/id_ed25519
 sudo -u institute cat ~institute/.ssh/id_ed25519.pub
-# Add in Azure DevOps: User settings > SSH public keys (or a repo deploy key)
-# Then point the remote at SSH:
-cd /var/www/institute && sudo -u institute git remote set-url origin <ssh-url>
+# Add at: Settings > Deploy keys > Add deploy key
+#         leave "Allow write access" UNCHECKED
+cd /var/www/institute
+sudo -u institute git remote set-url origin git@github.com:<owner>/<repo>.git
+sudo -u institute git fetch origin      # prove it before you need it
 ```
 
 PATs expire, always at the worst moment, and the failure looks like an
@@ -660,7 +660,7 @@ Everything below is on the box already; none of it needs another service.
 | Question | Where |
 | --- | --- |
 | Is the process alive? | `curl -sf http://127.0.0.1/up` |
-| Is the app actually *ready*? | `curl -sf https://pos.bbt.edu.pk/ready` |
+| Is the app actually *ready*? | `curl -sf https://pos.bigbinaryerp.com/ready` |
 | Did the scheduler run? | `journalctl -u institute-scheduler --since today` |
 | Is the queue alive? | `systemctl status institute-queue` |
 | Did the last hourly backup work? | `ls -la /var/backups/institute` |
@@ -685,7 +685,7 @@ reachable.
 
 ### Alerting — the one thing that is not on the box
 
-Point a free external monitor at **`https://pos.bbt.edu.pk/ready`** —
+Point a free external monitor at **`https://pos.bigbinaryerp.com/ready`** —
 UptimeRobot or Better Stack, both free for this. Email or WhatsApp.
 
 > **Alert on two consecutive failures, not one.** `/ready` returns 503 during
@@ -733,7 +733,7 @@ whether the database needs the pre-deploy dump restored, and only then
 Everything in this list is required to bring the institute back from a dump.
 Losing any one of them makes the others insufficient. Keep them in a password
 manager, off this box, reachable by **at least two people** — see the DR runbook
-(`docs/DR-RUNBOOK.md`), which is the page to hand someone who is not the
+(`docs/PRODUCTION-EMERGENCY.md`), which is the page to hand someone who is not the
 engineer.
 
 | Secret | Also at | Why it is fatal to lose |
@@ -784,7 +784,7 @@ certbot step is the one thing rehearsed only on the production run.
 - [ ] `timedatectl` reports synchronised, and the script fails loudly if it does not
 - [ ] MySQL is on loopback only — `ss -lntp | grep 3306` shows `127.0.0.1`
 - [ ] Migrations run; **only** `RolePermissionSeeder` and `SuperAdminSeeder`
-- [ ] Azure DevOps VM resource registers, agent runs as `institute`
+- [ ] Self-hosted runner registers with the `institute-prod` label, as `institute`
 - [ ] A pipeline deploy succeeds end to end with the exact SHA
 - [ ] Assets stage under `/var/www/institute-builds/<sha>/` and activate
 - [ ] **Bad SHA refuses** — before the backup, before maintenance mode
@@ -812,7 +812,7 @@ Once the rehearsal has passed twice. Every step, in sequence.
 2. Attach a **static IPv4**. (§2.3)
 3. **Disable IPv6** on the instance, or configure both firewall rule sets. (§2.4)
 4. Firewall: **22 from the admin IP only**, 80 and 443 open. No 3306. (§2.4)
-5. Point DNS `pos.bbt.edu.pk` → the static IP. Wait for it to resolve.
+5. Point DNS `pos.bigbinaryerp.com` → the static IP. Wait for it to resolve.
 6. `ssh ubuntu@<static-ip>`
 7. `git clone <repo> /tmp/pos && cd /tmp/pos`
 8. `sudo bash deploy/provision.sh`
@@ -841,14 +841,14 @@ Once the rehearsal has passed twice. Every step, in sequence.
     students, fake revenue, and three logins whose passwords are in this
     repository.
 18. **Record the super-admin password** printed once by the seeder. (§11)
-19. Confirm DNS resolves to this box: `dig +short pos.bbt.edu.pk`
-20. `sudo certbot --nginx -d pos.bbt.edu.pk`
+19. Confirm DNS resolves to this box: `dig +short pos.bigbinaryerp.com`
+20. `sudo certbot --nginx -d pos.bigbinaryerp.com`
 21. `sudo certbot renew --dry-run`
 22. Set `SESSION_SECURE_COOKIE=true` in `.env`
 23. `sudo -u institute php8.4 artisan config:cache`
 24. `sudo systemctl enable --now institute-queue && systemctl status institute-queue`
 25. `systemctl status institute-scheduler.timer`
-26. Register the box as the Azure DevOps `production` Environment VM resource (§8)
+26. Register the box as a self-hosted runner in the `production` Environment (§8)
 27. Confirm the agent runs as `institute`, not root
 28. Configure approvals, branch control and the exclusive lock (§8)
 29. Only now allow a normal pipeline deploy.
@@ -864,7 +864,7 @@ Deployment being done is not the same as being ready to take money.
 Through a **browser**, never PHPUnit — the suite uses `RefreshDatabase` and
 would drop every table in `institute_pos`.
 
-- [ ] `https://pos.bbt.edu.pk/ready` returns **200**
+- [ ] `https://pos.bigbinaryerp.com/ready` returns **200**
 - [ ] Super-admin login at `/superadmin` works
 - [ ] TOTP works — both an existing enrolment and a fresh one
 - [ ] Dashboard loads
@@ -904,7 +904,7 @@ five-hour offset on a receipt erodes confidence in a fee system on day one.
 
 ### Monitoring
 
-- [ ] External monitor on `https://pos.bbt.edu.pk/ready`, 5-minute interval
+- [ ] External monitor on `https://pos.bigbinaryerp.com/ready`, 5-minute interval
 - [ ] Alerting on **two consecutive failures**, not one (§9)
 - [ ] **TLS expiry alerting on** — certbot renews on a 90-day timer nobody will
       be watching in November

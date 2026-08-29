@@ -452,3 +452,130 @@ A framework **major** on an application that is Blade + Livewire 3 + Volt
 throughout, failing CI, days before a first production deployment that has never
 run on real hardware. It would invalidate the browser smoke pass that has to
 happen before the counter opens. Deferred to week two.
+
+### D51 · Hostinger KVM 2, Germany (Frankfurt) — superseding D1's Lightsail/Mumbai
+D1 chose Lightsail in Mumbai on a latency argument. The server was bought on
+Hostinger instead: **KVM 2, plain Ubuntu 24.04, no control panel, Frankfurt**,
+$13.99/month, purchased 2026-08-29.
+
+Frankfurt rather than Mumbai costs about 27 ms against Lahore — roughly 145 ms
+versus 118 ms. D1's threshold was ~250 ms, where a Livewire round trip per
+keystroke starts to feel broken at the counter, and neither figure is near it.
+Germany is the better-supported Hostinger region, so the latency difference buys
+nothing worth having on the other side.
+
+The second half of the usual argument is **not** made here on purpose: student
+records for a Lahore institute sitting on an EU server is a jurisdiction choice
+with trade-offs both ways, not a legal improvement in itself. If the institute
+has a view on where the data physically sits, that decision is theirs.
+
+**Consequence:** the region is not permanent but moving means a rebuild and a DNS
+change, so it is settled now rather than after go-live. Everything Lightsail-
+shaped in `docs/DEPLOYMENT.md` §2 — instance creation, static IP, the console
+firewall, snapshots — is replaced by `docs/GO-LIVE-CHECKLIST.md`. The firewall
+is the one that matters: Lightsail's network ACL was restricting port 22 for us
+and Hostinger has no equivalent, so `ufw` becomes the only control (P3-05).
+
+### D52 · The VPS is billed to, and owned by, the client's Hostinger account
+Purchased under `abdurrehman545@gmail.com`, with Admin access granted to the
+engineer rather than the engineer owning the subscription.
+
+That is the right ownership for a system the institute will still be running
+after this engagement ends — the asset should not be hostage to a contractor's
+billing relationship. It carries two consequences that are ours to manage rather
+than theirs:
+
+**The browser console and the OS-reinstall button are borrowed, not owned.**
+Both are needed: the console is the way back in if `ufw` (P3-05) locks SSH out,
+and the reinstall is how the twice-through rehearsal (P2-20) happens without
+buying a second box. If Admin access is revoked or lapses, both disappear, and
+they disappear at exactly the moment they are wanted.
+
+**Renewal is on somebody else's card.** The term expires 2026-09-25. A fee-
+collection system that goes dark because a renewal did not go through is
+indistinguishable, from the counter, from a system that crashed.
+
+### D53 · `pos.bigbinaryerp.com`
+The production hostname is `pos.bigbinaryerp.com`, settled 2026-08-29 before any
+certificate was issued, before `APP_URL` reached a live `.env`, and before
+anything was committed. It is the natural home: the product is an ERP, and the
+domain is the company's ERP domain.
+
+Two other names were evaluated the same day and the reasoning is worth keeping,
+because the criterion turned out not to be branding — **it was which zone we can
+change without asking anyone.**
+
+- `pos.bbt.edu.pk` — `bbt.edu.pk` is served flat by PKNIC with **no delegation**,
+  so every record is a request to whoever holds the registry login, against a
+  four-hour negative cache. It remains the institute's **email** domain and
+  nothing here changes that.
+- `pos.bigbinarytech.com` — briefly chosen, because at the time it was the only
+  zone we demonstrably controlled: nameservers `ns1/ns2.dns-parking.com`, in the
+  Hostinger account we hold Admin on. Sound while it was true, and dropped the
+  moment it stopped being the only option.
+- `pos.bigbinaryerp.com` — **initially blocked, then unblocked.** It was
+  registered at Hostinger but resolved by Vercel, under an account nobody present
+  could open. Moving the nameservers to Hostinger removed the blocker entirely,
+  and the choice reverts to what it should have been on the merits.
+
+**The caveat that outlives this decision.** The nameserver move is a live
+migration of a zone that serves a working site (`www.bigbinaryerp.com` answers
+200). During the changeover, resolvers holding the old Vercel delegation and
+resolvers using the new Hostinger one give **different answers for the same
+name** — and Vercel's zone has a wildcard, so `pos` resolves there too, to the
+wrong address. Certbot must not run until that has settled (checklist P3-18/19),
+and the Hostinger zone has to reproduce whatever Vercel was serving or the
+marketing site goes dark hours later, looking causeless.
+
+**Consequence.** The application hostname moved everywhere it is functional:
+`azure-pipelines.yml` `PRODUCTION_HOST`, `.env.production.example` `APP_URL`,
+`docs/DEPLOYMENT.md`, `docs/PRODUCTION-EMERGENCY.md`, `flow.md` and the go-live
+checklist. It deliberately did **not** move in three places: the institute's
+email addresses (`no-reply@`, `accounts@`, `owner@bbt.edu.pk`), the staff
+accounts created by migration `2026_08_11_000002`, and the test fixtures. Those
+are the **institute's** identity; the hosting hostname has nothing to say about
+them, and a blind find-and-replace across `bbt.edu.pk` would have rewritten staff
+account identities in a migration that has already run.
+
+**The general lesson, which cost a session.** Three domains, three different
+authorities, and every time the panel we were registered with was not the panel
+that answered. **Run `dig NS <domain>` before typing into any DNS form.**
+Hostinger's UI says so itself when it is not the authority — *"DNS is managed at
+another provider… Inactive"* — and that banner is worth reading rather than
+scrolling past.
+
+### D54 · GitHub Actions, not Azure Pipelines — and `azure-pipelines.yml` deleted
+The Azure DevOps organisation has no pipeline credits, so `azure-pipelines.yml`
+could not run. GitHub Actions becomes the authoritative release path and the
+repository stays on GitHub. Decided 2026-08-29, before the pipeline had ever
+deployed anything, so nothing had to be migrated — only re-pointed.
+
+**The architecture did not change; only the runner did.** Every property the
+Azure design was chosen for is preserved:
+
+| Azure DevOps | GitHub Actions | The property it protects |
+| --- | --- | --- |
+| Environment VM resource | self-hosted runner on the box | the box dials **out**; port 22 stays pinned to the admin IP |
+| Agent runs as `institute` | runner runs as `institute` | three sudo grants, not a shell |
+| Environment → Approvals | Environment → required reviewers | a human presses go on money software |
+| Environment → Branch control | Environment → deployment branches: `main` | a feature branch cannot reach production |
+| Environment → Exclusive lock | `concurrency: production-deploy` | one release at a time |
+| `flock` in `deploy.sh` | unchanged | the lock that actually matters — it also covers a human running a release by hand |
+| Required check named `CI` | unchanged | branch protection keeps waiting on the same name |
+| `DEPLOY_ENABLED: 'false'` | unchanged, in the workflow | enabling production deploys is a commit, with an author and a reviewer |
+
+`deploy/deploy.sh` and `deploy/provision.sh` were not touched. They never knew
+which CI was calling them, which is why this was a half-hour change rather than
+a re-platforming.
+
+**`azure-pipelines.yml` was deleted rather than left in place.** The repository's
+own rule, stated in the header of the file that is now authoritative, is that
+two definitions of the same thing drift and the one nobody reads becomes a check
+that cannot fail — which is worse than no check, because it is still trusted. A
+dead pipeline for a provider with no credits is that failure mode by
+construction. It remains in git history if it is ever wanted.
+
+**Consequence:** the GitHub workflow gained the deploy and smoke jobs it
+deliberately did not have, and its header — which previously said in as many
+words *"this file does not deploy anything, and must not be given the ability
+to"* — was rewritten rather than quietly contradicted.
