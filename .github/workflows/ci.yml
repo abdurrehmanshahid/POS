@@ -181,10 +181,16 @@ jobs:
 
       - name: Prepare environment
         # phpunit.xml supplies the test database and drivers. This step exists
-        # for APP_KEY, which the encrypted two-factor casts genuinely require
-        # and which .env.example deliberately ships blank.
+        # only for APP_KEY, which the encrypted two-factor casts genuinely
+        # require.
+        #
+        # Written inline rather than copied from .env.example: the example files
+        # are no longer tracked in this repository, and a CI step that depends on
+        # an untracked file is a step that fails the first time someone clones
+        # clean. Four lines is a smaller thing to keep correct than a file that
+        # has to exist for a reason nobody remembers.
         run: |
-          cp .env.example .env
+          printf 'APP_NAME=Institute\nAPP_ENV=testing\nAPP_DEBUG=true\nAPP_KEY=\n' > .env
           php artisan key:generate
 
       - name: Check code style

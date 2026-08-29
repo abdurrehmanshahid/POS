@@ -122,3 +122,30 @@ database/database.sqlite
 # though the importer reads them from here.
 /student_details_report*.xlsx
 /Invoice *.pdf
+
+# ---------------------------------------------------------------------------
+# Documentation and environment templates are kept LOCAL, not published.
+#
+# Untracked on 2026-08-29 at the owner's request. The files still exist in every
+# working copy that had them and in git history before that commit — this only
+# stops them being pushed.
+#
+# Two consequences worth knowing, because neither announces itself:
+#
+#   1. A FRESH CLONE HAS NO DOCUMENTATION AND NO .env TEMPLATE. The deployment
+#      path (docs/DEPLOYMENT.md §13, checklist P3-07) copies
+#      .env.production.example on the server. A clean clone cannot, so that file
+#      has to reach the box another way — scp it, or paste it.
+#
+#   2. `deploy.sh` and `provision.sh` still refer people to docs/DEPLOYMENT.md
+#      and docs/PRODUCTION-EMERGENCY.md in their error messages. Those pointers
+#      are now to files a fresh clone does not have.
+#
+# CI does not depend on any of this: the `Prepare environment` step in
+# .github/workflows/ci.yml writes its own four-line .env rather than copying
+# .env.example, precisely so removing these could not break the test matrix.
+# ---------------------------------------------------------------------------
+*.md
+/docs/
+.env.example
+.env.production.example
