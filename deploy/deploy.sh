@@ -356,7 +356,11 @@ fi
 # page to smoke-test before the counter does.
 SECRET="deploy-$(date +%s)"
 log "Maintenance mode on (bypass: /${SECRET})"
-$PHP artisan down --secret="$SECRET" >/dev/null 2>&1 || true
+# --render, or `artisan down` looks for a view literally named `503`, fails to
+# find one, logs "View [503] not found" and falls back to the framework's
+# unbranded default page. See resources/views/errors/503.blade.php for why that
+# view has to be standalone HTML rather than using a layout.
+$PHP artisan down --secret="$SECRET" --render="errors::503" >/dev/null 2>&1 || true
 
 finish_failed() {
     warn "Deploy failed. Maintenance mode is LEFT ON deliberately."

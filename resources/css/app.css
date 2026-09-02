@@ -601,3 +601,26 @@ body.is-impersonating .shell { height:calc(100vh - 44px); }
     .busy::before { animation: none; border-top-color: var(--border2); }
     .busy { animation: none; }
 }
+
+/* ---------------------------------------------------------------------------
+   Connection banner
+   ---------------------------------------------------------------------------
+   Fixed to the top and above everything, including the drawers — the message
+   it carries is that the drawer you are looking at did not save, so a drawer
+   covering it would defeat the point.
+   -------------------------------------------------------------------------- */
+.conn-banner {
+    position: fixed; top: 0; left: 0; right: 0; z-index: 200;
+    display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap;
+    padding: 10px 18px;
+    font-size: var(--fs-xs); line-height: 1.5;
+    color: #fff; background: var(--navy2, #2A2668);
+    box-shadow: 0 2px 10px rgba(0,0,0,.22);
+    animation: bbtFade .18s;
+}
+.conn-banner strong { font-weight: 800; }
+.conn-banner span { opacity: .92; }
+.conn-banner[data-tone="warn"] { background: #9a5b00; }
+.conn-banner[data-tone="err"]  { background: #9b1c1c; }
+
+@media (prefers-reduced-motion: reduce) { .conn-banner { animation: none; } }

@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use Illuminate\Http\Response;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Throwable;
 
@@ -90,6 +91,41 @@ class ReadinessController extends Controller
             if (! is_dir($path) || ! is_writable($path)) {
                 return "not writable: {$path}";
             }
+        }
+
+        // The cache STORE, not just the database it happens to live in.
+        //
+        // This check exists because of a real outage that nothing noticed. The
+        // `cache` table went missing from production while MySQL itself stayed
+        // perfectly healthy, so `select 1` above passed on every poll and
+        // /ready reported 200 for six hours. Meanwhile every Cache:: call threw
+        // — 1,440 identical stack traces a day, 11MB of log, and no alert.
+        //
+        // What is actually down when this is down is worth spelling out,
+        // because "the cache" sounds optional and none of this is:
+        //
+        //   · the login throttle. Laravel's RateLimiter is a cache client, so
+        //     brute-force protection fails OPEN — the security control most
+        //     worth having on an internet-facing till.
+        //   · `withoutOverlapping` on the hourly backup and the weekly restore
+        //     drill, both of which take their locks from this store.
+        //   · every Cache::remember in the application.
+        //
+        // A round trip rather than a read: a missing table only fails on the
+        // WRITE for some drivers, and a store that can be read but not written
+        // is still a broken lock. The key is namespaced and immediately
+        // forgotten so a poll every five minutes leaves nothing behind.
+        try {
+            $probe = 'readiness:'.bin2hex(random_bytes(4));
+            Cache::put($probe, 1, 10);
+            $ok = Cache::get($probe) === 1;
+            Cache::forget($probe);
+
+            if (! $ok) {
+                return 'cache store wrote but did not read back';
+            }
+        } catch (Throwable $e) {
+            return 'cache store unusable: '.$e->getMessage();
         }
 
         return null;

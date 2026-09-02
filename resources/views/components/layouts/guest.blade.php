@@ -26,6 +26,7 @@
             : 'Big Binary Tech';
     @endphp
     <title>{{ $guestTitle }} · {{ $guestSuffix }}</title>
+    @include('partials.favicon')
     {{-- Inter is self-hosted and declared in app.css. It used to be three tags
          here: two preconnects and a render-blocking stylesheet from
          fonts.googleapis.com, which measured 1.6s from Lahore and held up the

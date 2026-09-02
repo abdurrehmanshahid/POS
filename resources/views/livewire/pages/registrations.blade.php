@@ -640,7 +640,7 @@ new class extends Component {
         </div>
 
         <div class="panel scroll-x">
-            <table class="table">
+            <table class="table" wire:loading.class="is-busy" wire:target="q">
                 <thead><tr>
                     <th>Adm #</th><th>Student</th><th>Course</th><th>Enrolled by</th><th class="right">Net fee</th><th>Payment</th>
                 </tr></thead>

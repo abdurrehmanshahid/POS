@@ -187,6 +187,70 @@ class FrontendAssetsTest extends TestCase
     }
 
     /**
+     * The tab icon is a real image, not a placeholder that answers 200.
+     *
+     * `public/favicon.ico` was committed at ZERO bytes. Nothing looked broken
+     * from the server's side — it returned 200 with `image/x-icon` — and every
+     * tab in the app showed the browser's generic globe. `assertFileExists`
+     * would have passed on it happily, which is why this asserts the bytes are
+     * actually a decodable image.
+     */
+    public function test_the_favicons_are_real_images(): void
+    {
+        foreach (['favicon-32.png' => 32, 'apple-touch-icon.png' => 180] as $file => $expected) {
+            $path = public_path($file);
+            $this->assertFileExists($path);
+
+            $size = @getimagesize($path);
+            $this->assertNotFalse($size, "{$file} is not a decodable image.");
+            $this->assertSame([$expected, $expected], [$size[0], $size[1]],
+                "{$file} should be {$expected}x{$expected}.");
+        }
+
+        // The .ico is what the browser fetches unasked, with no markup involved,
+        // so an empty one is invisible until somebody looks at a tab.
+        $ico = public_path('favicon.ico');
+        $this->assertFileExists($ico);
+        $this->assertGreaterThan(100, filesize($ico), 'favicon.ico is empty — the browser will draw its own placeholder.');
+    }
+
+    /**
+     * Every page declares it, including the standalone document viewer.
+     *
+     * No layout declared an icon at all, which is how the empty .ico went
+     * unnoticed: with no <link>, the browser's fallback request was the only
+     * thing asking for one.
+     */
+    public function test_every_head_declares_the_icon(): void
+    {
+        foreach (array_merge(self::LAYOUTS, ['resources/views/documents/viewer.blade.php']) as $view) {
+            $this->assertStringContainsString("@include('partials.favicon')", file_get_contents(base_path($view)),
+                "{$view} declares no tab icon, so the browser falls back to its generic globe.");
+        }
+    }
+
+    /**
+     * The document introduces itself the same way wherever it is opened.
+     *
+     * A challan reached through the in-app viewer said "Fee challan BBT-CH-…
+     * · Student Name"; the same challan opened in the browser's own PDF viewer
+     * said "Fee Challan BBT-CH-…" from the PDF's internal title — different
+     * capitalisation, no name. Same document, two introductions.
+     */
+    public function test_the_pdf_titles_match_the_viewer_page_titles(): void
+    {
+        $pdf = file_get_contents(base_path('resources/views/challans/pdf.blade.php'));
+        $controller = file_get_contents(base_path('app/Http/Controllers/ChallanController.php'));
+
+        $this->assertStringContainsString('<title>Fee challan ', $pdf,
+            "The PDF's own title must match the viewer page's wording, including its case.");
+        $this->assertStringContainsString("'Fee challan '", $controller);
+
+        $receipt = file_get_contents(base_path('resources/views/receipts/pdf.blade.php'));
+        $this->assertStringContainsString('<title>Receipt ', $receipt);
+    }
+
+    /**
      * The sidebar prefetches on hover.
      *
      * The box is in Frankfurt and the institute is in Lahore: 142ms of round

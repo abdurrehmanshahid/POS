@@ -2,7 +2,11 @@
 <html lang="en">
 <head>
     <meta charset="utf-8">
-    <title>Fee Challan {{ $challan->challan_no }}</title>
+    {{-- Matches ChallanController::view()'s page title exactly. These are the
+         same document reached two ways — the in-app viewer and the browser's
+         own, on the saved file — and they were introducing it with different
+         capitalisation and different detail. --}}
+    <title>Fee challan {{ $challan->challan_no }}{{ $challan->student?->name ? ' · '.$challan->student->name : '' }}</title>
     @php
         use App\Support\Format;
 

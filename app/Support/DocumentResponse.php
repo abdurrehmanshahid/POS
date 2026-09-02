@@ -17,6 +17,31 @@ use Symfony\Component\HttpFoundation\Response;
 final class DocumentResponse
 {
     /**
+     * Where the vendored PDF.js lives, version and all.
+     *
+     * The version is IN THE PATH, and that is a cache control rather than
+     * bookkeeping. These files are not content-hashed the way Vite's output is,
+     * so every counter PC holds `viewer.mjs` under a URL that never changes —
+     * and a browser that has cached a bad response for it will keep using that
+     * response until its own heuristic freshness runs out, however correct the
+     * server has since become.
+     *
+     * That is not hypothetical. nginx had no MIME type for `.mjs`, so PDF.js
+     * was served as application/octet-stream and every browser that opened a
+     * challan refused to execute it. Fixing nginx fixed the server instantly
+     * and fixed nobody's browser for another ten hours. Bumping this constant
+     * is what actually reaches them, and it is the same one line that will
+     * publish the next PDF.js upgrade.
+     *
+     * Change it whenever the contents of public/vendor/pdfjs-* change.
+     *
+     * Public so ScreensTest can assert against the constant rather than against
+     * a path typed a second time. A test with its own copy of the directory
+     * name goes green while the application points somewhere else.
+     */
+    public const VENDOR = 'vendor/pdfjs-6.2.108';
+
+    /**
      * The PDF.js viewer, pointed at a route that streams the document.
      *
      * Every URL is reduced to a path, and that is load-bearing rather than
@@ -35,7 +60,7 @@ final class DocumentResponse
     {
         return response()->view('documents.viewer', [
             'title' => $title,
-            'viewer' => self::path(asset('vendor/pdfjs/web/viewer.html')),
+            'viewer' => self::path(asset(self::VENDOR.'/web/viewer.html')),
             'stream' => self::path($streamUrl),
             'download' => self::path($downloadUrl),
         ]);

@@ -254,7 +254,7 @@ new class extends Component {
 
     {{-- Table --}}
     <div class="panel">
-        <div class="scroll-x">
+        <div class="scroll-x" wire:loading.class="is-busy" wire:target="q">
             <table class="table table-cards">
                 <thead>
                     <tr>

@@ -83,3 +83,29 @@ Schedule::command('backup:verify')
     ->timezone(config('institute.timezone'))
     ->withoutOverlapping(180)
     ->onFailure(fn () => logger()->critical('Weekly restore drill FAILED — the latest backup could not be replayed.'));
+
+/*
+| The only table in this database that grows without anything ever removing a
+| row from it, and that nobody would notice growing.
+|
+| `failed_jobs` is written by the queue and read by a person, once, when they
+| are investigating. Laravel never prunes it. On a healthy box it stays empty
+| and this does nothing; the case it exists for is the unhealthy one — a mail
+| host refusing connections, a job throwing on every attempt — where it fills
+| at the rate of the failure, silently, inside the same database the fee ledger
+| lives in and the same dump that has to be restorable in a hurry.
+|
+| Fourteen days deliberately matches BACKUP_KEEP: a failure old enough that no
+| retained dump still predates it is a failure nobody is going to investigate.
+|
+| NOT the `jobs` table, which the worker empties itself, and NOT `audit_logs`,
+| which must never be pruned by anything — it is the financial record the spec
+| requires, its rows are immutable by design (see App\Models\AuditLog), and at
+| roughly 1,750 rows after importing the institute's entire history it will not
+| be a problem in this system's lifetime.
+*/
+Schedule::command('queue:prune-failed', ['--hours' => 336])
+    ->weeklyOn(0, '03:30')
+    ->timezone(config('institute.timezone'))
+    ->withoutOverlapping(30)
+    ->onFailure(fn () => logger()->warning('Pruning failed_jobs did not complete.'));

@@ -34,10 +34,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="referrer" content="same-origin">
     <title>{{ $title }}</title>
-    {{-- Root-relative like the two below it, not asset(). One URL on this page
-         built a different way from its neighbours is how the rule stops being
-         a rule. --}}
-    <link rel="icon" href="/favicon.ico">
+    @include('partials.favicon')
     <style>
         /* The viewer is the page. No chrome of our own above it: PDF.js
            already offers save, print, zoom and page navigation, and a second

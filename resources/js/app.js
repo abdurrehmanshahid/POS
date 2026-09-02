@@ -154,3 +154,134 @@ window.bbtToasts = function () {
         },
     };
 };
+
+// ---- Connection banner -----------------------------------------------------
+//
+// The failure this exists for: the counter's internet drops, the officer clicks
+// "Record payment", and NOTHING happens. No error, no spinner, no change — a
+// Livewire request that never reaches the server fails silently by default. The
+// rational response to a dead button is to press it again, which is the last
+// thing anyone wants on a payment, and the officer has no way to know whether
+// the first press was recorded.
+//
+// So every state where the server is unreachable gets said out loud, in words
+// aimed at somebody with a parent waiting at the desk rather than at a
+// developer reading a console.
+//
+// Three distinct cases, because the right thing to do differs:
+//   offline      the browser knows there is no network. Wait.
+//   maintenance  503: a deploy is in progress. Seconds, not minutes.
+//   unreachable  the request left and nothing came back, or the server errored.
+(function () {
+    let el = null;
+    let current = null;
+
+    const MESSAGES = {
+        offline: ['warn', 'No internet connection', 'Your last action was not saved. It will work again as soon as the connection returns — nothing has been lost.'],
+        maintenance: ['info', 'The system is briefly unavailable', 'This is usually a short update and clears on its own. Your last action was not saved — try it again in a moment.'],
+        unreachable: ['err', 'Could not reach the server', 'Your last action was not saved. Check the connection and try again — do not assume it went through.'],
+    };
+
+    function show(kind) {
+        if (current === kind) return;
+        current = kind;
+        const [tone, title, detail] = MESSAGES[kind];
+        if (!el) {
+            el = document.createElement('div');
+            el.className = 'conn-banner';
+            el.setAttribute('role', 'status');
+            // aria-live so a screen reader announces it; the banner is the only
+            // notice that a click did nothing.
+            el.setAttribute('aria-live', 'polite');
+            document.body.appendChild(el);
+        }
+        el.dataset.tone = tone;
+        el.innerHTML = '<strong></strong><span></span>';
+        el.querySelector('strong').textContent = title;
+        el.querySelector('span').textContent = detail;
+    }
+
+    function hide() {
+        current = null;
+        if (el) { el.remove(); el = null; }
+    }
+
+    /**
+     * Which of the three it actually is, established rather than assumed.
+     *
+     * `/up` is the framework's own health route and answers in a few bytes, so
+     * this costs nothing and only ever runs after something has already failed.
+     * `cache: 'no-store'` because a cached 200 from before the outage would be
+     * the one answer that could not be trusted.
+     */
+    let lastProbe = 0;
+    let lastVerdict = null;
+
+    async function classify() {
+        if (navigator.onLine === false) return 'offline';
+
+        // One probe per five seconds. A burst of failed requests is exactly the
+        // moment the server is least able to answer more of them, and every
+        // browser in the institute would otherwise pile on together.
+        const now = Date.now();
+        if (lastVerdict && now - lastProbe < 5000) return lastVerdict;
+        lastProbe = now;
+
+        try {
+            // `/ready`, NOT `/up`.
+            //
+            // `/up` is a LIVENESS probe and is deliberately excepted from
+            // maintenance mode, so it answers 200 throughout a deploy —
+            // measured, not assumed. Probing it would have reported a deploy as
+            // a network failure, which is the exact misdiagnosis this function
+            // exists to prevent. `/ready` is not excepted: 503 while the site
+            // is down for a release, 503 if the database or cache store is
+            // unusable, 200 only when a request that touches money would work.
+            //
+            // Both of its 503s get the same wording on purpose. "Briefly
+            // unavailable, try again shortly" is true of a deploy AND of a
+            // degraded box, and it is the same thing to do either way.
+            const res = await fetch('/ready', { method: 'GET', cache: 'no-store' });
+            lastVerdict = res.status === 503 ? 'maintenance' : 'unreachable';
+        } catch (e) {
+            // Nothing came back at all: the network, not the application.
+            lastVerdict = navigator.onLine === false ? 'offline' : 'unreachable';
+        }
+
+        return lastVerdict;
+    }
+
+    window.addEventListener('offline', () => show('offline'));
+    window.addEventListener('online', hide);
+    if (navigator.onLine === false) show('offline');
+
+    document.addEventListener('livewire:init', () => {
+        window.Livewire.hook('request', ({ fail, succeed }) => {
+            // Any answer at all means the server is there. Clearing on success
+            // rather than on a timer is what stops the banner outliving the
+            // outage it describes.
+            succeed(() => { lastVerdict = null; if (navigator.onLine !== false) hide(); });
+
+            fail(({ status }) => {
+                // 419 and 422 are the server answering properly and Livewire
+                // handles them itself; claiming a connection problem there
+                // would be a lie in the other direction.
+                if (status && status < 500 ) return;
+
+                // Livewire reports status 503 for a request that never
+                // completed at all — a dropped wifi, DNS failing, the laptop
+                // lid closing mid-click. It is indistinguishable at this point
+                // from the real 503 that `artisan down` serves during a deploy,
+                // and the two need OPPOSITE advice: "wait a few seconds, it is
+                // coming back" versus "your connection is gone, check it".
+                //
+                // Telling an officer the system is updating when their internet
+                // has actually died is the worse mistake of the two: they wait
+                // at a desk with a parent in front of them for something that
+                // will never resolve on its own. So we ask the server directly
+                // instead of guessing from a status Livewire had to invent.
+                classify().then(show);
+            });
+        });
+    });
+})();

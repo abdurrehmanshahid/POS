@@ -462,7 +462,10 @@ server {
     # no hash: a future PDF.js upgrade ships the same paths with new contents,
     # and `immutable` for a year would leave counter PCs on the old viewer with
     # no way to refresh short of clearing site data.
-    location ^~ /vendor/pdfjs/ {
+    # Prefix without a trailing slash on purpose: the directory carries the
+    # PDF.js version (see DocumentResponse::VENDOR), so this has to keep
+    # matching across an upgrade that renames it.
+    location ^~ /vendor/pdfjs {
         expires 30d;
         access_log off;
     }
@@ -580,6 +583,22 @@ Type=oneshot
 User=${APP_USER}
 WorkingDirectory=${APP_DIR}
 ExecStart=/usr/bin/php${PHP_VERSION} artisan schedule:run
+
+# Routine chatter to /dev/null, failures still to the journal.
+#
+# This ticks every minute, and 59 minutes in every hour it has nothing to do
+# and says so: "INFO  No scheduled commands are ready to run." Four journal
+# lines a minute is ~5,800 a day, and the journal had grown to 77MB of almost
+# entirely that. journald caps itself so it will never fill the disk, but it
+# does something worse — it buries the entries somebody greps for at 2am
+# under a haystack of nothing-happened.
+#
+# StandardError is left on the journal deliberately, so a scheduler that
+# cannot boot the framework at all is still loud. Command FAILURES do not
+# come through here either way: routes/console.php attaches onFailure
+# handlers that write to the application log.
+StandardOutput=null
+StandardError=journal
 UNIT
 
 cat > /etc/systemd/system/institute-scheduler.timer <<UNIT

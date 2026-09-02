@@ -4,6 +4,7 @@ namespace Tests\Feature;
 
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Artisan;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
 
@@ -103,6 +104,42 @@ class ReadinessTest extends TestCase
         } finally {
             Artisan::call('up');
         }
+    }
+
+    /**
+     * A broken cache store must fail the probe, even with MySQL perfectly fine.
+     *
+     * This is the outage that prompted the check. The `cache` table went
+     * missing from production while the database itself stayed healthy, so the
+     * `select 1` above passed on every poll and /ready reported 200 for six
+     * hours — while every Cache:: call threw, 1,440 times a day, into a log
+     * nobody was watching.
+     *
+     * What is down when the cache store is down is not optional: Laravel's
+     * RateLimiter is a cache client, so the login throttle fails OPEN, and the
+     * hourly backup and weekly restore drill both take their
+     * `withoutOverlapping` locks from it.
+     */
+    public function test_it_returns_503_when_the_cache_store_is_unusable(): void
+    {
+        Cache::shouldReceive('put')->andThrow(new \RuntimeException('Base table or view not found: cache'));
+
+        $this->get('/ready')->assertStatus(503)->assertSee('', false);
+    }
+
+    /**
+     * And it must not merely check that the store does not throw.
+     *
+     * A store that accepts a write and hands back nothing on read is a broken
+     * lock, which is the failure mode that matters for `withoutOverlapping`.
+     */
+    public function test_it_returns_503_when_the_cache_writes_but_does_not_read_back(): void
+    {
+        Cache::shouldReceive('put')->andReturnTrue();
+        Cache::shouldReceive('get')->andReturnNull();
+        Cache::shouldReceive('forget')->andReturnTrue();
+
+        $this->get('/ready')->assertStatus(503);
     }
 
     public function test_it_does_not_start_a_session(): void

@@ -1,0 +1,38 @@
+{
+    // VS Code's PHP extension does not reliably search $PATH; without this it
+    // reports "cannot validate" and every .php file loses syntax checking.
+    //
+    // The unversioned Homebrew symlink, deliberately — /opt/homebrew/bin/php
+    // follows a PHP upgrade, where the Cellar path (…/Cellar/php/8.5.8/…) would
+    // silently stop existing the next time Homebrew bumps the formula.
+    "php.validate.executablePath": "/opt/homebrew/bin/php",
+    "php.suggest.basic": false,
+
+    // Blade is HTML with directives; the HTML formatter mangles @if/@foreach
+    // indentation, so leave these to the Laravel extension or to hand.
+    "files.associations": {
+        "*.blade.php": "blade"
+    },
+    "[blade]": {
+        "editor.formatOnSave": false
+    },
+
+    // Searching the app should not return 30,000 hits from dependencies or the
+    // vendored PDF.js viewer, which alone is 122 files and ~3MB.
+    "search.exclude": {
+        "**/vendor": true,
+        "**/node_modules": true,
+        "**/public/build": true,
+        "**/public/vendor": true,
+        "**/storage/framework": true
+    },
+    "files.watcherExclude": {
+        "**/vendor/**": true,
+        "**/node_modules/**": true,
+        "**/storage/**": true,
+        "**/public/build/**": true
+    },
+
+    "files.trimTrailingWhitespace": true,
+    "files.insertFinalNewline": true
+}

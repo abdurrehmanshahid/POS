@@ -135,7 +135,7 @@ new class extends Component {
             @endforeach
         </div>
 
-        <div class="split" style="margin-bottom:22px">
+        <div class="split" style="margin-bottom:22px" wire:loading.class="is-busy" wire:target="from,to,setPeriod">
             {{-- Daily collections --------------------------------------- --}}
             <div class="panel">
                 <div class="panel-head">

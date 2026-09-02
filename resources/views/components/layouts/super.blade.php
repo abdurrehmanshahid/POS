@@ -11,6 +11,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="csrf-token" content="{{ csrf_token() }}">
     <title>{{ $pageTitle }} · Super Admin</title>
+    @include('partials.favicon')
     {{-- Inter is self-hosted and declared in app.css. It used to be three tags
          here: two preconnects and a render-blocking stylesheet from
          fonts.googleapis.com, which measured 1.6s from Lahore and held up the

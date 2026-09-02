@@ -34,7 +34,8 @@
 <html>
 <head>
     <meta charset="utf-8">
-    <title>{{ $payment->receiptNo() }}</title>
+    {{-- Matches ReceiptController::view()'s page title. --}}
+    <title>Receipt {{ $payment->receiptNo() }}{{ $payment->challan->student?->name ? ' · '.$payment->challan->student->name : '' }}</title>
     <style>
         /* DomPDF: table layout only, no flexbox or grid. */
         * { font-family: DejaVu Sans, sans-serif; }

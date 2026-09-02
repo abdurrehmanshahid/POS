@@ -187,6 +187,7 @@ new class extends Component {
         </div>
     </div>
 
+    <div wire:loading.class="is-busy" wire:target="q,showClosed">
     @forelse ($byCourse as $code => $group)
         <div style="margin-bottom:24px">
             <div style="display:flex;align-items:baseline;gap:9px;margin-bottom:11px">
@@ -247,6 +248,7 @@ new class extends Component {
             No batches yet. Create one to group a course's students into an intake.
         </div></div>
     @endforelse
+    </div>
 
     {{-- ---- Add / edit drawer ---------------------------------------------- --}}
     <div x-data="{ open: @entangle('formOpen') }">

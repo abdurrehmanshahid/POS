@@ -192,7 +192,7 @@ new class extends Component {
         @endforeach
     </div>
 
-    <div class="panel scroll-x">
+    <div class="panel scroll-x" wire:loading.class="is-busy" wire:target="q,state">
         <table class="table table-cards">
             <thead><tr>
                 <th>Challan #</th><th>Student</th><th>Course</th><th>Due / Paid via</th><th class="right">Net</th><th>Status</th><th class="actions-col"></th>

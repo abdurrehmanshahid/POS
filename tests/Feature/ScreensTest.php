@@ -10,6 +10,7 @@ use App\Models\Setting;
 use App\Models\Student;
 use App\Models\User;
 use App\Services\ChallanActions;
+use App\Support\DocumentResponse;
 use App\Support\Format;
 use Database\Seeders\DatabaseSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -367,7 +368,7 @@ class ScreensTest extends TestCase
         $this->assertNull($res->headers->get('Content-Disposition'),
             'The view route is a page; a disposition would make the browser save it instead.');
 
-        $res->assertSee('vendor/pdfjs/web/viewer.html', false)
+        $res->assertSee('vendor/pdfjs-6.2.108/web/viewer.html', false)
             ->assertSee($challan->challan_no);
 
         // Root-relative, so the viewer's fetch stays same-origin and carries
@@ -456,9 +457,18 @@ class ScreensTest extends TestCase
      */
     public function test_the_vendored_pdf_viewer_is_committed(): void
     {
+        // Derived from the constant the application actually uses. The version
+        // is in this path deliberately — see DocumentResponse::VENDOR — so a
+        // bump has to move the files, not just the string, and this is what
+        // notices when only one of the two happened.
+        $dir = 'public/'.DocumentResponse::VENDOR;
+
         $tracked = [];
-        exec('git -C '.escapeshellarg(base_path()).' ls-files public/vendor/pdfjs 2>/dev/null', $tracked);
+        exec('git -C '.escapeshellarg(base_path()).' ls-files '.escapeshellarg($dir).' 2>/dev/null', $tracked);
         $tracked = array_flip($tracked);
+
+        $this->assertNotEmpty($tracked,
+            "git is tracking nothing under {$dir} — DocumentResponse::VENDOR was bumped without moving the files.");
 
         foreach ([
             'web/viewer.html',      // the application
@@ -470,9 +480,9 @@ class ScreensTest extends TestCase
             'web/institute.css',    // ours: hides the annotation editor
             'LICENSE',              // Apache-2.0. It is not ours to ship unmarked.
         ] as $file) {
-            $path = 'public/vendor/pdfjs/'.$file;
+            $path = $dir.'/'.$file;
 
-            $this->assertFileExists(public_path('vendor/pdfjs/'.$file));
+            $this->assertFileExists(public_path(DocumentResponse::VENDOR.'/'.$file));
             $this->assertArrayHasKey($path, $tracked,
                 "{$path} exists but git is not tracking it — check .gitignore.");
         }
@@ -490,8 +500,8 @@ class ScreensTest extends TestCase
      */
     public function test_the_viewer_does_not_offer_to_edit_the_document(): void
     {
-        $html = file_get_contents(public_path('vendor/pdfjs/web/viewer.html'));
-        $css = file_get_contents(public_path('vendor/pdfjs/web/institute.css'));
+        $html = file_get_contents(public_path(DocumentResponse::VENDOR.'/web/viewer.html'));
+        $css = file_get_contents(public_path(DocumentResponse::VENDOR.'/web/institute.css'));
 
         $this->assertStringContainsString('institute.css', $html,
             'viewer.html lost the link to our stylesheet — re-apply step 3 of the upgrade notes.');
@@ -559,7 +569,7 @@ class ScreensTest extends TestCase
 
         $this->actingAs($this->admin())->get(route('payments.receipt.view', $payment))
             ->assertOk()
-            ->assertSee('vendor/pdfjs/web/viewer.html', false);
+            ->assertSee('vendor/pdfjs-6.2.108/web/viewer.html', false);
 
         foreach (['payments.receipt.stream', 'payments.receipt'] as $name) {
             $this->actingAs($this->admin())->get(route($name, $payment))
