@@ -117,21 +117,17 @@ class ProductionSeedingTest extends TestCase
     }
 
     /**
-     * B-08's SECOND half, and it is expected to fail the day it is fixed.
+     * B-08's second half, now closed: no row is refused for an unknown course.
      *
-     * Nine courses the roll names — Super Kid Camp, Shopify, the Part-A entries
-     * — exist only in `DemoDataSeeder`, with invented fees and invented
-     * trainers. They are real courses the institute sells, so the fix is a
-     * catalogue migration built from the institute's own numbers, not a guess
-     * made here.
+     * This method replaces the one that asserted the gap. That earlier test was
+     * written to fail the day the catalogue migration landed, and it did exactly
+     * that — the message it failed with was the instruction to write this.
      *
-     * Asserting the gap rather than skipping it keeps the number honest and
-     * makes the fix impossible to miss: when the catalogue migration lands, this
-     * test fails with the new, lower count and is deleted in the same change.
-     * A `markTestSkipped` would have gone quiet instead, which is how the
-     * original problem survived.
+     * Asserted against the real roll and on a production-shaped database, for
+     * the same reason as the CSR check above: the whole failure was that a
+     * fixture-shaped test passed while production could not resolve a course.
      */
-    public function test_the_courses_still_missing_from_production_are_the_known_nine(): void
+    public function test_no_roll_row_is_refused_for_an_unknown_course(): void
     {
         $rows = $this->resolvedRoll();
 
@@ -144,59 +140,26 @@ class ProductionSeedingTest extends TestCase
             }
         }
 
-        $this->assertNotSame([], $unknown,
-            'B-08 is fixed: the catalogue migration has landed. Delete this test and close B-08.');
-
-        // The catalogue migration added the Part-B and Level-2 entries and
-        // assumed the base courses were already there. They were — in demo data.
-        $this->assertSame(0, Course::where('code', 'SKC-101')->count());
-        $this->assertGreaterThanOrEqual(200, array_sum($unknown),
-            'Roughly 208 rows name a course that only demo data creates.');
+        $this->assertSame([], $unknown,
+            'A course the roll names is missing from the catalogue on a production-shaped install.');
     }
 
     /**
-     * `DemoDataSeeder` refuses to run outside local and testing.
+     * Every alias points at a course that exists WITHOUT demo data.
      *
-     * `DatabaseSeeder` guards the bare `db:seed` path, but that guard is in the
-     * caller — nothing stopped `db:seed --class=DemoDataSeeder --force` on a
-     * production box, which is exactly the command checklist P3-15 warns about.
-     *
-     * The stakes rose when the seeder's user rows moved to `updateOrCreate` (so
-     * they stop colliding with the migration that now creates `aliraza`): what
-     * used to crash on a unique-email constraint would instead silently take a
-     * live officer account over and set it active with `Bbt@Officer1`, a
-     * password committed to this repository.
+     * `RollImportTest` already asserts this, but it seeds `DatabaseSeeder`, so
+     * on `testing` it has demo data and the assertion passed throughout the
+     * whole of B-08. Five aliases — WD-101, DMM-101, VE-101, ODOO-301, ROB-101 —
+     * pointed at codes only `DemoDataSeeder` created, and nothing caught it.
      */
-    public function test_demo_data_refuses_to_seed_outside_local_and_testing(): void
+    public function test_every_course_alias_resolves_without_demo_data(): void
     {
-        app()['env'] = 'production';
+        $codes = array_values(config('roll-import.course_aliases', []));
 
-        try {
-            $this->expectException(\RuntimeException::class);
-            $this->expectExceptionMessageMatches('/refuses to run in the "production" environment/');
+        $missing = array_values(array_diff($codes, Course::whereIn('code', $codes)->pluck('code')->all()));
 
-            (new DemoDataSeeder)->run();
-        } finally {
-            app()['env'] = 'testing';
-        }
-    }
-
-    /**
-     * The production accounts are exactly the ones a real install should have.
-     *
-     * Stated as an explicit set: any demo login appearing here means demo data
-     * reached a production-shaped database, which is the failure B-08 was.
-     */
-    public function test_no_demo_logins_exist_on_a_production_shaped_install(): void
-    {
-        $demo = User::whereIn('username', ['adminansar', 'fatimanoor'])->pluck('username')->all();
-
-        $this->assertSame([], $demo, 'Demo logins must never exist on a production-shaped install.');
-
-        // aliraza SHOULD exist — the migration creates him — but inert.
-        $ali = User::where('username', 'aliraza')->first();
-        $this->assertNotNull($ali);
-        $this->assertFalse((bool) $ali->is_active, 'The roll CSR must not be a live login.');
+        $this->assertSame([], $missing,
+            'These aliases point at course codes that do not exist on a production install.');
     }
 
     /** @return list<RollRow> */

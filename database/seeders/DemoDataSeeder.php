@@ -127,14 +127,29 @@ class DemoDataSeeder extends Seeder
             ['VE-101', 'Video Editing and YouTube Automation', 'Hassan', 25000, 18, true],
             ['ROB-101', 'STEM Robotics', 'Hassan', 15000, 16, false],
         ] as [$code, $title, $trainer, $fee, $cap, $active]) {
-            $courses[$code] = Course::create([
-                'code' => $code,
-                'title' => $title,
-                'trainer_id' => $teachers[$trainer]->id,
-                'fee' => $fee,
-                'capacity' => $cap,
-                'is_active' => $active,
-            ]);
+            // `updateOrCreate`, not `create`: all nine of these codes are now
+            // created by
+            // `..._000001_add_the_nine_courses_that_only_existed_in_demo_data`,
+            // because 208 roll rows name them and a production box never runs
+            // this seeder. A plain insert collides on the unique code the moment
+            // both have run, which is every test that seeds demo data.
+            //
+            // Taking the row over is safe HERE, unlike before: `run()` refuses
+            // outright outside local and testing, so this can no longer reach a
+            // real catalogue and overwrite a fee an administrator has corrected.
+            // The demo's invented fees are wrong about nearly all of these —
+            // Super Kid Camp is seeded at 15,000 and really sells at 20,000 —
+            // and that is fine, because demo parity figures depend on them.
+            $courses[$code] = Course::updateOrCreate(
+                ['code' => $code],
+                [
+                    'title' => $title,
+                    'trainer_id' => $teachers[$trainer]->id,
+                    'fee' => $fee,
+                    'capacity' => $cap,
+                    'is_active' => $active,
+                ]
+            );
         }
 
         // ---- Students (§14.2), 1-indexed; admissions reference by index ----
