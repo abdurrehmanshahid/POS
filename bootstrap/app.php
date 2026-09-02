@@ -4,6 +4,7 @@ use App\Http\Controllers\ReadinessController;
 use App\Http\Middleware\EnsureActiveUser;
 use App\Http\Middleware\EnsurePermission;
 use App\Http\Middleware\EnsureTwoFactorEnrolled;
+use App\Support\Theme;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
@@ -49,6 +50,22 @@ return Application::configure(basePath: dirname(__DIR__))
         // where `config()` is bound. It is NOT bound here: reading it from this
         // closure takes the whole console down with "Target class [config] does
         // not exist", including the `config:clear` needed to recover.
+
+        /*
+         * The theme cookie is written by client-side JavaScript, so it must not
+         * be encrypted — Laravel would fail to decrypt a value it did not write
+         * and drop it, and the server would render the default on every request
+         * while the toggle appeared to do nothing.
+         *
+         * Safe to leave in the clear because it is not a credential and carries
+         * no identity: it holds "dark" or "light". `App\Support\Theme` treats it
+         * as untrusted anyway and whitelists the two values it will render, so a
+         * forged cookie can change the reader's own colour scheme and nothing
+         * else.
+         */
+        $middleware->encryptCookies(except: [
+            Theme::COOKIE,
+        ]);
 
         $middleware->alias([
             // Thin permission layer (spec §3). Usage: middleware('permission:challans.pay').

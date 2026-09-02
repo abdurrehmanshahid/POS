@@ -6,7 +6,7 @@
     $impersonating = app(\App\Services\Impersonation::class);
 @endphp
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="{{ \App\Support\Theme::current() }}">
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -18,7 +18,19 @@
     <script>
         // Pre-paint theme to avoid a flash (spec §8.4: persist, default dark).
         // The Alpine store + toast helper live in app.js so they survive wire:navigate.
-        (function () { try { document.documentElement.setAttribute('data-theme', localStorage.getItem('bbt-theme') || 'dark'); } catch (e) {} })();
+        // The attribute is already rendered on <html> above, from the cookie, so
+        // this is a fallback for one case only: cookies disabled, where the
+        // server cannot know the preference and localStorage is all there is.
+        // It must not run when the server already spoke, or a stale
+        // localStorage value would override a fresh cookie.
+        (function () {
+            try {
+                var el = document.documentElement;
+                if (!el.getAttribute('data-theme')) {
+                    el.setAttribute('data-theme', localStorage.getItem('bbt-theme') || 'dark');
+                }
+            } catch (e) {}
+        })();
     </script>
     @vite(['resources/css/app.css', 'resources/js/app.js'])
     @livewireStyles

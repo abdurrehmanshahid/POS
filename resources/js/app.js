@@ -1,15 +1,60 @@
 // Loaded once via @vite and preserved across Livewire wire:navigate SPA
 // transitions, so the theme store and toast helper stay defined on every screen.
 
+// The chosen scheme is mirrored into a COOKIE, not just localStorage, because
+// the server renders `data-theme` onto <html> (App\Support\Theme) and only a
+// cookie reaches the server. Without that, `wire:navigate` swaps in a document
+// whose <html> carries no attribute, the CSS falls back to its light `:root`
+// default, and dark mode is lost on every navigation.
+//
+// Not `Secure`, deliberately: the flag would drop the cookie over plain HTTP,
+// and this same build runs on `php artisan serve` during development. It holds
+// "dark" or "light" — no identity, nothing worth protecting in transit — and the
+// server whitelists both values before rendering either.
+const THEME_KEY = 'bbt-theme';
+
+function persistTheme(v) {
+    try { localStorage.setItem(THEME_KEY, v); } catch (e) {}
+    try {
+        document.cookie = THEME_KEY + '=' + v + ';path=/;max-age=31536000;samesite=Lax';
+    } catch (e) {}
+}
+
+function applyTheme(v) {
+    document.documentElement.setAttribute('data-theme', v);
+}
+
 document.addEventListener('alpine:init', () => {
     window.Alpine.store('theme', {
         v: document.documentElement.getAttribute('data-theme') || 'dark',
         toggle() {
             this.v = this.v === 'dark' ? 'light' : 'dark';
-            document.documentElement.setAttribute('data-theme', this.v);
-            try { localStorage.setItem('bbt-theme', this.v); } catch (e) {}
+            applyTheme(this.v);
+            persistTheme(this.v);
         },
     });
+});
+
+// Safety net for the swap, not the mechanism.
+//
+// The server now renders the right attribute into every page Livewire fetches,
+// so this should find nothing to do. It still runs because the one case the
+// cookie cannot cover is a browser with cookies disabled — there the server
+// renders the default, and this restores the visitor's actual choice from
+// localStorage the moment the new DOM lands.
+//
+// Reads the Alpine store first: it is the live value, and it is right even in
+// the instant after a toggle when the cookie has not been read back yet.
+document.addEventListener('livewire:navigated', () => {
+    try {
+        const wanted = window.Alpine?.store('theme')?.v
+            || localStorage.getItem(THEME_KEY)
+            || 'dark';
+
+        if (document.documentElement.getAttribute('data-theme') !== wanted) {
+            applyTheme(wanted);
+        }
+    } catch (e) {}
 });
 
 // ---- Input masks -----------------------------------------------------------
