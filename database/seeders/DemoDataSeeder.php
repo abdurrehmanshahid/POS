@@ -29,6 +29,38 @@ class DemoDataSeeder extends Seeder
 {
     public function run(): void
     {
+        // ---- Refuse to run anywhere but local and testing -----------------
+        //
+        // `DatabaseSeeder` already guards the *bare* `db:seed` path, but that
+        // guard is in the caller. Nothing stopped
+        // `db:seed --class=DemoDataSeeder --force` on a production box — which
+        // is precisely the command the go-live checklist warns about at P3-15,
+        // and warnings in a document are not a control.
+        //
+        // This became sharper when the user rows below moved from `create()` to
+        // `updateOrCreate()`. That change was needed because
+        // `..._000001_create_the_account_for_the_officer_who_signed_most_of_the_roll`
+        // now creates `aliraza` on every install, so a plain insert collides on
+        // the unique email. But it also converted a LOUD failure into a SILENT
+        // one: against production the old code crashed on the constraint, while
+        // `updateOrCreate` would quietly take a live officer account over and
+        // set it active with `Bbt@Officer1` — a password committed to this
+        // repository and printed in the README.
+        //
+        // So the guard belongs here, next to the thing that is dangerous, and
+        // it throws rather than returning quietly: somebody who typed this
+        // command on a production box has a wrong belief, and silently doing
+        // nothing leaves them holding it.
+        if (! app()->environment(['local', 'testing'])) {
+            throw new \RuntimeException(
+                'DemoDataSeeder refuses to run in the "'.app()->environment().'" environment. '
+                .'It invents students, fabricates revenue, and creates logins whose passwords are '
+                .'committed to this repository — including an officer account the roll importer '
+                .'depends on. If you are bootstrapping a real install you want '
+                .'RolePermissionSeeder and SuperAdminSeeder, by name.'
+            );
+        }
+
         // ---- Settings (§14.5), serial is the atomic challan counter -------
         //
         // Updated, not created. Every install now gets its settings row from a
@@ -52,15 +84,27 @@ class DemoDataSeeder extends Seeder
             ['Ali Raza', 'aliraza', 'ali.raza@bbt.edu.pk', 'Bbt@Officer1', 'officer'],
             ['Fatima Noor', 'fatimanoor', 'fatima.noor@bbt.edu.pk', 'Bbt@Officer2', 'officer'],
         ] as [$name, $username, $email, $password, $role]) {
-            $users[] = User::create([
-                'name' => $name,
-                'username' => $username,
-                'email' => $email,
-                'password' => Hash::make($password),
-                'role_id' => $role,
-                'is_active' => true,
-                'must_reset_password' => false,
-            ]);
+            // `updateOrCreate`, not `create`: Ali Raza is now created by
+            // `..._000001_create_the_account_for_the_officer_who_signed_most_of_
+            // the_roll`, because 435 of the roll's 478 lines name him and a
+            // production box never runs this seeder. The migration leaves him
+            // inactive with a password nobody knows, which is right for
+            // production and useless for a demo — so here we take that row over
+            // and give it the demo's active, known-password state.
+            //
+            // A plain `create()` collides on the unique email the moment both
+            // have run, which is every test that seeds demo data.
+            $users[] = User::updateOrCreate(
+                ['username' => $username],
+                [
+                    'name' => $name,
+                    'email' => $email,
+                    'password' => Hash::make($password),
+                    'role_id' => $role,
+                    'is_active' => true,
+                    'must_reset_password' => false,
+                ]
+            );
         }
         $admin = $users[0];
 
