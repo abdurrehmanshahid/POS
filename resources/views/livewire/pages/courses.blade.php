@@ -22,7 +22,26 @@ new class extends Component {
     public ?int $editingId = null;
     public string $code = '';
     public string $title = '';
-    public $trainerId = null;
+    /**
+     * The instructor's name, typed.
+     *
+     * This was a <select> over the `teachers` table, and it could only ever say
+     * "None": nothing in the application creates a teacher. There is no
+     * Teachers screen, no route, and the table's only writer is DemoDataSeeder,
+     * which production is forbidden to run. So on the institute's box the
+     * dropdown listed zero options and the field was unfillable.
+     *
+     * A typed name, but still stored as a relation. `courses.trainer_id` is
+     * read in seven places — the fee voucher, the challan drawer, the course
+     * list and detail, and the registration wizard, where a course can be found
+     * by typing its instructor's name. Flattening it to a string column would
+     * mean a migration and edits to all of them for an identical typing
+     * experience, and would lose that search.
+     *
+     * So the input is free text and `resolveTrainer()` maps it onto a row:
+     * an existing instructor if the name matches one, a new one if not.
+     */
+    public string $trainerName = '';
     public $fee = null;
     public $capacity = null;
     public string $fStatus = 'active';
@@ -88,7 +107,7 @@ new class extends Component {
         $this->editingId = $course->id;
         $this->code = $course->code;
         $this->title = $course->title;
-        $this->trainerId = $course->trainer_id;
+        $this->trainerName = $course->trainer?->name ?? '';
         $this->fee = $course->fee;
         $this->capacity = $course->capacity;
         $this->fStatus = $course->is_active ? 'active' : 'inactive';
@@ -108,21 +127,23 @@ new class extends Component {
         $this->title = trim((string) $this->title);
         $this->fee = ($this->fee === '' || $this->fee === null) ? null : (int) $this->fee;
         $this->capacity = ($this->capacity === '' || $this->capacity === null) ? null : (int) $this->capacity;
-        $this->trainerId = ($this->trainerId === '' || $this->trainerId === null) ? null : (int) $this->trainerId;
+        // Collapse runs of whitespace as well as trimming, so "Umer  Ali" and
+        // "Umer Ali" are the same instructor rather than two.
+        $this->trainerName = preg_replace('/\s+/u', ' ', trim($this->trainerName));
 
         $validator = Validator::make([
             'code' => $this->code,
             'title' => $this->title,
             'fee' => $this->fee,
             'capacity' => $this->capacity,
-            'trainerId' => $this->trainerId,
+            'trainerName' => $this->trainerName,
             'fStatus' => $this->fStatus,
         ], [
             'code' => 'required|string|max:40',
             'title' => 'required|string|max:120',
             'fee' => 'required|integer|min:1',
             'capacity' => 'nullable|integer|min:1',
-            'trainerId' => 'nullable|integer|exists:teachers,id',
+            'trainerName' => 'nullable|string|max:120',
             'fStatus' => 'required|in:active,inactive',
         ], [
             'code.required' => 'Code is required.',
@@ -132,7 +153,7 @@ new class extends Component {
             'fee.min' => 'Fee must be greater than 0.',
             'capacity.integer' => 'Capacity must be a whole number.',
             'capacity.min' => 'Capacity must be at least 1.',
-            'trainerId.exists' => 'Select a valid trainer.',
+            'trainerName.max' => 'Instructor name is too long (120 characters maximum).',
         ]);
 
         // Case-insensitive uniqueness on code (exclude self on edit).
@@ -161,7 +182,7 @@ new class extends Component {
         $course->fill([
             'code' => $this->code,
             'title' => $this->title,
-            'trainer_id' => $this->trainerId,
+            'trainer_id' => $this->resolveTrainer(),
             'fee' => $this->fee,
             'capacity' => $this->capacity,
             'is_active' => $this->fStatus === 'active',
@@ -172,12 +193,51 @@ new class extends Component {
         $this->resetForm();
     }
 
+    /**
+     * The typed name as an instructor row, creating one if this is a new name.
+     *
+     * Matched case-insensitively, because the officer who types "umer ali" on
+     * Tuesday and "Umer Ali" on Friday means the same person, and two rows
+     * would split that person's courses in the wizard's search and print two
+     * spellings on two vouchers.
+     *
+     * `withTrashed()` so a name that was removed is restored rather than
+     * duplicated. `Teacher` soft-deletes, and a second row with the same name
+     * beside a hidden first one is the kind of thing nobody finds until the
+     * numbers stop adding up.
+     */
+    protected function resolveTrainer(): ?int
+    {
+        if ($this->trainerName === '') {
+            return null;
+        }
+
+        $teacher = Teacher::withTrashed()
+            ->whereRaw('LOWER(name) = ?', [mb_strtolower($this->trainerName)])
+            ->first();
+
+        if ($teacher) {
+            if ($teacher->trashed()) {
+                $teacher->restore();
+            }
+
+            return $teacher->id;
+        }
+
+        // `created_at` explicitly: Teacher has $timestamps = false, so nothing
+        // fills it for us and the column is not nullable in spirit.
+        return Teacher::create([
+            'name' => $this->trainerName,
+            'created_at' => now(),
+        ])->id;
+    }
+
     protected function resetForm(): void
     {
         $this->editingId = null;
         $this->code = '';
         $this->title = '';
-        $this->trainerId = null;
+        $this->trainerName = '';
         $this->fee = null;
         $this->capacity = null;
         $this->fStatus = 'active';
@@ -270,7 +330,7 @@ new class extends Component {
 
                     <div style="display:flex;align-items:center;gap:7px;font-size:var(--fs-xs);color:var(--muted)">
                         <x-icon name="users" :size="15" style="color:var(--faint)" />
-                        {{ $c->trainer?->name ?? 'No trainer assigned' }}
+                        {{ $c->trainer?->name ?? 'No instructor assigned' }}
                     </div>
 
                     {{-- Capacity --}}
@@ -352,7 +412,7 @@ new class extends Component {
                             <div class="grid-2" style="margin-bottom:22px">
                                 <div class="card" style="padding:14px 16px">
                                     <div style="font-size:var(--fs-2xs);font-weight:700;letter-spacing:.04em;color:var(--faint)">TRAINER</div>
-                                    <div style="font-size:var(--fs-base);font-weight:700;color:var(--ink);margin-top:4px">{{ $selected->trainer?->name ?? 'No trainer assigned' }}</div>
+                                    <div style="font-size:var(--fs-base);font-weight:700;color:var(--ink);margin-top:4px">{{ $selected->trainer?->name ?? 'No instructor assigned' }}</div>
                                 </div>
                                 <div class="card" style="padding:14px 16px">
                                     <div style="font-size:var(--fs-2xs);font-weight:700;letter-spacing:.04em;color:var(--faint)">FEE</div>
@@ -436,14 +496,31 @@ new class extends Component {
                             </div>
 
                             <div style="margin-bottom:16px">
-                                <label class="label">Trainer</label>
-                                <select class="select @error('trainerId') is-error @enderror" wire:model="trainerId">
-                                    <option value="">None</option>
+                                <label class="label">Instructor</label>
+                                {{-- Typed, not chosen. The <select> this replaces listed the
+                                     `teachers` table, and nothing in the application ever puts a
+                                     row in it — no screen, no route, and its only writer is the
+                                     demo seeder that production must not run. On the institute's
+                                     box it offered exactly one option, "None".
+
+                                     `list` gives the browser's own suggestions from the names
+                                     already used, so the common case is one keystroke and a
+                                     click, while a name nobody has used yet still just types.
+                                     A datalist SUGGESTS and never constrains — unlike a select,
+                                     an unrecognised value is simply kept. --}}
+                                <input type="text" class="input @error('trainerName') is-error @enderror"
+                                       wire:model="trainerName" list="bbt-instructors"
+                                       autocomplete="off" placeholder="e.g. Umer Ali — leave blank if not yet assigned">
+                                <datalist id="bbt-instructors">
                                     @foreach ($teachers as $t)
-                                        <option value="{{ $t->id }}">{{ $t->name }}</option>
+                                        <option value="{{ $t->name }}"></option>
                                     @endforeach
-                                </select>
-                                @error('trainerId') <span class="field-error">{{ $message }}</span> @enderror
+                                </datalist>
+                                @error('trainerName') <span class="field-error">{{ $message }}</span> @enderror
+                                <p style="font-size:var(--fs-2xs);color:var(--muted);margin:5px 0 0">
+                                    A name not used before is added to the list. Matching is not
+                                    case-sensitive, so "umer ali" is the same instructor as "Umer Ali".
+                                </p>
                             </div>
 
                             <div class="grid-2" style="margin-bottom:16px">

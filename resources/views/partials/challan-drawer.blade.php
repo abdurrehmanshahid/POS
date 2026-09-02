@@ -52,7 +52,7 @@
                         <div><div style="color:var(--faint)">Enrolment</div><div style="color:var(--faint);font-weight:600">None — this is a service, not a course</div></div>
                     @else
                         <div><div style="color:var(--faint)">Course</div><div style="color:var(--ink);font-weight:600">{{ $a->course->title }} ({{ $a->course->code }})</div></div>
-                        <div><div style="color:var(--faint)">Trainer</div><div style="color:var(--ink);font-weight:600">{{ $a->course->trainer?->name ?? 'None' }}</div></div>
+                        <div><div style="color:var(--faint)">Instructor</div><div style="color:var(--ink);font-weight:600">{{ $a->course->trainer?->name ?? 'None' }}</div></div>
                         <div><div style="color:var(--faint)">Enrolled by</div><div style="color:var(--ink);font-weight:600">{{ $a->enroller->name }}</div></div>
                         <div><div style="color:var(--faint)">Due date</div><div class="tnum" style="color:var(--ink);font-weight:600">{{ $selected->due_date ? Format::date($selected->due_date) : 'Not scheduled' }}</div></div>
                         <div><div style="color:var(--faint)">Batch</div><div style="color:{{ $a->cohort ? 'var(--ink)' : 'var(--faint)' }};font-weight:600">{{ $a->cohort?->name ?? 'No batch' }}</div></div>
