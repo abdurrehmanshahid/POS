@@ -26,9 +26,11 @@
             : 'Big Binary Tech';
     @endphp
     <title>{{ $guestTitle }} · {{ $guestSuffix }}</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    {{-- Inter is self-hosted and declared in app.css. It used to be three tags
+         here: two preconnects and a render-blocking stylesheet from
+         fonts.googleapis.com, which measured 1.6s from Lahore and held up the
+         first paint of every cold load. Nothing external is in the critical
+         path now. --}}
     <script>
         // The attribute is already rendered on <html> above, from the cookie, so
         // this is a fallback for one case only: cookies disabled, where the

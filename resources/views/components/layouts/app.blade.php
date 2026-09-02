@@ -12,9 +12,11 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="csrf-token" content="{{ csrf_token() }}">
     <title>{{ $pageTitle }} · Big Binary Tech</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    {{-- Inter is self-hosted and declared in app.css. It used to be three tags
+         here: two preconnects and a render-blocking stylesheet from
+         fonts.googleapis.com, which measured 1.6s from Lahore and held up the
+         first paint of every cold load. Nothing external is in the critical
+         path now. --}}
     <script>
         // Pre-paint theme to avoid a flash (spec §8.4: persist, default dark).
         // The Alpine store + toast helper live in app.js so they survive wire:navigate.
@@ -79,7 +81,13 @@
                 @if ($visible->isNotEmpty())
                     <div class="nav-section">{{ $section }}</div>
                     @foreach ($visible as $item)
-                        <a href="{{ route($item['route']) }}" wire:navigate
+                        {{-- `.hover` prefetches the page when the pointer lands on the
+                             link, so the ~140ms round trip to Frankfurt is spent while the
+                             hand is still travelling to the click. Only on the sidebar:
+                             these are the links people use forty times an hour, and a
+                             prefetch of a link nobody clicks is bandwidth spent for
+                             nothing. --}}
+                        <a href="{{ route($item['route']) }}" wire:navigate.hover
                            class="nav-link {{ $route === $item['route'] ? 'active' : '' }}">
                             <x-icon :name="$item['icon']" />
                             <span class="nav-label">{{ $item['label'] }}</span>

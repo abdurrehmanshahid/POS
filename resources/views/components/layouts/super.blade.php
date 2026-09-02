@@ -11,9 +11,11 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="csrf-token" content="{{ csrf_token() }}">
     <title>{{ $pageTitle }} · Super Admin</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    {{-- Inter is self-hosted and declared in app.css. It used to be three tags
+         here: two preconnects and a render-blocking stylesheet from
+         fonts.googleapis.com, which measured 1.6s from Lahore and held up the
+         first paint of every cold load. Nothing external is in the critical
+         path now. --}}
     <script>
         // The attribute is already rendered on <html> above, from the cookie, so
         // this is a fallback for one case only: cookies disabled, where the
@@ -50,7 +52,8 @@
             @foreach ($sections as $section => $items)
                 <div class="nav-section">{{ $section }}</div>
                 @foreach ($items as $item)
-                    <a href="{{ route($item['route']) }}" wire:navigate
+                    {{-- Prefetch on hover, as in the staff layout. --}}
+                    <a href="{{ route($item['route']) }}" wire:navigate.hover
                        class="nav-link {{ $route === $item['route'] ? 'active' : '' }}">
                         <x-icon :name="$item['icon']" />
                         <span class="nav-label">{{ $item['label'] }}</span>
