@@ -633,6 +633,7 @@ new class extends Component {
         <div style="display:flex;align-items:center;gap:14px;margin-bottom:18px">
             <div style="flex:1"><span style="font-size:var(--fs-md);font-weight:700;color:var(--ink)">{{ $scopeLabel }}</span> <span style="font-size:var(--fs-xs);color:var(--muted)">{{ $rows->count() }} records</span></div>
             <div class="search" style="width:280px"><x-icon name="search" :size="15" /><input wire:model.live.debounce.200ms="q" class="input" placeholder="Filter · try status:paid or /R26/"></div>
+            <x-ui.busy target="q" label="Searching…" />
             @if ($canCreate)
                 <button class="btn btn-accent" wire:click="openWizard"><x-icon name="plus" :size="17" /> New Registration</button>
             @endif

@@ -177,6 +177,7 @@ new class extends Component {
     <div style="display:flex;align-items:center;gap:14px;margin-bottom:16px;flex-wrap:wrap">
         <div style="flex:1;min-width:150px"><span style="font-size:var(--fs-md);font-weight:700;color:var(--ink)">Fee challans</span> <span style="font-size:var(--fs-xs);color:var(--muted)">{{ $rows->count() }} shown</span></div>
         <div class="search" style="width:300px"><x-icon name="search" :size="15" /><input wire:model.live.debounce.200ms="q" class="input" placeholder="Search challan #, student, course, status…"></div>
+        <x-ui.busy target="q" label="Searching…" />
     </div>
 
     {{-- Status was previously reachable only by typing it into the search box,

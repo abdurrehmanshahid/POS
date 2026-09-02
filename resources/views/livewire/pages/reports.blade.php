@@ -92,6 +92,11 @@ new class extends Component {
             <input type="date" wire:model.live="to" class="input" style="width:156px;height:42px">
         @endif
 
+        {{-- Every period button and both date boxes recompute the whole ledger
+             over 445 challans and 471 payments, so this one answers for the
+             range as a whole rather than for a single control. --}}
+        <x-ui.busy target="from,to,setPeriod" label="Recalculating…" />
+
         <div class="toolbar-grow"></div>
 
         <span class="tnum" style="font-size:var(--fs-xs);color:var(--muted);white-space:nowrap">{{ $period->rangeLabel() }}</span>

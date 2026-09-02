@@ -135,6 +135,58 @@ class FrontendAssetsTest extends TestCase
     }
 
     /**
+     * nginx must be told what a `.mjs` file is.
+     *
+     * nginx 1.24's mime.types has no entry for it, so PDF.js's ES modules went
+     * out as application/octet-stream. The vhost sets `X-Content-Type-Options:
+     * nosniff` — correctly — and a browser flatly refuses to execute a module
+     * script served as octet-stream. It refuses SILENTLY: no 404, no 500,
+     * nothing in the nginx log.
+     *
+     * What that looked like was a fee challan that opened to a blank page.
+     * viewer.html is text/html and loaded fine, so PDF.js's toolbar drew — page
+     * box, zoom, print, save — and nothing ever rendered inside it. The PDF was
+     * never at fault; the same bytes downloaded and opened correctly throughout.
+     *
+     * Asserted against provision.sh because P2-20 rebuilds this box from bare,
+     * twice. A reinstall that loses this line brings the blank viewer back with
+     * no error anywhere to explain it, which is exactly the class of bug that
+     * survives a rehearsal.
+     */
+    public function test_the_provisioner_teaches_nginx_the_mjs_mime_type(): void
+    {
+        $provision = file_get_contents(base_path('deploy/provision.sh'));
+
+        $this->assertMatchesRegularExpression(
+            '/(application|text)\/javascript\s+mjs;/',
+            $provision,
+            'nginx has no built-in type for .mjs. Without one, PDF.js is served as octet-stream and nosniff stops it running — the fee challan viewer renders blank.'
+        );
+    }
+
+    /**
+     * Compression must cover more than HTML.
+     *
+     * `gzip on` is in Ubuntu's stock nginx.conf and reads as "compression is
+     * handled". It is not: the default `gzip_types` is `text/html` alone, so
+     * every stylesheet and script went out whole. First view of a challan
+     * pushed 3.1MB uncompressed to a city on the far end of ~150ms of round
+     * trip.
+     */
+    public function test_the_provisioner_compresses_stylesheets_and_scripts(): void
+    {
+        $provision = file_get_contents(base_path('deploy/provision.sh'));
+
+        $this->assertStringContainsString('gzip_types', $provision,
+            'gzip_types is unset, so nginx compresses text/html and nothing else.');
+
+        foreach (['text/css', 'application/javascript'] as $type) {
+            $this->assertStringContainsString($type, $provision,
+                "gzip_types does not list {$type}; it is among the largest things this app sends.");
+        }
+    }
+
+    /**
      * The sidebar prefetches on hover.
      *
      * The box is in Frankfurt and the institute is in Lahore: 142ms of round

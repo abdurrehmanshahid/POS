@@ -30,6 +30,26 @@ new class extends Component {
     public string $tempPassword = '';
     public ?string $roleChoice = null;
 
+    /**
+     * Whether the account may sign in at all.
+     *
+     * This was the one column on `users` with no way to change it after the row
+     * existed: `saveUser()` set `is_active = true` when CREATING and never
+     * touched it again, and nothing in the drawer or the list mentioned it. So
+     * a deactivated account could not be brought back, and — the case that
+     * actually bit — the seven officer accounts the roll import created for the
+     * staff named on it were all seeded `is_active = false` on purpose, to be
+     * activated by an administrator once the institute confirmed who was still
+     * employed. There was no control to do it with.
+     *
+     * The failure was silent from both ends. The list showed those accounts
+     * looking exactly like working ones; setting a temporary password on one
+     * saved the password and still left `EnsureActiveUser` refusing every
+     * request, so the sign-in came back "Incorrect username or password" and
+     * read as the password not having saved.
+     */
+    public bool $isActive = true;
+
     public function with(): array
     {
         return [
@@ -124,7 +144,7 @@ new class extends Component {
     public function newUser(): void
     {
         abort_unless(auth()->user()->can('staff.manage'), 403);
-        $this->reset('userId', 'fullName', 'username', 'email', 'tempPassword', 'roleChoice');
+        $this->reset('userId', 'fullName', 'username', 'email', 'tempPassword', 'roleChoice', 'isActive');
         $this->resetValidation();
         $this->userOpen = true;
     }
@@ -139,6 +159,7 @@ new class extends Component {
         $this->email = $user->email;
         $this->tempPassword = '';
         $this->roleChoice = $user->role_id;
+        $this->isActive = $user->is_active;
         $this->resetValidation();
         $this->userOpen = true;
     }
@@ -182,6 +203,20 @@ new class extends Component {
             return;
         }
 
+        // You cannot switch off the account you are signed in as. EnsureActiveUser
+        // runs on every authenticated request, so this would not merely be
+        // reversible-with-a-refresh: the very next click logs you out, and if
+        // you were the only administrator there is no one left who can turn it
+        // back on. The super admin panel could recover it, which is exactly the
+        // kind of recovery nobody should need on a Tuesday afternoon.
+        if ($this->userId === auth()->id() && ! $this->isActive) {
+            $msg = 'You cannot deactivate the account you are signed in with.';
+            $this->addError('isActive', $msg);
+            $this->dispatch('bbt-toast', tone: 'err', title: 'Cannot save user', msg: $msg);
+
+            return;
+        }
+
         $data = [
             'name' => $this->fullName,
             'username' => $this->username,
@@ -192,6 +227,8 @@ new class extends Component {
         if ($this->userId) {
             $user = $target;
             $roleChanged = $user->role_id !== $this->roleChoice;
+            $activeChanged = $user->is_active !== $this->isActive;
+            $data['is_active'] = $this->isActive;
 
             if (filled($this->tempPassword)) {
                 $data['password'] = Hash::make($this->tempPassword);
@@ -217,6 +254,18 @@ new class extends Component {
                     'field' => 'password',
                 ]);
             }
+            // Audited on its own line rather than folded into the update above:
+            // granting or revoking someone's ability to sign in is the entry an
+            // auditor looks for by name, and "user updated" does not answer it.
+            if ($activeChanged) {
+                Audit::record($this->isActive ? 'Account activated' : 'Account deactivated', auth()->user(), [
+                    'subject' => $user,
+                    'subject_label' => $user->name,
+                    'field' => 'is_active',
+                    'old_value' => $this->isActive ? '0' : '1',
+                    'new_value' => $this->isActive ? '1' : '0',
+                ]);
+            }
         } else {
             $data['password'] = Hash::make($this->tempPassword);
             $data['must_reset_password'] = true;
@@ -232,7 +281,7 @@ new class extends Component {
 
         $this->dispatch('bbt-toast', tone: 'ok', title: $this->userId ? 'User updated' : 'User created', msg: $user->name.' saved.');
         $this->userOpen = false;
-        $this->reset('userId', 'fullName', 'username', 'email', 'tempPassword', 'roleChoice');
+        $this->reset('userId', 'fullName', 'username', 'email', 'tempPassword', 'roleChoice', 'isActive');
     }
 }; ?>
 
@@ -271,7 +320,17 @@ new class extends Component {
                                 <div style="display:flex;align-items:center;gap:11px">
                                     <x-ui.avatar :name="$u->name" :variant="$u->role && $u->role->tone === 'orange' ? 'orange' : 'navy'" :size="34" />
                                     <div>
-                                        <div style="font-weight:600;color:var(--ink)">{{ $u->name }}</div>
+                                        <div style="display:flex;align-items:center;gap:8px">
+                                            <span style="font-weight:600;color:var(--ink)">{{ $u->name }}</span>
+                                            {{-- Shown only when it is false. A badge on every active
+                                                 account is noise on a screen where almost all of them
+                                                 are; the whole point is that the exceptions stand out.
+                                                 Before this, an account that could not sign in looked
+                                                 identical to one that could. --}}
+                                            @unless ($u->is_active)
+                                                <x-ui.pill tone="cancelled">Inactive</x-ui.pill>
+                                            @endunless
+                                        </div>
                                         <div style="font-size:var(--fs-xs);color:var(--muted)">{{ $u->email }}</div>
                                     </div>
                                 </div>
@@ -468,6 +527,28 @@ new class extends Component {
                                 @endforeach
                             </div>
                             @error('roleChoice')<span class="field-error">{{ $message }}</span>@enderror
+
+                            {{-- Only when editing. A new account is always created active —
+                                 there is no reason to add someone and immediately switch them
+                                 off, and an unticked box on a create form is a way to make an
+                                 account that silently does not work. --}}
+                            @if ($userId)
+                                <label class="label" style="margin-top:18px">Access</label>
+                                <label style="display:flex;align-items:flex-start;gap:12px;padding:12px 14px;border:1.5px solid var(--border2);border-radius:11px;cursor:pointer">
+                                    <input type="checkbox" wire:model.live="isActive" style="margin-top:2px">
+                                    <span style="flex:1">
+                                        <span style="display:block;font-weight:600;color:var(--ink)">Allow this user to sign in</span>
+                                        <span style="display:block;font-size:var(--fs-2xs);color:var(--muted);margin-top:3px">
+                                            @if ($isActive)
+                                                Untick to revoke access. It takes effect on their next click, not their next sign-in — any session they already have is ended.
+                                            @else
+                                                This account cannot sign in. Give it a temporary password above as well, or it has no way in.
+                                            @endif
+                                        </span>
+                                    </span>
+                                </label>
+                                @error('isActive')<span class="field-error">{{ $message }}</span>@enderror
+                            @endif
                         </div>
                         <div class="drawer-foot">
                             <button class="btn btn-ghost" @click="open=false" style="flex:1">Cancel</button>

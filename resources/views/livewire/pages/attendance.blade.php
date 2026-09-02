@@ -272,6 +272,10 @@ new class extends Component {
                     <span style="font-weight:500;color:var(--muted)">· {{ $selectedCourse->code }} · {{ Format::date($date) }}</span>
                 @endif
             </h3>
+            {{-- Named targets, not a bare wire:loading: marking the whole class
+                 present is also a round trip, and it has its own feedback on the
+                 buttons. This one answers only for the three filters above. --}}
+            <x-ui.busy target="courseId,cohortId,date" label="Loading register…" />
             @if ($roster->isNotEmpty() && ! $isFuture)
                 <button class="btn btn-ghost btn-sm" wire:click="markAll('present')">All present</button>
                 <button class="btn btn-ghost btn-sm" wire:click="markAll('absent')">All absent</button>
@@ -287,7 +291,7 @@ new class extends Component {
                 @endif
             </div>
         @else
-            <div class="scroll-x">
+            <div class="scroll-x" wire:loading.class="is-busy" wire:target="courseId,cohortId,date">
                 <table class="table">
                     <thead>
                         <tr>

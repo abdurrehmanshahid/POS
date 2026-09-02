@@ -558,3 +558,46 @@ body.is-impersonating .shell { height:calc(100vh - 44px); }
   .print-sheet { position:absolute !important; left:0 !important; top:0 !important; width:210mm !important; box-shadow:none !important; margin:0 !important; }
   .no-print { display:none !important; }
 }
+
+/* ---------------------------------------------------------------------------
+   Busy states for live filters
+   ---------------------------------------------------------------------------
+   Every `wire:model.live` control — the course and date pickers on Attendance,
+   the search boxes, the report ranges — is a round trip to Frankfurt before
+   anything on screen can change. From Lahore that is ~150ms of network before
+   the server has even begun, and the screen it is changing gave no sign that
+   anything was happening: the old rows sat there looking current, so the
+   natural reading was that the filter had not worked and the thing to do was
+   click it again. Which queues a second round trip.
+
+   Nothing here makes the application faster. It makes it honest about when it
+   is working, which is the half of "slow" that is actually about the interface.
+   -------------------------------------------------------------------------- */
+@keyframes bbtSpin { to { transform: rotate(360deg); } }
+
+.busy {
+    display: inline-flex; align-items: center; gap: 7px;
+    font-size: var(--fs-2xs); font-weight: 700; color: var(--muted);
+    /* Fades in rather than appearing, so a fast response that trips the delay
+       threshold by a few milliseconds does not read as a flicker. */
+    animation: bbtFade .15s;
+}
+.busy::before {
+    content: ''; width: 12px; height: 12px; flex: none;
+    border: 2px solid var(--border2); border-top-color: var(--accent);
+    border-radius: 50%; animation: bbtSpin .6s linear infinite;
+}
+
+/* Applied to the results, not the controls. The filter you just touched must
+   stay legible and usable — dimming it would hide the very value you are
+   trying to read back — while the rows underneath visibly step aside for
+   whatever is replacing them. `pointer-events:none` is the useful half: it
+   stops a second click landing on a row that is about to be gone. */
+.is-busy { opacity: .45; pointer-events: none; transition: opacity .12s ease-out; }
+
+/* Respect the system setting. A spinner is decoration; the opacity change
+   still communicates the state without anything moving. */
+@media (prefers-reduced-motion: reduce) {
+    .busy::before { animation: none; border-top-color: var(--border2); }
+    .busy { animation: none; }
+}

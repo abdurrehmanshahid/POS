@@ -331,6 +331,72 @@ if [ "$SERVER_NAME" = "_" ]; then
     warn "APP_DOMAIN is not set, so the vhost gets the '_' catch-all. certbot --nginx will NOT be able to install a certificate until server_name names the real host. See checklist CERT-01."
 fi
 
+# Two things stock nginx gets wrong for this app, fixed at http level so every
+# server block — including the loopback health block certbot leaves behind —
+# inherits them. See checklist ASSET-01 and ASSET-02.
+cat > /etc/nginx/conf.d/institute-assets.conf <<'NGINX'
+# ---------------------------------------------------------------------------
+# ASSET-01: .mjs is missing from nginx's mime.types, and that broke the viewer.
+# ---------------------------------------------------------------------------
+#
+# nginx 1.24 (Ubuntu 24.04) has no entry for `.mjs`, so every ES module under
+# /vendor/pdfjs/ was served as the `default_type`, application/octet-stream.
+# The vhost sets `X-Content-Type-Options: nosniff` — which we want — and a
+# browser will REFUSE to execute a module script whose type is not a JavaScript
+# MIME type. It refuses silently: no 404, no 500, nothing in the nginx log.
+#
+# The symptom was a fee challan that opened to a blank page. viewer.html itself
+# is text/html and loaded fine, so PDF.js's toolbar drew — page box, zoom, print,
+# save — and then nothing ever rendered into it, because viewer.mjs never ran.
+# It looked exactly like a broken PDF, and the PDF was never touched: the same
+# bytes downloaded and opened correctly the whole time.
+#
+# This is also the one failure mode the no-JavaScript fallback in
+# documents/viewer.blade.php cannot catch. That fallback sits UNDER the iframe
+# and shows through when the iframe fails to load — but the iframe DID load. It
+# was the script inside it that was refused.
+#
+# A `types` block at the same level as `include mime.types` ADDS to the map
+# rather than replacing it. Do not move this into a server or location block,
+# where `types` overrides the inherited map entirely and would leave every other
+# extension as octet-stream.
+types {
+    application/javascript  mjs;
+}
+
+# ---------------------------------------------------------------------------
+# ASSET-02: gzip was on, but only ever compressed HTML.
+# ---------------------------------------------------------------------------
+#
+# `gzip on` is in Ubuntu's stock nginx.conf and it is misleading: the default
+# `gzip_types` is `text/html` ALONE, so the HTML was compressed and every
+# stylesheet, script and font went out whole. Measured on 2026-09-02, first
+# view of a fee challan pushed 3.1MB uncompressed — pdf.worker.mjs 2.2MB,
+# viewer.mjs 678KB, viewer.css 208KB — over a link from Frankfurt to Lahore.
+#
+# The institute is on the far end of ~150ms of round trip. Bytes are the part
+# of that we can actually do something about.
+#
+# What is deliberately NOT here: woff2, png, jpg, gif, wasm are already
+# compressed formats and re-compressing them burns CPU on the box to make the
+# file marginally larger. text/html is not listed either — nginx always gzips
+# it, and naming it produces a duplicate-MIME warning.
+gzip_vary on;
+gzip_proxied any;
+gzip_comp_level 5;
+gzip_min_length 1024;
+gzip_types
+    text/plain
+    text/css
+    text/xml
+    text/javascript
+    application/javascript
+    application/json
+    application/xml
+    application/rss+xml
+    image/svg+xml;
+NGINX
+
 cat > /etc/nginx/sites-available/institute <<NGINX
 server {
     listen 80;
@@ -373,7 +439,32 @@ server {
     location ^~ /build/ {
         expires 1y;
         access_log off;
-        add_header Cache-Control "public, immutable";
+        add_header Cache-Control "public, immutable" always;
+
+        # Repeated, not inherited. nginx's add_header directives are inherited
+        # ONLY while the deeper level declares none of its own; the moment this
+        # block adds Cache-Control, the three headers on the server drop off
+        # every response under /build/. They were silently missing from the
+        # application's own JavaScript and CSS, which is precisely where
+        # nosniff earns its keep.
+        add_header X-Content-Type-Options "nosniff" always;
+        add_header X-Frame-Options "SAMEORIGIN" always;
+        add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+    }
+
+    # Vendored PDF.js: ~3MB across 122 files, none of them content-hashed.
+    #
+    # `expires` and NOT `add_header Cache-Control`, deliberately — see the note
+    # above. `expires` emits its own Cache-Control without touching add_header
+    # inheritance, so the security headers survive here for free.
+    #
+    # 30 days rather than the year /build/ gets, because these filenames carry
+    # no hash: a future PDF.js upgrade ships the same paths with new contents,
+    # and `immutable` for a year would leave counter PCs on the old viewer with
+    # no way to refresh short of clearing site data.
+    location ^~ /vendor/pdfjs/ {
+        expires 30d;
+        access_log off;
     }
 
     # Nothing below is ever a legitimate request against a Laravel public root.

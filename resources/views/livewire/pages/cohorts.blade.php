@@ -174,6 +174,7 @@ new class extends Component {
                 <input type="checkbox" wire:model.live="showClosed" style="width:15px;height:15px;accent-color:var(--iris)">
                 Show closed
             </label>
+            <x-ui.busy target="q,showClosed" label="Searching…" />
             <button class="btn btn-accent" wire:click="newCohort"><x-icon name="plus" :size="16" />New batch</button>
         </div>
     </div>
