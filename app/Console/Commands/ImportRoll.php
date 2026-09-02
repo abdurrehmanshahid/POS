@@ -23,7 +23,8 @@ class ImportRoll extends Command
         {file : Path to the .xlsx exported from the institute system}
         {--commit : Actually write. Without this the command only reports.}
         {--rejects= : Write a CSV of every rejected row to this path}
-        {--warnings= : Write a CSV of every row that imported with something lost}';
+        {--warnings= : Write a CSV of every row that imported with something lost}
+        {--hold= : Refuse the roll lines named in this file. See docs/QUARANTINE-REGISTER.md}';
 
     protected $description = 'Import students, enrolments, invoices and payment history from an exported roll';
 
@@ -40,6 +41,18 @@ class ImportRoll extends Command
         }
 
         $this->components->info('Read '.count($rows).' rows from '.basename($file));
+
+        if ($path = $this->option('hold')) {
+            try {
+                $held = $this->hold($rows, (string) $path);
+            } catch (Throwable $e) {
+                $this->components->error($e->getMessage());
+
+                return self::FAILURE;
+            }
+
+            $this->components->info($held.' row(s) held by '.basename((string) $path).'.');
+        }
 
         $resolver->resolve($rows);
 
@@ -86,6 +99,80 @@ class ImportRoll extends Command
         }
 
         return $result['failed'] === [] ? self::SUCCESS : self::FAILURE;
+    }
+
+    /**
+     * Refuse the roll lines named in a hold file (the quarantine register).
+     *
+     * Held rows are rejected rather than skipped, so they travel the same path
+     * as every other refusal: they appear in the summary, in `--rejects`, and in
+     * the grouped "what needs a decision" list. A row that vanished silently
+     * would make `478 = ready + already + rejected` stop adding up, and the
+     * arithmetic in that table is the only thing telling an operator that no row
+     * was quietly lost.
+     *
+     * Applied BEFORE `resolve()` on purpose. A held row must be refused for
+     * being held, not for whichever unrelated thing the resolver would have
+     * complained about first — otherwise releasing it from quarantine surfaces a
+     * second reason nobody knew was there.
+     *
+     * The reason from the file's own comment is carried into the rejection, so
+     * the report says *why* a line is held rather than only that it is.
+     *
+     * @param  list<RollRow>  $rows
+     */
+    private function hold(array $rows, string $path): int
+    {
+        if (! is_readable($path)) {
+            throw new \RuntimeException("Hold file not readable: {$path}");
+        }
+
+        $reasons = [];
+
+        foreach (file($path, FILE_IGNORE_NEW_LINES) as $no => $text) {
+            // Everything after a '#' is a comment, and a line that is only a
+            // comment is how the file documents itself.
+            [$line, $why] = array_pad(explode('#', $text, 2), 2, '');
+            $line = trim($line);
+
+            if ($line === '') {
+                continue;
+            }
+
+            if (! ctype_digit($line)) {
+                throw new \RuntimeException(
+                    basename($path)." line {$no}: expected a roll line number, got \"{$line}\""
+                );
+            }
+
+            $reasons[(int) $line] = trim($why);
+        }
+
+        $held = 0;
+
+        foreach ($rows as $row) {
+            if (! array_key_exists($row->line, $reasons)) {
+                continue;
+            }
+
+            $why = $reasons[$row->line];
+            $row->reject('held in quarantine'.($why !== '' ? ": {$why}" : ''));
+            $held++;
+        }
+
+        // A number in the file matching no row means the file and the roll have
+        // drifted apart — a re-export with different line numbering would hold
+        // the wrong students, silently. Louder than a comment, cheaper than the
+        // audit that finds it later.
+        $matched = array_map(fn (RollRow $r) => $r->line, $rows);
+        if ($missing = array_diff(array_keys($reasons), $matched)) {
+            $this->components->warn(
+                count($missing).' held line(s) match no row in this file: '
+                .implode(', ', array_slice($missing, 0, 10)).(count($missing) > 10 ? ' …' : '')
+            );
+        }
+
+        return $held;
     }
 
     private function summary(array $ready, array $already, array $rejected, array $collapsed = []): void

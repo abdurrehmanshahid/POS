@@ -187,6 +187,139 @@ class RollImportTest extends TestCase
         $this->assertSame($before, $this->counts(), 'The real roll must not write on a dry run.');
     }
 
+    // ---- Quarantine, the hold list -------------------------------------------
+
+    /**
+     * A held line is refused, and its neighbour on the same sheet is not.
+     *
+     * The pairing is the test. A hold file that rejected everything would pass
+     * an assertion that only checked the held row, and it would be discovered
+     * on the night somebody quarantined eight rows and imported none.
+     */
+    public function test_a_held_line_is_refused_and_its_neighbours_are_not(): void
+    {
+        $file = $this->sheet([
+            $this->goodRow(['Name' => 'Held Student', 'Phone' => '03001234501']),
+            $this->goodRow(['Name' => 'Free Student', 'Phone' => '03001234502']),
+        ]);
+
+        // Row 1 of the sheet is the heading, so the first data row is line 2.
+        $hold = tempnam(sys_get_temp_dir(), 'hold').'.txt';
+        file_put_contents($hold, "# a comment\n2  # Held Student\n");
+
+        $this->artisan('roll:import', ['file' => $file, '--hold' => $hold, '--commit' => true])
+            ->assertSuccessful();
+
+        $this->assertNull(Student::where('name', 'Held Student')->first(), 'A held row must not import.');
+        $this->assertNotNull(Student::where('name', 'Free Student')->first(), 'Only held rows are held.');
+
+        unlink($hold);
+    }
+
+    /**
+     * The held row is REJECTED, not skipped.
+     *
+     * `roll:import` prints `ready + already + rejected + collapsed = total`, and
+     * an operator reads that table to confirm no row went missing. A held row
+     * that disappeared from every bucket would break the arithmetic, and the
+     * one check that would have caught a lost student stops working.
+     */
+    public function test_a_held_row_is_reported_as_rejected_rather_than_vanishing(): void
+    {
+        $file = $this->sheet([
+            $this->goodRow(['Name' => 'Held Student', 'Phone' => '03001234501']),
+            $this->goodRow(['Name' => 'Free Student', 'Phone' => '03001234502']),
+        ]);
+
+        $hold = tempnam(sys_get_temp_dir(), 'hold').'.txt';
+        file_put_contents($hold, "2  # needs an answer from the institute\n");
+
+        $this->artisan('roll:import', ['file' => $file, '--hold' => $hold])
+            ->expectsOutputToContain('1 row(s) held')
+            // The reason travels from the file's comment into the report, so
+            // the operator is told why a line is held, not merely that it is.
+            ->expectsOutputToContain('held in quarantine: needs an answer from the institute')
+            ->assertSuccessful();
+
+        unlink($hold);
+    }
+
+    /**
+     * A hold file naming a line the roll does not have is a warning, not silence.
+     *
+     * This is the drift case: the institute re-exports the roll, the row
+     * numbering shifts, and a file written against the old export now holds
+     * whichever students happen to sit at those offsets. Refusing the wrong
+     * eight students quietly is worse than refusing none.
+     */
+    public function test_a_hold_file_that_has_drifted_off_the_roll_says_so(): void
+    {
+        $file = $this->sheet([$this->goodRow()]);
+
+        $hold = tempnam(sys_get_temp_dir(), 'hold').'.txt';
+        file_put_contents($hold, "2\n9999\n");
+
+        $this->artisan('roll:import', ['file' => $file, '--hold' => $hold])
+            ->expectsOutputToContain('1 held line(s) match no row')
+            ->assertSuccessful();
+
+        unlink($hold);
+    }
+
+    /**
+     * An unreadable or malformed hold file fails the run rather than importing.
+     *
+     * Failing open here would import the very rows the file exists to keep out,
+     * and it would do it silently — the operator asked for a quarantine and got
+     * a full import with an exit code of zero.
+     */
+    public function test_a_hold_file_that_cannot_be_trusted_stops_the_run(): void
+    {
+        $file = $this->sheet([$this->goodRow()]);
+
+        $this->artisan('roll:import', ['file' => $file, '--hold' => '/no/such/hold.txt'])
+            ->assertFailed();
+
+        $hold = tempnam(sys_get_temp_dir(), 'hold').'.txt';
+        file_put_contents($hold, "not-a-line-number\n");
+
+        $this->artisan('roll:import', ['file' => $file, '--hold' => $hold])->assertFailed();
+
+        $this->assertSame(0, Student::where('name', 'Imported Student')->count());
+
+        unlink($hold);
+    }
+
+    /**
+     * The real quarantine register holds every line it claims to.
+     *
+     * Guards the register itself, not the mechanism: if a line is added to
+     * `held-lines.txt` that the roll does not contain, or the roll is
+     * re-exported under different numbering, this fails rather than letting a
+     * quarantined student through unnoticed.
+     */
+    public function test_the_real_quarantine_register_matches_the_real_roll(): void
+    {
+        $roll = base_path(self::REAL_ROLL);
+        $hold = base_path('docs/quarantine/held-lines.txt');
+
+        if (! is_readable($roll) || ! is_readable($hold)) {
+            $this->markTestSkipped('The real roll and its quarantine register are both gitignored.');
+        }
+
+        $expected = 0;
+        foreach (file($hold, FILE_IGNORE_NEW_LINES) as $text) {
+            if (trim(explode('#', $text, 2)[0]) !== '') {
+                $expected++;
+            }
+        }
+
+        $this->artisan('roll:import', ['file' => $roll, '--hold' => $hold])
+            ->expectsOutputToContain($expected.' row(s) held')
+            ->doesntExpectOutputToContain('match no row')
+            ->assertSuccessful();
+    }
+
     public function test_writing_requires_commit_not_merely_omitting_dry_run(): void
     {
         $file = $this->sheet([$this->goodRow()]);
