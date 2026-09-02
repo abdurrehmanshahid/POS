@@ -221,6 +221,22 @@ fi
 mkdir -p "$APP_DIR"
 chown -R "$APP_USER:$APP_USER" "$APP_DIR"
 
+# nginx runs as www-data and must be able to TRAVERSE into $APP_DIR, which is
+# mode 0750 and owned by $APP_USER. Without this the web server cannot resolve
+# $realpath_root in the vhost below, hands PHP-FPM a path that does not exist,
+# and every request answers 404 with FPM's misleading "File not found." — the
+# error blames the interpreter for the web server's lack of permission.
+#
+# Group membership, deliberately, rather than `chmod 0755 $APP_DIR`. This
+# directory holds .env: the APP_KEY that decrypts every stored TOTP secret, and
+# the database password. Adding one account to the group grants exactly that
+# account traverse; 0755 grants it to every process on the box.
+#
+# Found on the 2026-08-30 rehearsal (checklist NGINX-01). P2-05 checked the mode
+# was 0750 and passed, because it verified what the app account needs and never
+# asked whether the web server could get through. Checklist P2-05a now does.
+usermod -aG "$APP_USER" www-data
+
 # Backups live outside the application directory so a deploy that wipes and
 # re-clones the app cannot take the dumps with it. This must match BACKUP_PATH
 # in .env — deploy.sh refuses to run if it does not.
@@ -302,7 +318,18 @@ POOL
 log "Configuring nginx"
 apt-get install -y -qq nginx
 
+# Pass APP_DOMAIN so certbot can find a server block to install into. With the
+# `_` catch-all default, `certbot --nginx` obtains a certificate and then fails
+# with "Could not automatically find a matching server block" — the certificate
+# is issued (spending a rate-limit attempt) but the site stays on plain HTTP.
+# See checklist CERT-01.
+#
+#     APP_DOMAIN=pos.bigbinaryerp.com ./provision.sh
 SERVER_NAME="${APP_DOMAIN:-_}"
+
+if [ "$SERVER_NAME" = "_" ]; then
+    warn "APP_DOMAIN is not set, so the vhost gets the '_' catch-all. certbot --nginx will NOT be able to install a certificate until server_name names the real host. See checklist CERT-01."
+fi
 
 cat > /etc/nginx/sites-available/institute <<NGINX
 server {
