@@ -2059,6 +2059,118 @@ class RollImportTest extends TestCase
         $this->assertSame(89500, (int) $ageing['buckets']['unscheduled']['total']);
     }
 
+    // ---- Attaching a line to somebody who is already here ---------------------
+    //
+    // The importer knows a person only by the enrolment fingerprint, so someone
+    // already on the roll who buys a SECOND course arrives as a second record.
+    // That default stays, because guessing two records are one person is the
+    // mistake that cannot be undone once money lands on the merged one.
+    // `--attach` is how a person who HAS checked says so, one line at a time.
+
+    /** A file mapping roll lines to the students they belong to. */
+    private function attachFile(array $map): string
+    {
+        $path = tempnam(sys_get_temp_dir(), 'attach').'.txt';
+        file_put_contents($path, implode("\n", array_map(
+            fn ($code, $line) => "{$line} {$code}", $map, array_keys($map)
+        ))."\n");
+
+        return $path;
+    }
+
+    public function test_an_attached_line_enrols_an_existing_student_instead_of_making_a_new_one(): void
+    {
+        $existing = Student::firstOrFail();
+        $before = Student::count();
+
+        $this->artisan('roll:import', [
+            'file' => $this->sheet([$this->goodRow(['Name' => 'Someone Else Entirely'])]),
+            '--attach' => $this->attachFile([2 => $existing->student_code]),
+            '--commit' => true,
+        ])->assertSuccessful();
+
+        $this->assertSame($before, Student::count(), 'No new person may be created for an attached line.');
+
+        $admission = Admission::whereNotNull('import_key')->firstOrFail();
+
+        $this->assertSame($existing->id, $admission->student_id);
+        $this->assertSame(25000, (int) $admission->challan->net_amount);
+        $this->assertSame(25000, (int) $admission->challan->payments->sum('amount'));
+    }
+
+    /**
+     * An attached line still carries its own import key.
+     *
+     * Otherwise the second run would not recognise the enrolment and would bill
+     * the person it was attached to all over again — the exact double-charge
+     * `import_key` exists to prevent, reintroduced by the flag meant to tidy up.
+     */
+    public function test_an_attached_line_is_not_imported_twice(): void
+    {
+        $existing = Student::firstOrFail();
+
+        $options = [
+            'file' => $this->sheet([$this->goodRow()]),
+            '--attach' => $this->attachFile([2 => $existing->student_code]),
+            '--commit' => true,
+        ];
+
+        $this->artisan('roll:import', $options)->assertSuccessful();
+        $after = $this->counts();
+
+        $this->artisan('roll:import', $options)->assertSuccessful();
+
+        $this->assertSame($after, $this->counts(), 'A second run must not bill the attached student again.');
+    }
+
+    /**
+     * A student code that names nobody stops the run.
+     *
+     * Fatal rather than a warning, unlike a stale hold line. A hold that misses
+     * lets a row IN, which the report still shows; an attachment that misses
+     * would silently create the duplicate person the flag was passed to prevent.
+     */
+    public function test_an_attach_file_naming_an_unknown_student_stops_the_run(): void
+    {
+        $before = $this->counts();
+
+        $this->artisan('roll:import', [
+            'file' => $this->sheet([$this->goodRow()]),
+            '--attach' => $this->attachFile([2 => 'BBT-R26-9999']),
+            '--commit' => true,
+        ])
+            ->expectsOutputToContain('does not exist')
+            ->assertFailed();
+
+        $this->assertSame($before, $this->counts());
+    }
+
+    public function test_an_attach_file_naming_a_line_that_is_not_in_the_sheet_stops_the_run(): void
+    {
+        $existing = Student::firstOrFail();
+
+        $this->artisan('roll:import', [
+            'file' => $this->sheet([$this->goodRow()]),
+            '--attach' => $this->attachFile([99 => $existing->student_code]),
+            '--commit' => true,
+        ])
+            ->expectsOutputToContain('match no row')
+            ->assertFailed();
+    }
+
+    public function test_a_malformed_attach_file_stops_the_run(): void
+    {
+        $path = tempnam(sys_get_temp_dir(), 'attach').'.txt';
+        file_put_contents($path, "this is not a mapping\n");
+
+        $this->artisan('roll:import', [
+            'file' => $this->sheet([$this->goodRow()]),
+            '--attach' => $path,
+        ])
+            ->expectsOutputToContain('expected')
+            ->assertFailed();
+    }
+
     public function test_the_real_intake_sheet_imported_twice_changes_nothing(): void
     {
         $path = base_path(self::REAL_INTAKE);

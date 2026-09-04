@@ -232,6 +232,16 @@ class RollPersister
      */
     private function student(RollRow $row): Student
     {
+        // Somebody has looked at this line and said whose it is. That beats the
+        // fingerprint, which by design cannot recognise a person across two
+        // different courses and would otherwise mint them a second record.
+        //
+        // It does NOT skip the import key: the admission still gets its own, so
+        // a second run recognises the enrolment and does not bill it twice.
+        if ($row->attachTo) {
+            return $this->joined($row->attachTo, $row);
+        }
+
         $existing = Admission::query()
             ->whereIn('import_key', array_values($row->importKeys))
             ->with('student')

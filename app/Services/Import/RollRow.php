@@ -4,6 +4,7 @@ namespace App\Services\Import;
 
 use App\Models\Cohort;
 use App\Models\Course;
+use App\Models\Student;
 use App\Models\User;
 
 /**
@@ -51,6 +52,25 @@ class RollRow
     public string $batchName = '';
 
     public ?User $officer = null;
+
+    /**
+     * The person this line belongs to, when somebody has said which.
+     *
+     * The importer identifies a person by the enrolment fingerprint and nothing
+     * else, so a student already in the system who buys a SECOND course arrives
+     * as a second student record. That is the right default — two records for
+     * one person can be merged, one record fusing two people cannot be unpicked
+     * once money lands on it — but it is only a default, and it is wrong
+     * whenever a human has actually checked.
+     *
+     * Two of the August intake's rows are that case: Musfira Mansha and Zunaira
+     * Kashif are both already on the roll, on other courses, matched by an exact
+     * phone number AND an exact name. Left alone the import would give each of
+     * them a third and a second record.
+     *
+     * Set from `--attach`, never inferred. @see \App\Console\Commands\ImportRoll
+     */
+    public ?Student $attachTo = null;
 
     /**
      * The CNIC as it will actually be stored, decided by the resolver.

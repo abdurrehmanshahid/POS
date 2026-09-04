@@ -2,6 +2,7 @@
 
 namespace App\Console\Commands;
 
+use App\Models\Student;
 use App\Services\Import\RollPersister;
 use App\Services\Import\RollReader;
 use App\Services\Import\RollResolver;
@@ -25,6 +26,7 @@ class ImportRoll extends Command
         {--rejects= : Write a CSV of every rejected row to this path}
         {--warnings= : Write a CSV of every row that imported with something lost}
         {--hold= : Refuse the roll lines named in this file. See docs/QUARANTINE-REGISTER.md}
+        {--attach= : Give the lines in this file to students who already exist. "<line> <student code>"}
         {--csr= : The officer who enrolled everyone, for a sheet with no CSR column}
         {--registered-on= : The date everyone enrolled (YYYY-MM-DD), for a sheet with no date column}';
 
@@ -57,6 +59,18 @@ class ImportRoll extends Command
             }
 
             $this->components->info($held.' row(s) held by '.basename((string) $path).'.');
+        }
+
+        if ($path = $this->option('attach')) {
+            try {
+                $attached = $this->attach($rows, (string) $path);
+            } catch (Throwable $e) {
+                $this->components->error($e->getMessage());
+
+                return self::FAILURE;
+            }
+
+            $this->components->info($attached.' row(s) given to students who already exist.');
         }
 
         $resolver->resolve($rows);
@@ -255,6 +269,87 @@ class ImportRoll extends Command
         }
 
         return $held;
+    }
+
+    /**
+     * Give named lines to students the institute says already exist.
+     *
+     * The importer knows a person only by the enrolment fingerprint, so someone
+     * already on the roll who buys a SECOND course arrives as a second record.
+     * That default is deliberate and stays: guessing that two records are one
+     * person is the mistake that cannot be undone once money lands on the merged
+     * one. This flag is the other half of it — the way a person who HAS checked
+     * says so, one line at a time, in a file that can be read back later.
+     *
+     * Applied BEFORE `resolve()`, like the hold list, so the attachment is a
+     * fact the whole pipeline sees rather than something bolted on at write
+     * time.
+     *
+     * Refuses loudly on anything it cannot verify: an unparseable line, a
+     * student code that does not exist, or a line number that matches no row.
+     * All three mean the file and the roll have drifted apart, and the cost of
+     * carrying on is an enrolment and its fees landing on a stranger's record.
+     *
+     * @param  list<RollRow>  $rows
+     */
+    private function attach(array $rows, string $path): int
+    {
+        if (! is_readable($path)) {
+            throw new \RuntimeException("Attach file not readable: {$path}");
+        }
+
+        $wanted = [];
+
+        foreach (file($path, FILE_IGNORE_NEW_LINES) as $no => $text) {
+            [$line] = array_pad(explode('#', $text, 2), 2, '');
+            $parts = preg_split('/\s+/', trim($line), -1, PREG_SPLIT_NO_EMPTY) ?: [];
+
+            if ($parts === []) {
+                continue;
+            }
+
+            if (count($parts) !== 2 || ! ctype_digit($parts[0])) {
+                throw new \RuntimeException(
+                    basename($path)." line {$no}: expected \"<roll line> <student code>\", got \"".trim($line).'"'
+                );
+            }
+
+            $wanted[(int) $parts[0]] = $parts[1];
+        }
+
+        $attached = 0;
+
+        foreach ($rows as $row) {
+            if (! array_key_exists($row->line, $wanted)) {
+                continue;
+            }
+
+            $code = $wanted[$row->line];
+            $student = Student::where('student_code', $code)->first();
+
+            if (! $student) {
+                throw new \RuntimeException(
+                    basename($path).": roll line {$row->line} names student \"{$code}\", which does not exist."
+                );
+            }
+
+            $row->attachTo = $student;
+            $attached++;
+            unset($wanted[$row->line]);
+        }
+
+        // A number matching no row means the file and the roll have drifted
+        // apart. Unlike the hold list this is fatal, not a warning: a hold that
+        // misses lets a row IN, which the report still shows, while an
+        // attachment that misses silently creates the duplicate person the flag
+        // was passed to prevent.
+        if ($wanted !== []) {
+            throw new \RuntimeException(
+                basename($path).': these lines match no row in this file: '.implode(', ', array_keys($wanted)).'.'
+            );
+        }
+
+        return $attached;
     }
 
     private function summary(array $ready, array $already, array $rejected, array $collapsed = []): void
