@@ -246,7 +246,12 @@ class RollPersister
             'type' => 'R',
             'name' => $row->name,
             'guardian_name' => null,
-            'cnic' => null,
+            // What the RESOLVER decided to store, not what the sheet says. It
+            // is NULL for a number that is not a CNIC or that already belongs
+            // to somebody else, and NULL rather than '' because `students.cnic`
+            // is UNIQUE and excludes NULLs while treating '' as a value two
+            // students would collide on.
+            'cnic' => $row->storedCnic,
             'phone' => Contact::normalizePhone($row->phone),
             'created_by' => $row->officer->id,
         ]), $row);

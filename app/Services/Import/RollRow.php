@@ -52,6 +52,22 @@ class RollRow
 
     public ?User $officer = null;
 
+    /**
+     * The CNIC as it will actually be stored, decided by the resolver.
+     *
+     * Separate from `$cnic`, which is what the sheet says. The two differ when
+     * the number is not a CNIC (the intake sheet carries one with twelve digits
+     * where a CNIC has thirteen) or when it already belongs to somebody else —
+     * in both cases the person is imported and the number is not, exactly as an
+     * undiallable phone is handled, and a warning carries the original text so
+     * the institute can correct it.
+     *
+     * NULL means "store no CNIC", which is what `students.cnic` needs: the
+     * column is UNIQUE and excludes NULLs, so two students without one do not
+     * collide with each other.
+     */
+    public ?string $storedCnic = null;
+
     /** Already present in the database from an earlier run of this file. */
     public bool $alreadyImported = false;
 
@@ -74,6 +90,16 @@ class RollRow
         public readonly int $secondInstalment,
         public readonly int $balance,
         public readonly int $totalReceived,
+        /**
+         * The national identity number, where the sheet records one.
+         *
+         * Last and defaulted, so the 478-row export — which never had the
+         * column — and every test built against it keep working unchanged.
+         * Empty means "not recorded", which is the truth for the whole export
+         * and for 13 of the intake sheet's 18 rows, and is stored as NULL
+         * rather than as an empty string.
+         */
+        public readonly string $cnic = '',
     ) {}
 
     public function reject(string $reason): void

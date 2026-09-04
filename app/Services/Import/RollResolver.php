@@ -6,6 +6,7 @@ use App\Models\Admission;
 use App\Models\Challan;
 use App\Models\Cohort;
 use App\Models\Course;
+use App\Models\Student;
 use App\Models\User;
 use App\Support\Contact;
 use Illuminate\Support\Collection;
@@ -39,10 +40,25 @@ class RollResolver
     /** @var array<string, string> */
     private array $csrUsernames;
 
+    /**
+     * Every CNIC already spoken for, as `cnic => true`.
+     *
+     * Seeded from the database and added to as the file is walked, so one
+     * lookup covers both "somebody already has this" and "an earlier line in
+     * this same file claimed it". Loaded once for the whole run, like the
+     * cohort and import-key sets above, rather than a query per row.
+     */
+    private array $cnics;
+
     public function __construct()
     {
         $this->courses = Course::all();
         $this->officers = User::all();
+        $this->cnics = Student::query()
+            ->whereNotNull('cnic')
+            ->pluck('cnic')
+            ->flip()
+            ->all();
 
         // Loaded once for the whole file, exactly as the import_key set below
         // is, and for the same reason: a per-row lookup here cost ~500 queries
@@ -364,9 +380,63 @@ class RollResolver
             $row->warn("phone \"{$row->phone}\" cannot be dialled, imported without a number");
         }
 
+        $this->resolveCnic($row);
+
         if ($row->registeredOn === null) {
             $row->reject('no registration date');
         }
+    }
+
+    /**
+     * Decide whether the sheet's CNIC is one this student can be stored with.
+     *
+     * The same doctrine as the phone above, and for the same reason: the person
+     * matters more than the detail, so a number that cannot be used costs the
+     * institute a warning rather than a student.
+     *
+     * Two ways it cannot be used, and both are real in the August intake:
+     *
+     *   - It is not a CNIC. "32102-292618-0" has twelve digits where a CNIC has
+     *     thirteen, so somebody dropped one while typing. Which one cannot be
+     *     recovered, and storing it anyway puts a number that identifies nobody
+     *     into the column staff search by — worse than an empty cell, because an
+     *     empty cell does not look like an answer.
+     *   - It already belongs to somebody. `students.cnic` is UNIQUE, so writing
+     *     it would abort the row inside its transaction and lose a real student
+     *     and their fees over a duplicated identity number. Refused here so the
+     *     operator gets a sentence instead of a raw SQLSTATE, and gets the
+     *     student either way.
+     *
+     * Both the within-file and the already-in-the-database case are covered:
+     * `$this->cnics` accumulates as the file is walked, so the second row to
+     * claim a number keeps the student and drops the number, and the first —
+     * already past this point — keeps both. Which of two claims is the real one
+     * is not the importer's call, and the alternative is refusing both.
+     */
+    private function resolveCnic(RollRow $row): void
+    {
+        if ($row->cnic === '') {
+            return;
+        }
+
+        if (! Contact::validCnic($row->cnic)) {
+            $row->warn(
+                "CNIC \"{$row->cnic}\" is not a valid CNIC (#####-#######-#), imported without one"
+            );
+
+            return;
+        }
+
+        if (isset($this->cnics[$row->cnic])) {
+            $row->warn(
+                "CNIC \"{$row->cnic}\" is already recorded against another student, imported without one"
+            );
+
+            return;
+        }
+
+        $this->cnics[$row->cnic] = true;
+        $row->storedCnic = $row->cnic;
     }
 
     /**

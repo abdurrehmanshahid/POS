@@ -1537,4 +1537,543 @@ class RollImportTest extends TestCase
 
         $this->assertSame('aliraza', $admission->enroller->username);
     }
+
+    // ---- The institute's hand-kept intake sheet -------------------------------
+    //
+    // A second layout, not a second importer. While the POS was offline the
+    // institute went on enrolling and recorded it by hand, so August exists only
+    // as this shape. Everything below is about the three ways it differs from an
+    // export: columns it has that the export never did, columns it lacks that
+    // the importer requires, and a Pending Fee column that is not maintained.
+
+    private const REAL_INTAKE = 'August Enrollment .xlsx';
+
+    /**
+     * A sheet in the institute's own intake shape.
+     *
+     * The header spellings are the real file's, typo included ("Piad"), because
+     * a fixture that quietly corrects the input is a fixture that proves the
+     * importer reads a file nobody will ever send it.
+     *
+     * @param  list<array<string, string|int>>  $rows
+     */
+    private function intakeSheet(array $rows): string
+    {
+        $headers = [
+            'NAME', 'Contact No.', 'CNIC NO.', 'COURSE NAME', 'DURATION',
+            'TOTAL FEE', 'DISCOUNTED FEE', '1st Installment', 'Pending Fee',
+            '2nd installment Piad',
+        ];
+
+        $book = new Spreadsheet;
+        $sheet = $book->getActiveSheet();
+        $sheet->fromArray($headers, null, 'A1');
+
+        foreach ($rows as $i => $row) {
+            // strictNullComparison, or `fromArray` compares each value against
+            // its null placeholder with `!=` and writes NOTHING for a cell
+            // holding 0 — because `0 != null` is false. The whole point of
+            // these fixtures is telling "the sheet says 0 pending" apart from
+            // "the sheet says nothing", and without this every zero in them is
+            // silently a blank.
+            $sheet->fromArray(
+                array_map(fn ($h) => $row[$h] ?? '', $headers), null, 'A'.($i + 2), true
+            );
+        }
+
+        $path = tempnam(sys_get_temp_dir(), 'intake').'.xlsx';
+        (new Xlsx($book))->save($path);
+
+        return $path;
+    }
+
+    /** A row of the intake sheet that resolves cleanly. */
+    private function intakeRow(array $overrides = []): array
+    {
+        return $overrides + [
+            'NAME' => 'Intake Student',
+            'Contact No.' => '3214119234',
+            'CNIC NO.' => '',
+            'COURSE NAME' => 'Graphic Designing',
+            'DURATION' => '3-Months',
+            'TOTAL FEE' => 60000,
+            'DISCOUNTED FEE' => 25000,
+            '1st Installment' => 25000,
+            'Pending Fee' => 0,
+            '2nd installment Piad' => '',
+        ];
+    }
+
+    /** The two values the intake sheet does not carry and cannot be read from it. */
+    private function intakeOptions(array $extra = []): array
+    {
+        return $extra + ['--csr' => 'Ali Raza', '--registered-on' => '2026-08-01'];
+    }
+
+    public function test_an_intake_sheet_imports_when_told_who_enrolled_them_and_when(): void
+    {
+        $this->artisan('roll:import', $this->intakeOptions([
+            'file' => $this->intakeSheet([$this->intakeRow()]),
+            '--commit' => true,
+        ]))->assertSuccessful();
+
+        $student = Student::where('name', 'Intake Student')->firstOrFail();
+        $admission = $student->admissions()->firstOrFail();
+
+        $this->assertSame('GD-101', $admission->course->code);
+        $this->assertSame('aliraza', $admission->enroller->username);
+        $this->assertSame('2026-08-01', $admission->created_at->toDateString());
+        $this->assertSame(25000, (int) $admission->challan->net_amount);
+        $this->assertSame(25000, (int) $admission->challan->payments->sum('amount'));
+    }
+
+    /**
+     * Missing CSR is one sentence about the command, not 18 about the sheet.
+     *
+     * Without this the resolver rejects every row with "no CSR named" — all of
+     * them true, and together saying the wrong thing. The file is fine; the
+     * command was run without something only a person can supply, and the error
+     * has to name the flag that supplies it.
+     */
+    public function test_an_intake_sheet_without_a_csr_names_the_flag_rather_than_refusing_every_row(): void
+    {
+        $this->artisan('roll:import', [
+            'file' => $this->intakeSheet([$this->intakeRow()]),
+            '--registered-on' => '2026-08-01',
+        ])
+            ->expectsOutputToContain('--csr')
+            ->assertFailed();
+
+        $this->assertSame(0, Student::where('name', 'Intake Student')->count());
+    }
+
+    public function test_an_intake_sheet_without_a_registration_date_names_that_flag_too(): void
+    {
+        $this->artisan('roll:import', [
+            'file' => $this->intakeSheet([$this->intakeRow()]),
+            '--csr' => 'Ali Raza',
+        ])
+            ->expectsOutputToContain('--registered-on')
+            ->assertFailed();
+    }
+
+    public function test_a_mistyped_date_is_refused_before_anything_is_read(): void
+    {
+        $this->artisan('roll:import', $this->intakeOptions([
+            'file' => $this->intakeSheet([$this->intakeRow()]),
+            '--registered-on' => '01-08-2026',
+            '--commit' => true,
+        ]))
+            ->expectsOutputToContain('YYYY-MM-DD')
+            ->assertFailed();
+
+        $this->assertSame(0, Student::where('name', 'Intake Student')->count());
+    }
+
+    /**
+     * The supplied values never overwrite a column the file actually has.
+     *
+     * `--csr` exists so a sheet WITHOUT the column can be imported, not so the
+     * 478-row export's real attribution can be replaced wholesale by one name.
+     * Passing it against a file that names its own officers must change nothing.
+     */
+    public function test_a_supplied_csr_does_not_override_one_the_sheet_states(): void
+    {
+        $this->artisan('roll:import', [
+            'file' => $this->sheet([$this->goodRow(['CSR' => 'Sofia'])]),
+            '--csr' => 'Ali Raza',
+            '--registered-on' => '2020-01-01',
+            '--commit' => true,
+        ])->assertSuccessful();
+
+        $admission = Admission::whereNotNull('import_key')->firstOrFail();
+
+        $this->assertSame('sofia', $admission->enroller->username);
+        $this->assertSame('2026-07-01', $admission->created_at->toDateString());
+    }
+
+    /**
+     * A course's LENGTH is part of which course it is.
+     *
+     * Two students bought "Digital Media Marketing" in August, one for a month
+     * at 20,000 and one for three at 60,000. On the name alone they are one
+     * course, and one of them is billed and rostered wrongly.
+     */
+    public function test_the_same_course_at_two_lengths_is_two_courses(): void
+    {
+        $this->artisan('roll:import', $this->intakeOptions([
+            'file' => $this->intakeSheet([
+                $this->intakeRow([
+                    'NAME' => 'One Month', 'Contact No.' => '3001110001',
+                    'COURSE NAME' => 'Digital Media Marketing', 'DURATION' => '1-Month',
+                    'TOTAL FEE' => 20000, 'DISCOUNTED FEE' => 10000, '1st Installment' => 10000,
+                ]),
+                $this->intakeRow([
+                    'NAME' => 'Three Month', 'Contact No.' => '3001110002',
+                    'COURSE NAME' => 'Digital Media Marketing', 'DURATION' => '3-Months',
+                    'TOTAL FEE' => 60000, 'DISCOUNTED FEE' => 30000, '1st Installment' => 30000,
+                ]),
+            ]),
+            '--commit' => true,
+        ]))->assertSuccessful();
+
+        $this->assertSame('DMM-M1', Student::where('name', 'One Month')
+            ->firstOrFail()->admissions()->firstOrFail()->course->code);
+        $this->assertSame('DMM-M3', Student::where('name', 'Three Month')
+            ->firstOrFail()->admissions()->firstOrFail()->course->code);
+    }
+
+    /**
+     * "2-Months" and "2 Months" are one length written twice.
+     *
+     * The sheet writes both, on adjacent lines. Failing the second would be a
+     * rejection over a hyphen, which is the fussiness the alias table exists to
+     * avoid rather than an example of the care it exists to enforce.
+     */
+    public function test_a_duration_written_with_and_without_a_hyphen_is_one_course(): void
+    {
+        $this->artisan('roll:import', $this->intakeOptions([
+            'file' => $this->intakeSheet([
+                $this->intakeRow([
+                    'NAME' => 'Hyphen', 'Contact No.' => '3001110003',
+                    'COURSE NAME' => 'Cyber Security', 'DURATION' => '3-Months',
+                    'TOTAL FEE' => 60000, 'DISCOUNTED FEE' => 30000, '1st Installment' => 30000,
+                ]),
+                $this->intakeRow([
+                    'NAME' => 'Space', 'Contact No.' => '3001110004',
+                    'COURSE NAME' => 'Cyber Security', 'DURATION' => '3 Months',
+                    'TOTAL FEE' => 60000, 'DISCOUNTED FEE' => 30000, '1st Installment' => 30000,
+                ]),
+            ]),
+            '--commit' => true,
+        ]))->assertSuccessful();
+
+        foreach (['Hyphen', 'Space'] as $name) {
+            $this->assertSame('CS-102', Student::where('name', $name)
+                ->firstOrFail()->admissions()->firstOrFail()->course->code);
+        }
+    }
+
+    /**
+     * Both instalment columns are money already collected, and are summed.
+     *
+     * The export's rule is the opposite — its "Second Installment" is the amount
+     * still OWED on a pending row, which is why `validateMoney()` refuses to
+     * derive receipts from it. Reading this sheet through that rule would have
+     * thrown away every second payment in the file.
+     */
+    public function test_both_intake_instalment_columns_are_money_in_hand(): void
+    {
+        $this->artisan('roll:import', $this->intakeOptions([
+            'file' => $this->intakeSheet([$this->intakeRow([
+                'DISCOUNTED FEE' => 25000,
+                '1st Installment' => 15000,
+                '2nd installment Piad' => 10000,
+            ])]),
+            '--commit' => true,
+        ]))->assertSuccessful();
+
+        $challan = Student::where('name', 'Intake Student')->firstOrFail()
+            ->admissions()->firstOrFail()->challan;
+
+        $this->assertSame(25000, (int) $challan->payments->sum('amount'));
+        $this->assertSame('paid', $challan->status);
+        $this->assertSame([15000, 10000], $challan->payments->pluck('amount')
+            ->map(fn ($a) => (int) $a)->sort()->reverse()->values()->all());
+    }
+
+    /**
+     * The balance is derived, and the sheet is told it was overruled.
+     *
+     * Six Kids Camp rows state 0 pending against a fee of 20,000 with 10,000
+     * collected — one of those cells holding a broken self-referencing formula
+     * rather than a number anybody typed. The institute confirmed the column is
+     * wrong and the money genuinely owed.
+     *
+     * The warning is the point of the test, not the arithmetic. Deriving
+     * silently is the same import with no record that a debt was created against
+     * the sheet's own word, and `--warnings=` is where somebody looking for that
+     * record would go.
+     */
+    public function test_an_unmaintained_pending_column_is_overruled_and_the_override_is_reported(): void
+    {
+        $warnings = tempnam(sys_get_temp_dir(), 'warn').'.csv';
+
+        $this->artisan('roll:import', $this->intakeOptions([
+            'file' => $this->intakeSheet([$this->intakeRow([
+                'NAME' => 'Half Paid',
+                'DISCOUNTED FEE' => 20000,
+                '1st Installment' => '',
+                'Pending Fee' => 0,
+                '2nd installment Piad' => 10000,
+            ])]),
+            '--warnings' => $warnings,
+            '--commit' => true,
+        ]))->assertSuccessful();
+
+        $challan = Student::where('name', 'Half Paid')->firstOrFail()
+            ->admissions()->firstOrFail()->challan;
+
+        $this->assertSame(10000, (int) $challan->payments->sum('amount'));
+        $this->assertSame(10000, (int) $challan->net_amount - (int) $challan->payments->sum('amount'));
+
+        $csv = file_get_contents($warnings);
+        $this->assertStringContainsString('the sheet says 0 pending', $csv);
+        $this->assertStringContainsString('leaves 10000', $csv);
+    }
+
+    /**
+     * That derived balance is owed on no particular day, and is never overdue.
+     *
+     * The sheet names no due date for any of them, so scheduling one would put
+     * the institute on the phone to six parents about a deadline nobody set.
+     */
+    public function test_a_derived_balance_is_unscheduled_and_not_overdue(): void
+    {
+        $this->artisan('roll:import', $this->intakeOptions([
+            'file' => $this->intakeSheet([$this->intakeRow([
+                'NAME' => 'Half Paid',
+                'DISCOUNTED FEE' => 20000,
+                '1st Installment' => '',
+                'Pending Fee' => 0,
+                '2nd installment Piad' => 10000,
+            ])]),
+            '--commit' => true,
+        ]))->assertSuccessful();
+
+        $challan = Student::where('name', 'Half Paid')->firstOrFail()
+            ->admissions()->firstOrFail()->challan;
+
+        $this->assertNull($challan->due_date, 'An undated balance must not be given a deadline.');
+        $this->assertSame(0, Installment::where('challan_id', $challan->id)->count());
+
+        $ageing = app(Reporting::class)->duesAgeing(User::where('username', 'aliraza')->firstOrFail());
+
+        $this->assertSame(10000, (int) $ageing['buckets']['unscheduled']['total']);
+        $this->assertSame(0, (int) $ageing['buckets']['d60_plus']['total']);
+    }
+
+    public function test_a_cnic_on_the_sheet_is_stored_against_the_student(): void
+    {
+        $this->artisan('roll:import', $this->intakeOptions([
+            'file' => $this->intakeSheet([$this->intakeRow(['CNIC NO.' => '35202-7872126-1'])]),
+            '--commit' => true,
+        ]))->assertSuccessful();
+
+        $this->assertSame('35202-7872126-1',
+            Student::where('name', 'Intake Student')->firstOrFail()->cnic);
+    }
+
+    /**
+     * A number that is not a CNIC costs the institute a warning, not a student.
+     *
+     * The August sheet carries "32102-292618-0" — twelve digits where a CNIC has
+     * thirteen, so somebody dropped one while typing. Which one cannot be
+     * recovered, and storing it anyway puts a number identifying nobody into the
+     * column staff search by; an empty cell at least does not look like an
+     * answer. The same doctrine as an undiallable phone, and the typed text
+     * survives in `--warnings=` as the only clue to what it should have been.
+     */
+    public function test_a_malformed_cnic_is_dropped_with_a_warning_and_the_student_still_imports(): void
+    {
+        $warnings = tempnam(sys_get_temp_dir(), 'warn').'.csv';
+
+        $this->artisan('roll:import', $this->intakeOptions([
+            'file' => $this->intakeSheet([$this->intakeRow(['CNIC NO.' => '32102-292618-0'])]),
+            '--warnings' => $warnings,
+            '--commit' => true,
+        ]))->assertSuccessful();
+
+        $student = Student::where('name', 'Intake Student')->firstOrFail();
+
+        $this->assertNull($student->cnic);
+        $this->assertStringContainsString('32102-292618-0', file_get_contents($warnings));
+    }
+
+    /**
+     * A CNIC already spoken for keeps the person and drops the number.
+     *
+     * `students.cnic` is UNIQUE, so writing it would abort the row inside its
+     * transaction and lose a real student and their fees over a duplicated
+     * identity number. Which of two claims is the real one is not the
+     * importer's call; keeping both people and neither's disputed CNIC is.
+     */
+    public function test_a_cnic_already_taken_keeps_the_student_and_drops_the_number(): void
+    {
+        $this->artisan('roll:import', $this->intakeOptions([
+            'file' => $this->intakeSheet([
+                $this->intakeRow(['NAME' => 'First Claim', 'Contact No.' => '3001110005',
+                    'CNIC NO.' => '35202-7872126-1']),
+                $this->intakeRow(['NAME' => 'Second Claim', 'Contact No.' => '3001110006',
+                    'CNIC NO.' => '35202-7872126-1']),
+            ]),
+            '--commit' => true,
+        ]))->assertSuccessful();
+
+        $this->assertSame('35202-7872126-1', Student::where('name', 'First Claim')->firstOrFail()->cnic);
+        $this->assertNull(Student::where('name', 'Second Claim')->firstOrFail()->cnic);
+    }
+
+    /**
+     * A number only a person can identify is corrected from the config table.
+     *
+     * The intake sheet drops the leading symbol from every number it holds.
+     * `Contact::normalizePhone()` recovers a PK mobile on its own, because ten
+     * digits beginning with 3 can only be one thing, and deliberately cannot
+     * recover a foreign one — it requires a leading "+" so a PK number typed one
+     * digit short stays unusable rather than being accepted as somewhere else's.
+     */
+    public function test_a_phone_correction_rescues_a_number_the_normaliser_must_not_guess(): void
+    {
+        config(['roll-import.phone_corrections' => ['16785495919' => '+1 678 549 5919']]);
+
+        $this->artisan('roll:import', $this->intakeOptions([
+            'file' => $this->intakeSheet([$this->intakeRow(['Contact No.' => '16785495919'])]),
+            '--commit' => true,
+        ]))->assertSuccessful();
+
+        $this->assertSame('+16785495919',
+            Student::where('name', 'Intake Student')->firstOrFail()->phone);
+    }
+
+    public function test_every_phone_correction_is_a_number_the_normaliser_accepts(): void
+    {
+        foreach (config('roll-import.phone_corrections', []) as $digits => $corrected) {
+            $this->assertNotNull(Contact::normalizePhone($corrected),
+                "Correction for \"{$digits}\" is itself unusable, so the row it was written for "
+                .'still imports without a number.');
+        }
+    }
+
+    /**
+     * A line carrying something but no student is reported, not dropped.
+     *
+     * A wholly blank line is padding and says nothing. A serial number with no
+     * student beside it, or a figure sitting under the table, is somebody's
+     * typing — and skipping it in silence is how a number goes missing without
+     * anyone being in a position to notice. The August sheet has three, two of
+     * them holding Rs 20,000 each.
+     */
+    public function test_a_line_with_a_figure_but_no_student_is_named_in_the_report(): void
+    {
+        $book = new Spreadsheet;
+        $sheet = $book->getActiveSheet();
+        $sheet->fromArray([
+            'NAME', 'Contact No.', 'CNIC NO.', 'COURSE NAME', 'DURATION',
+            'TOTAL FEE', 'DISCOUNTED FEE', '1st Installment', 'Pending Fee',
+            '2nd installment Piad',
+        ], null, 'A1');
+        $sheet->setCellValue('I5', 20000);
+
+        $path = tempnam(sys_get_temp_dir(), 'stray').'.xlsx';
+        (new Xlsx($book))->save($path);
+
+        $this->artisan('roll:import', $this->intakeOptions(['file' => $path]))
+            ->expectsOutputToContain('carried something but no student')
+            ->assertSuccessful();
+    }
+
+    public function test_a_wholly_blank_line_is_not_reported_as_carrying_something(): void
+    {
+        $this->artisan('roll:import', $this->intakeOptions([
+            'file' => $this->intakeSheet([$this->intakeRow(), []]),
+        ]))
+            ->doesntExpectOutputToContain('carried something but no student')
+            ->assertSuccessful();
+    }
+
+    /**
+     * A file that is neither layout says so about BOTH.
+     *
+     * Naming only the export's missing columns sends somebody to add Status, CSR
+     * and Registration Date to a sheet that was never meant to have them.
+     */
+    public function test_a_sheet_matching_neither_layout_names_both(): void
+    {
+        $book = new Spreadsheet;
+        $book->getActiveSheet()->fromArray(['Who', 'What', 'How much'], null, 'A1');
+        $path = tempnam(sys_get_temp_dir(), 'odd').'.xlsx';
+        (new Xlsx($book))->save($path);
+
+        $this->artisan('roll:import', ['file' => $path])
+            ->expectsOutputToContain('neither known layout')
+            ->assertFailed();
+    }
+
+    /**
+     * The real intake sheet, dry-run, writing nothing.
+     *
+     * The acceptance test for August: 18 real rows against the real catalogue
+     * and the real alias table, every one of them resolving, and not a row
+     * written. Skips where the file is absent — it carries names, phone numbers
+     * and CNICs, so it is gitignored and CI cannot have it.
+     */
+    public function test_the_real_intake_sheet_resolves_every_row_without_writing(): void
+    {
+        $path = base_path(self::REAL_INTAKE);
+
+        if (! is_readable($path)) {
+            $this->markTestSkipped(self::REAL_INTAKE.' is gitignored and not present.');
+        }
+
+        $before = $this->counts();
+
+        $this->artisan('roll:import', $this->intakeOptions(['file' => $path]))
+            ->assertSuccessful();
+
+        $this->assertSame($before, $this->counts(), 'The intake sheet must not write on a dry run.');
+    }
+
+    public function test_the_real_intake_sheet_imports_every_row_and_reconciles(): void
+    {
+        $path = base_path(self::REAL_INTAKE);
+
+        if (! is_readable($path)) {
+            $this->markTestSkipped(self::REAL_INTAKE.' is gitignored and not present.');
+        }
+
+        $this->artisan('roll:import', $this->intakeOptions(['file' => $path, '--commit' => true]))
+            ->assertSuccessful();
+
+        // Found through the admissions, not the students. `joined()` only ever
+        // pulls a person's created_at BACKWARDS, and this suite freezes now at
+        // 2026-07-15 — before August — so the students keep that date while
+        // every admission, invoice and payment is stamped 2026-08-01.
+        $imported = Admission::whereNotNull('import_key')->with('student')->get();
+
+        $this->assertCount(18, $imported, 'All 18 named rows of the August sheet must import.');
+        $this->assertSame(['2026-08-01'],
+            $imported->map(fn (Admission $a) => $a->created_at->toDateString())->unique()->all());
+
+        $challans = Challan::whereIn('student_id', $imported->pluck('student_id')->unique())
+            ->with('payments')->get();
+
+        $this->assertSame(398000, (int) $challans->flatMap->payments->sum('amount'));
+        $this->assertSame(89500, (int) $challans->sum(
+            fn (Challan $c) => (int) $c->net_amount - (int) $c->payments->sum('amount')
+        ));
+
+        // Every outstanding rupee is owed on no particular day. The sheet names
+        // no due date anywhere, so nothing may be reported as late.
+        $ageing = app(Reporting::class)->duesAgeing(User::where('username', 'aliraza')->firstOrFail());
+        $this->assertSame(89500, (int) $ageing['buckets']['unscheduled']['total']);
+    }
+
+    public function test_the_real_intake_sheet_imported_twice_changes_nothing(): void
+    {
+        $path = base_path(self::REAL_INTAKE);
+
+        if (! is_readable($path)) {
+            $this->markTestSkipped(self::REAL_INTAKE.' is gitignored and not present.');
+        }
+
+        $options = $this->intakeOptions(['file' => $path, '--commit' => true]);
+
+        $this->artisan('roll:import', $options)->assertSuccessful();
+        $after = $this->counts();
+
+        $this->artisan('roll:import', $options)->assertSuccessful();
+
+        $this->assertSame($after, $this->counts(), 'A second run must import nothing.');
+    }
 }

@@ -24,7 +24,9 @@ class ImportRoll extends Command
         {--commit : Actually write. Without this the command only reports.}
         {--rejects= : Write a CSV of every rejected row to this path}
         {--warnings= : Write a CSV of every row that imported with something lost}
-        {--hold= : Refuse the roll lines named in this file. See docs/QUARANTINE-REGISTER.md}';
+        {--hold= : Refuse the roll lines named in this file. See docs/QUARANTINE-REGISTER.md}
+        {--csr= : The officer who enrolled everyone, for a sheet with no CSR column}
+        {--registered-on= : The date everyone enrolled (YYYY-MM-DD), for a sheet with no date column}';
 
     protected $description = 'Import students, enrolments, invoices and payment history from an exported roll';
 
@@ -33,7 +35,7 @@ class ImportRoll extends Command
         $file = (string) $this->argument('file');
 
         try {
-            $rows = $reader->read($file);
+            $rows = $reader->read($file, $this->defaults());
         } catch (Throwable $e) {
             $this->components->error($e->getMessage());
 
@@ -41,6 +43,9 @@ class ImportRoll extends Command
         }
 
         $this->components->info('Read '.count($rows).' rows from '.basename($file));
+
+        $this->stated();
+        $this->ignored($reader);
 
         if ($path = $this->option('hold')) {
             try {
@@ -99,6 +104,83 @@ class ImportRoll extends Command
         }
 
         return $result['failed'] === [] ? self::SUCCESS : self::FAILURE;
+    }
+
+    /**
+     * Values supplied for columns the sheet does not have.
+     *
+     * Only ever a fallback: `RollReader` uses these where the layout has no such
+     * column, never in place of a cell the file actually carries. So passing
+     * `--csr` against the full export is harmless rather than a way to overwrite
+     * 478 rows of real attribution with one name.
+     *
+     * The date is checked here rather than in the reader, because a typo in a
+     * flag should be a sentence about the flag before anything is read. An
+     * unparseable date would otherwise become NULL and reappear as 18 rows
+     * rejected for "no registration date" — true, and no help at all.
+     *
+     * @return array{csr?:string, registered_on?:string}
+     */
+    private function defaults(): array
+    {
+        $defaults = [];
+
+        if ($csr = trim((string) $this->option('csr'))) {
+            $defaults['csr'] = $csr;
+        }
+
+        if ($on = trim((string) $this->option('registered-on'))) {
+            if (! preg_match('/^\d{4}-\d{2}-\d{2}$/', $on) || strtotime($on) === false) {
+                throw new \RuntimeException(
+                    "--registered-on=\"{$on}\" is not a date. Write it as YYYY-MM-DD, e.g. 2026-08-01."
+                );
+            }
+
+            $defaults['registered_on'] = $on;
+        }
+
+        return $defaults;
+    }
+
+    /**
+     * Say out loud what was supplied rather than read.
+     *
+     * These two values are attached to every row in the file and appear nowhere
+     * in it, so the report is the only place anyone can see them. Printed even
+     * on a commit run: "18 rows imported" is not enough to tell whether they
+     * were dated August or, through a mistyped flag, some other month entirely.
+     */
+    private function stated(): void
+    {
+        foreach ($this->defaults() as $key => $value) {
+            $label = $key === 'csr' ? 'CSR' : 'Registration date';
+            $this->components->info("{$label} not in the sheet; using \"{$value}\" for every row.");
+        }
+    }
+
+    /**
+     * Lines the reader passed over that were not blank.
+     *
+     * A blank line is padding. A line carrying a serial number with no student,
+     * or a figure below the table with nothing beside it, is somebody's typing,
+     * and dropping it silently is how a number goes missing without anyone ever
+     * being in a position to notice. The August sheet has three such lines, two
+     * of them holding Rs 20,000 each.
+     */
+    private function ignored(RollReader $reader): void
+    {
+        if ($reader->ignored === []) {
+            return;
+        }
+
+        $this->newLine();
+        $this->components->warn(
+            count($reader->ignored).' line(s) carried something but no student, and were not imported'
+        );
+
+        foreach ($reader->ignored as $line) {
+            $this->line(sprintf('  <fg=yellow>%4d</>  %s', $line['line'], $line['content']));
+        }
     }
 
     /**

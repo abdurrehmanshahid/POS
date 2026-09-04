@@ -123,6 +123,12 @@ database/database.sqlite
 /student_details_report*.xlsx
 /Invoice *.pdf
 
+# The institute's hand-kept intake sheets, sent one month at a time while the
+# POS was offline. Same reason as above, and worse: these carry CNIC numbers,
+# which the export tool never included.
+/*Enrollment*.xlsx
+/*Enrolment*.xlsx
+
 # ---------------------------------------------------------------------------
 # Documentation and environment templates are kept LOCAL, not published.
 #
