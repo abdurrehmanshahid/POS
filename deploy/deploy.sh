@@ -349,6 +349,13 @@ STAGED_BUILD="${BUILD_STAGE_DIR}/${RELEASE_SHA}"
 # public/ is included whole and deliberately over-broadly: public/build itself
 # is gitignored and therefore not in the tree, so this compares the static files
 # served beside it and never the artefact being reasoned about.
+#
+# composer.lock is in the list because `tailwind.config.js` scans
+# ./vendor/laravel/framework/.../Pagination/resources/views/*.blade.php. Those
+# Blade files are VENDOR code, so the CSS Tailwind emits moves with the Laravel
+# version and not with anything under resources/. Without this a framework bump
+# would keep a stylesheet built against the previous pagination markup, and the
+# only symptom would be a paginator that quietly lost its styling.
 frontend_unchanged() {
     local from="$1" to="$2"
 
@@ -356,6 +363,7 @@ frontend_unchanged() {
 
     git diff --quiet "$from" "$to" -- \
         resources public package.json package-lock.json \
+        composer.json composer.lock \
         vite.config.js tailwind.config.js postcss.config.js 2>/dev/null
 }
 
