@@ -36,6 +36,35 @@
 #
 set -euo pipefail
 
+# ---------------------------------------------------------------------------
+# Run from a copy, because §3 rewrites this file while it is executing
+# ---------------------------------------------------------------------------
+# `git reset --hard` at §3 checks out the release over the working tree, and
+# this script is IN that working tree. Bash does not read a script into memory
+# up front — it reads it in chunks, tracking a byte offset — so a release that
+# changes deploy.sh can have the shell resume at that offset inside different
+# content, part-way through a deploy, with the site already in maintenance mode.
+# Whether it survives depends on whether git happened to replace the file or
+# truncate it in place, which is not a property to bet a money system on.
+#
+# So the first thing a deploy does is copy itself to a temp file and hand over.
+# The copy is outside the working tree, so the checkout cannot touch it.
+#
+# The copy is unlinked immediately after the handover, not on exit: the running
+# shell holds an open descriptor, so the file stays readable until it finishes
+# and there is nothing left to clean up if the deploy dies.
+#
+# Invoked as `bash <path>` rather than executed directly, so a /tmp mounted
+# noexec makes no difference.
+if [[ -z "${DEPLOY_SELF_COPY:-}" ]]; then
+    _self="$(mktemp "${TMPDIR:-/tmp}/institute-deploy.XXXXXXXX")"
+    cat "${BASH_SOURCE[0]}" >"$_self"
+    export DEPLOY_SELF_COPY="$_self"
+    exec bash "$_self" "$@"
+fi
+
+rm -f "$DEPLOY_SELF_COPY"
+
 APP_DIR="${APP_DIR:-/var/www/institute}"
 PHP="${PHP:-/usr/bin/php8.4}"
 HEALTH_URL="${HEALTH_URL:-http://127.0.0.1/up}"
@@ -252,34 +281,119 @@ fi
 # ---------------------------------------------------------------------------
 log "Fetching and verifying ${RELEASE_SHA:0:8}"
 
-git fetch --prune --quiet origin
+# EVERY remote, not just `origin`, and a failure to reach one is not fatal.
+#
+# This box has two: `origin` on GitHub and `local` on /srv/pos.git, the bare
+# repo a release is pushed to over SSH. Fetching only `origin` meant a commit
+# pushed to `local` — which is how this box is actually released — was reported
+# as "not found after fetching origin", a message that sends the operator
+# looking for a push that had already happened.
+#
+# Tolerating an unreachable remote matters just as much. `git fetch origin`
+# under `set -e` aborted the whole deploy when GitHub was unreachable, even
+# though the commit was sitting in `local` and nothing about the release needed
+# GitHub at all. A remote that cannot be reached is now a warning, and only the
+# commit still being absent afterwards is fatal.
+_fetched=""
+_unreachable=""
+
+for _remote in $(git remote); do
+    if git fetch --prune --quiet "$_remote" 2>/dev/null; then
+        _fetched="${_fetched} ${_remote}"
+    else
+        _unreachable="${_unreachable} ${_remote}"
+        warn "Could not fetch the remote '${_remote}'; carrying on with the others."
+    fi
+done
+
+[[ -n "${_fetched}" || -z "${_unreachable}" ]] \
+    || die "No remote could be reached (tried:${_unreachable}).
+    Nothing has been touched. Check the network and the deploy key."
 
 git cat-file -e "${RELEASE_SHA}^{commit}" 2>/dev/null \
-    || die "Release SHA ${RELEASE_SHA} was not found after fetching origin.
+    || die "Release SHA ${RELEASE_SHA} was not found in any remote.
+    Fetched:${_fetched:- none}. Unreachable:${_unreachable:- none}.
     Nothing has been touched. Either the commit was never pushed, or the value
     is a typo. A bad SHA must refuse here rather than after the site is already
-    in maintenance mode."
+    in maintenance mode.
+    Push it with:  git push ssh://<this box>/srv/pos.git <branch>"
 
 # ---------------------------------------------------------------------------
-# 0.4 The compiled assets must already be staged
+# 0.4 There must be a way to get compiled assets, and it is decided HERE
 # ---------------------------------------------------------------------------
 # CI builds public/build and the pipeline copies it to
 # /var/www/institute-builds/<sha>/. The manifest is Vite's own output and is
 # what Laravel's @vite directive reads, so its absence means the staged
 # directory is empty, partial, or the wrong shape.
 #
-# Checked HERE, in the same block as the SHA and BACKUP_PATH, so a missing build
-# never surfaces halfway through with the site already down.
+# The DECISION is made here rather than at §3b, and §3b only carries it out.
+# That is the whole preflight promise: a deploy that cannot produce assets must
+# refuse while the counter is still open, not stop halfway with the site in
+# maintenance mode. It used to decide at §3b, and the failure was exactly that —
+# `auto` on a box with an existing public/build and no staged build fell into
+# the "activate the staged build" branch and died there, with the site already
+# down and the code already checked out.
+#
+# ASSET_PLAN is one of:
+#   staged  a build for this exact commit is waiting; copy it in
+#   keep    public/build is already correct, because NOTHING that compiles into
+#           it differs between the running commit and the release
+#   build   compile on the box with npm
 STAGED_BUILD="${BUILD_STAGE_DIR}/${RELEASE_SHA}"
 
-if [[ "$BUILD_ASSETS" == "no" ]]; then
-    [[ -f "${STAGED_BUILD}/manifest.json" ]] || die "No staged build for ${RELEASE_SHA:0:8}.
+# The paths whose contents end up in public/build. If none of them differs
+# between what is running and what is being released, the build that is already
+# on disk is the build this release wants — not "probably", but by construction,
+# because Vite's output is a function of exactly these inputs.
+#
+# public/ is included whole and deliberately over-broadly: public/build itself
+# is gitignored and therefore not in the tree, so this compares the static files
+# served beside it and never the artefact being reasoned about.
+frontend_unchanged() {
+    local from="$1" to="$2"
+
+    [[ -n "$from" ]] || return 1
+
+    git diff --quiet "$from" "$to" -- \
+        resources public package.json package-lock.json \
+        vite.config.js tailwind.config.js postcss.config.js 2>/dev/null
+}
+
+if [[ "$BUILD_ASSETS" == "yes" ]]; then
+    # An explicit instruction to compile, which outranks anything on disk.
+    ASSET_PLAN=build
+elif [[ -f "${STAGED_BUILD}/manifest.json" ]]; then
+    # A build made for this exact commit is the best answer there is.
+    ASSET_PLAN=staged
+elif [[ "$BUILD_ASSETS" == "no" ]]; then
+    die "No staged build for ${RELEASE_SHA:0:8}.
     Expected:  ${STAGED_BUILD}/manifest.json
     BUILD_ASSETS=no means this box does not compile assets; the pipeline stages
     them. Either the Build stage did not run, the artifact did not copy, or the
     SHA does not match the one that was built.
     Staged builds present: $(ls -1 "$BUILD_STAGE_DIR" 2>/dev/null | tr '\n' ' ' || echo none)"
+elif [[ -f public/build/manifest.json ]] && frontend_unchanged "$PREVIOUS" "$RELEASE_SHA"; then
+    # Nothing that compiles into public/build changed, so what is on disk is
+    # already right. Chosen ABOVE compiling, not below it: a PHP-only release
+    # should not need the npm registry to be reachable, and re-running a build
+    # to produce the bytes already sitting there is a network dependency and two
+    # minutes bought for nothing.
+    ASSET_PLAN=keep
+elif command -v npm >/dev/null; then
+    ASSET_PLAN=build
+else
+    die "There is no way to get frontend assets for ${RELEASE_SHA:0:8}.
+    No staged build at ${STAGED_BUILD}, npm is not installed, and the frontend
+    HAS changed since ${PREVIOUS:0:8}, so the build already in public/build
+    belongs to the old release and must not be served with the new code.
+    Either stage a build, or install npm on this box."
 fi
+
+if [[ "$ASSET_PLAN" == "build" ]]; then
+    command -v npm >/dev/null || die "BUILD_ASSETS=${BUILD_ASSETS} needs npm, which is not installed."
+fi
+
+log "Assets: ${ASSET_PLAN}"
 
 # ---------------------------------------------------------------------------
 # 0.5 The clock — two-factor authentication depends on it
@@ -392,21 +506,43 @@ composer install --no-dev --optimize-autoloader --no-interaction --quiet
 #
 # Replaced rather than merged: a stale chunk left behind from an earlier release
 # is a file the manifest no longer names and nothing ever cleans up.
-if [[ "$BUILD_ASSETS" == "yes" ]] || { [[ "$BUILD_ASSETS" == "auto" ]] && [[ ! -d "$STAGED_BUILD" ]] && [[ ! -d public/build ]]; }; then
-    log "Building frontend assets on the box (fallback path)"
-    command -v npm >/dev/null || die "npm is not installed and there is no staged build."
-    npm ci --silent
-    npm run build --silent
-else
-    log "Activating the staged build for ${RELEASE_SHA:0:8}"
-    [[ -f "${STAGED_BUILD}/manifest.json" ]] || die "Staged build vanished between preflight and now: ${STAGED_BUILD}"
+#
+# ASSET_PLAN was decided in §0.4, while refusing was still free. This block
+# only carries it out.
+case "$ASSET_PLAN" in
+    staged)
+        log "Activating the staged build for ${RELEASE_SHA:0:8}"
+        [[ -f "${STAGED_BUILD}/manifest.json" ]] \
+            || die "Staged build vanished between preflight and now: ${STAGED_BUILD}"
 
-    rm -rf public/build.incoming public/build.previous
-    cp -a "$STAGED_BUILD" public/build.incoming
-    [[ -d public/build ]] && mv public/build public/build.previous
-    mv public/build.incoming public/build
-    rm -rf public/build.previous
-fi
+        rm -rf public/build.incoming public/build.previous
+        cp -a "$STAGED_BUILD" public/build.incoming
+        [[ -d public/build ]] && mv public/build public/build.previous
+        mv public/build.incoming public/build
+        rm -rf public/build.previous
+        ;;
+
+    keep)
+        # Said out loud rather than passed over in silence. "Assets unchanged"
+        # is a claim about this release, and an operator reading the log should
+        # see it made — not have to infer it from a step that never appeared.
+        log "Keeping the existing build: nothing that compiles into it changed since ${PREVIOUS:0:8}"
+        [[ -f public/build/manifest.json ]] \
+            || die "public/build/manifest.json vanished between preflight and now."
+        ;;
+
+    build)
+        log "Building frontend assets on the box"
+        npm ci --silent
+        npm run build --silent
+        [[ -f public/build/manifest.json ]] \
+            || die "The build finished but produced no public/build/manifest.json."
+        ;;
+
+    *)
+        die "Internal error: ASSET_PLAN is '${ASSET_PLAN:-unset}'."
+        ;;
+esac
 
 # ===========================================================================
 # 4. Migrate
