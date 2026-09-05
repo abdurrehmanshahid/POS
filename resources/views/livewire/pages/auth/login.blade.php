@@ -70,7 +70,7 @@ new #[Layout('components.layouts.guest')] class extends Component {
             ? Hash::check($this->password, $u->password)
             : Hash::check($this->password, self::DUMMY_HASH);
 
-        if (! $u || ! $u->is_active || ! $passwordOk) {
+        if (! $u || ! $passwordOk) {
             $attempts = $throttle->recordFailure();
             $this->error = $throttle->failureMessage($attempts);
 
@@ -80,6 +80,36 @@ new #[Layout('components.layouts.guest')] class extends Component {
                 'subject' => $u,
                 'subject_label' => $u?->name ?? Str::limit($v, 60),
                 'context' => ['identifier' => Str::limit($v, 60), 'attempt' => $attempts],
+            ]);
+
+            return null;
+        }
+
+        // Correct credential, switched-off account. This used to be folded into
+        // the branch above and answered "Incorrect username or password", which
+        // is a lie the screen cannot recover from: the person typing knows the
+        // password is right, so the message points them at the one thing that is
+        // not wrong. It cost an administrator a client demo — a temporary
+        // password was issued to a dormant officer account from Staff & roles,
+        // the sign-in was refused as a bad password, and the system looked like
+        // it had failed to save the password it had in fact saved.
+        //
+        // Saying "deactivated" here reveals nothing to an attacker: you only
+        // reach this line by already holding the account's password. Unknown
+        // accounts, wrong passwords and soft-deleted accounts (hidden by the
+        // model's global scope, so `$u` is null) all still get the one generic
+        // message above.
+        //
+        // It is deliberately not counted as a failed attempt either. Nothing was
+        // guessed, and locking the account for five minutes on top of refusing
+        // it only buries the real reason further.
+        if (! $u->is_active) {
+            $this->error = 'This account is deactivated. An administrator must switch on "Allow this user to sign in" under Staff & roles.';
+
+            Audit::record('Sign-in refused (deactivated)', null, [
+                'subject' => $u,
+                'subject_label' => $u->name,
+                'context' => ['identifier' => Str::limit($v, 60)],
             ]);
 
             return null;

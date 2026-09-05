@@ -524,8 +524,13 @@ class InstituteCoreTest extends TestCase
 
     public function test_audit_rows_are_append_only_on_seed(): void
     {
-        // 11 issued + 4 discounts + 6 paid = 21 audit rows.
-        $this->assertSame(21, AuditLog::count());
+        // 11 issued + 4 discounts + 6 paid = 21 rows against challans, plus the
+        // seven the officer-activation migration writes for the staff the roll
+        // import created. Counted separately rather than as one total: they come
+        // from different places, and a change to either should say which.
+        $this->assertSame(21, AuditLog::whereNotNull('challan_id')->count());
+        $this->assertSame(7, AuditLog::where('action', 'Account activated')->count());
+        $this->assertSame(28, AuditLog::count());
     }
 
     // ---- Enrolment invariants -----------------------------------------------

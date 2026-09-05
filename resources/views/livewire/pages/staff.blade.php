@@ -5,6 +5,7 @@ use App\Models\RolePermission;
 use App\Models\User;
 use App\Services\Audit;
 use App\Services\PrivilegeGuard;
+use App\Support\Format;
 use App\Support\Permissions;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Validation\Rule;
@@ -279,7 +280,32 @@ new class extends Component {
             ]);
         }
 
-        $this->dispatch('bbt-toast', tone: 'ok', title: $this->userId ? 'User updated' : 'User created', msg: $user->name.' saved.');
+        // The save is not allowed to sound like a success it is not.
+        //
+        // Saving a dormant account with a fresh temporary password used to end
+        // on a green "User updated", and every visible signal said the job was
+        // done — while `is_active = false` meant the person could not sign in
+        // and the login screen answered them with "Incorrect username or
+        // password". The administrator has no reason to doubt the password at
+        // that point, so they retype it, reset it again, and conclude the
+        // system does not save passwords. That happened during a client demo.
+        //
+        // An account that cannot sign in now says so at the moment it is saved,
+        // in the same toast, naming the switch that fixes it.
+        if (! $user->is_active) {
+            $this->dispatch('bbt-toast', tone: 'warn',
+                title: $user->name.' saved, but cannot sign in',
+                msg: 'Access is switched off for this account.',
+                note: filled($this->tempPassword)
+                    ? 'The temporary password was saved. Tick "Allow this user to sign in" for it to work.'
+                    : 'Tick "Allow this user to sign in" to grant access.');
+        } else {
+            $this->dispatch('bbt-toast', tone: 'ok',
+                title: $this->userId ? 'User updated' : 'User created',
+                msg: $user->name.' saved.',
+                note: filled($this->tempPassword) ? 'They must set their own password at first sign-in.' : null);
+        }
+
         $this->userOpen = false;
         $this->reset('userId', 'fullName', 'username', 'email', 'tempPassword', 'roleChoice', 'isActive');
     }
@@ -310,6 +336,7 @@ new class extends Component {
                         <th>User</th>
                         <th>Role</th>
                         <th>Data scope</th>
+                        <th>Sign-in</th>
                         @if ($canManage)<th class="right">Actions</th>@endif
                     </tr>
                 </thead>
@@ -339,6 +366,28 @@ new class extends Component {
                             <td style="color:var(--ink2)">
                                 {{ $u->role?->hasPermission('scope.all') ? 'All students (institute-wide)' : 'Own-enrolled students only' }}
                             </td>
+                            {{-- What the account has actually DONE, which is the question
+                                 anyone opening this screen is really asking. An account that
+                                 has never been used and one that signs in every morning used
+                                 to render identically, so a dormant record left behind by the
+                                 roll import was indistinguishable from a working login until
+                                 somebody tried it in front of a client. --}}
+                            <td>
+                                @if (! $u->is_active)
+                                    <div style="font-weight:600;color:var(--over)">Cannot sign in</div>
+                                    <div style="font-size:var(--fs-2xs);color:var(--muted)">
+                                        {{ $u->deactivated_at ? 'Deactivated '.Format::date($u->deactivated_at) : 'Access is switched off' }}
+                                    </div>
+                                @elseif ($u->last_login_at)
+                                    <div class="tnum" style="color:var(--ink2)">{{ Format::dateTime($u->last_login_at) }}</div>
+                                    <div style="font-size:var(--fs-2xs);color:var(--muted)">{{ $u->last_login_ip ?: 'last sign-in' }}</div>
+                                @else
+                                    <div style="font-weight:600;color:var(--ink2)">Never signed in</div>
+                                    <div style="font-size:var(--fs-2xs);color:var(--muted)">
+                                        {{ $u->must_reset_password ? 'Temporary password pending' : 'Account is active' }}
+                                    </div>
+                                @endif
+                            </td>
                             @if ($canManage)
                                 <td class="right">
                                     <button class="btn btn-ghost btn-sm" wire:click="editUser({{ $u->id }})"><x-icon name="edit" :size="14" /> Edit</button>
@@ -346,7 +395,7 @@ new class extends Component {
                             @endif
                         </tr>
                     @empty
-                        <tr><td colspan="{{ $canManage ? 4 : 3 }}" class="empty-state">No staff accounts yet.</td></tr>
+                        <tr><td colspan="{{ $canManage ? 5 : 4 }}" class="empty-state">No staff accounts yet.</td></tr>
                     @endforelse
                 </tbody>
             </table>

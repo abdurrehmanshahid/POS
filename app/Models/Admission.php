@@ -44,9 +44,21 @@ class Admission extends Model
         return $this->belongsTo(Cohort::class);
     }
 
+    /**
+     * The officer who signed this enrolment.
+     *
+     * `withTrashed()` for the same reason {@see AuditLog::actor()}
+     * uses it: a signature has to outlive the account that made it. Staff soft
+     * delete, so without this the relation resolves to null the moment an
+     * officer is removed, and every screen that prints `$a->enroller->name`
+     * — the registrations list, its drawer, the challan drawer — fatals with
+     * "Attempt to read property on null" on rows that were fine yesterday.
+     * `enrolled_by` is the source of truth for who registered whom and is never
+     * editable; the history must still be able to say the name out loud.
+     */
     public function enroller(): BelongsTo
     {
-        return $this->belongsTo(User::class, 'enrolled_by');
+        return $this->belongsTo(User::class, 'enrolled_by')->withTrashed();
     }
 
     /**

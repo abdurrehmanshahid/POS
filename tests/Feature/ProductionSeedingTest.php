@@ -2,16 +2,19 @@
 
 namespace Tests\Feature;
 
+use App\Models\AuditLog;
 use App\Models\Course;
 use App\Models\User;
 use App\Services\Import\RollReader;
 use App\Services\Import\RollResolver;
 use App\Services\Import\RollRow;
+use App\Services\RecordRemoval;
 use Database\Seeders\DemoDataSeeder;
 use Database\Seeders\RolePermissionSeeder;
 use Database\Seeders\SuperAdminSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\Hash;
 use Tests\TestCase;
 
 /**
@@ -65,19 +68,78 @@ class ProductionSeedingTest extends TestCase
     }
 
     /**
-     * ...and he cannot sign in.
+     * ...and he still holds no password anybody knows.
      *
-     * The institute asked for the history to load, not for a new person to gain
-     * access. An account a migration creates is one nobody consciously granted,
-     * so it is inert until an administrator activates it on the Staff & Roles
-     * screen — the same audited path as any new joiner.
+     * These seven accounts were created switched off, on the reasoning that the
+     * institute had asked for the history to load rather than for seven new
+     * logins to appear. That left them looking, on the staff screen, exactly
+     * like accounts that were simply broken — and an administrator issuing a
+     * temporary password to one of them during a client demonstration was told
+     * "Incorrect username or password", which was not true.
+     *
+     * The institute has since confirmed the seven are current staff, so
+     * `..._activate_the_officer_accounts_the_roll_created` switches them on.
+     * What has NOT changed is the part this test exists to pin down: no
+     * migration has ever handed out a working credential. The password is 32
+     * random characters that were hashed and discarded in the same expression,
+     * and `must_reset_password` guarantees the temporary one an administrator
+     * issues is replaced at first sign-in by one only its holder knows.
+     * Activation grants an account, not access.
      */
-    public function test_that_officer_is_created_inactive_and_must_reset(): void
+    public function test_that_officer_holds_no_password_anybody_knows(): void
     {
         $officer = User::where('username', 'aliraza')->firstOrFail();
 
-        $this->assertFalse((bool) $officer->is_active, 'A migration must not hand out live access.');
         $this->assertTrue((bool) $officer->must_reset_password);
+        $this->assertNull($officer->last_login_at, 'A migration-made account has never been used by anyone.');
+
+        foreach (['password', 'aliraza', 'Bbt@Officer1', 'ali.raza@bbt.edu.pk', ''] as $guess) {
+            $this->assertFalse(Hash::check($guess, $officer->password), 'A migration must not leave a guessable password behind.');
+        }
+    }
+
+    /**
+     * The seven are switched on, and the trail says so.
+     *
+     * A privilege that appears with nothing to explain it is exactly what an
+     * auditor comes looking for, and "a deploy did this, on this date, for this
+     * reason" is an answer. The rows are written as a system actor because no
+     * person was at a keyboard.
+     */
+    public function test_the_roll_officers_are_activated_and_the_activation_is_recorded(): void
+    {
+        $usernames = ['aliraza', 'sofia', 'mariyam', 'shumailaltaf', 'emanashraf', 'iqraijaz', 'ayaanali'];
+
+        $inactive = User::whereIn('username', $usernames)->where('is_active', false)->pluck('username')->all();
+        $this->assertSame([], $inactive, 'These accounts are confirmed staff and should be able to be given access.');
+
+        $this->assertSame(
+            7,
+            AuditLog::where('action', 'Account activated')->where('actor_type', 'system')->count(),
+            'Seven accounts gained the ability to sign in with nothing in the trail to say why.'
+        );
+    }
+
+    /**
+     * Re-running migrations must not hand back access somebody revoked.
+     *
+     * The activation only touches an account still in the exact state the
+     * import left it — switched off and never used. Once a person has signed
+     * in, switching them off is a decision an administrator made about a
+     * working account, and a deploy is not allowed to overrule it. This is the
+     * same rule {@see RecordRemoval::restore()} follows.
+     */
+    public function test_a_deliberate_deactivation_survives_the_migration_running_again(): void
+    {
+        $officer = User::where('username', 'sofia')->firstOrFail();
+        $officer->forceFill(['is_active' => false, 'last_login_at' => now()])->save();
+
+        (require database_path('migrations/2026_09_05_000001_activate_the_officer_accounts_the_roll_created.php'))->up();
+
+        $this->assertFalse(
+            (bool) $officer->fresh()->is_active,
+            'Re-running migrations restored access an administrator had deliberately revoked.'
+        );
     }
 
     /**

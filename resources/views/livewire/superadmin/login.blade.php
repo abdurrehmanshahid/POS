@@ -52,7 +52,7 @@ new #[Layout('components.layouts.guest')] class extends Component {
             ? Hash::check($this->password, $su->password)
             : Hash::check($this->password, self::DUMMY_HASH);
 
-        if (! $su || ! $su->is_active || ! $passwordOk) {
+        if (! $su || ! $passwordOk) {
             $attempts = $throttle->recordFailure();
             $this->error = $throttle->failureMessage($attempts);
 
@@ -61,6 +61,22 @@ new #[Layout('components.layouts.guest')] class extends Component {
             Audit::record('Super admin sign-in failed', null, [
                 'subject_label' => Str::limit($v, 60),
                 'context' => ['identifier' => Str::limit($v, 60), 'attempt' => $attempts],
+            ]);
+
+            return null;
+        }
+
+        // Right password, deactivated account — named as such rather than
+        // reported as a bad password. Same reasoning as the staff screen: this
+        // line is only reachable by someone who already has the credential, and
+        // "incorrect password" sends whoever holds it hunting for a fault that
+        // is not there.
+        if (! $su->is_active) {
+            $this->error = 'This super admin account is deactivated.';
+
+            Audit::record('Super admin sign-in refused (deactivated)', null, [
+                'subject_label' => Str::limit($v, 60),
+                'context' => ['identifier' => Str::limit($v, 60)],
             ]);
 
             return null;

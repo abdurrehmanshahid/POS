@@ -23,7 +23,7 @@ new #[Layout('components.layouts.super')] class extends Component {
     /** Groups of actions, so an operator can jump to a class of event. */
     public const FILTERS = [
         'all' => ['All events', []],
-        'security' => ['Security', ['Signed in', 'Sign-in failed', 'Two-factor failed', 'Two-factor enabled', 'Recovery code used', 'Super admin signed in', 'Super admin sign-in failed']],
+        'security' => ['Security', ['Signed in', 'Sign-in failed', 'Sign-in refused (deactivated)', 'Two-factor failed', 'Two-factor enabled', 'Recovery code used', 'Super admin signed in', 'Super admin sign-in failed', 'Super admin sign-in refused (deactivated)']],
         'money' => ['Money', ['Challan issued', 'Discount applied', 'Marked paid', 'Registration cancelled']],
         'people' => ['People', ['Student created', 'Student details edited', 'Staff account created', 'Role changed']],
         'destructive' => ['Destructive', ['Student removed', 'Student PURGED', 'Staff account removed', 'Staff account PURGED', 'Account deactivated', 'Password reset by admin', 'Password reset by super admin', 'Two-factor reset by super admin']],
