@@ -90,7 +90,7 @@ new #[Layout('components.layouts.super')] class extends Component {
                         @endphp
                         <tr>
                             <td class="tnum" style="color:var(--muted);white-space:nowrap">
-                                {{ $row->created_at?->format('d M y H:i') }}
+                                {{ \App\Support\Format::dateTime($row->created_at, 'd M y H:i') }}
                             </td>
                             <td style="white-space:nowrap">
                                 @if ($row->actor_type === 'superadmin')

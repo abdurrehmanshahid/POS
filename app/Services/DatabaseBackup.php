@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Support\Clock;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Symfony\Component\HttpFoundation\StreamedResponse;
@@ -72,7 +73,12 @@ class DatabaseBackup
      */
     public function filename(string $extension = 'sql'): string
     {
-        return 'bbt-backup-'.now()->format('Y-m-d-His').'.'.$extension;
+        // Named on the institute's clock, because a person reads this name off
+        // the backups list and matches it against "when did we last take one?".
+        // Only the label moves: the shift is uniform, so the lexicographic sort
+        // in dumpsIn() still puts these in true chronological order, alongside
+        // dumps named before the change.
+        return 'bbt-backup-'.Clock::now()->format('Y-m-d-His').'.'.$extension;
     }
 
     /**

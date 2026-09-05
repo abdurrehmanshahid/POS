@@ -5,6 +5,7 @@ namespace App\Http\Controllers\SuperAdmin;
 use App\Http\Controllers\Controller;
 use App\Services\Audit;
 use App\Services\DatabaseBackup;
+use App\Support\Clock;
 use App\Support\DownloadTicket;
 use Illuminate\Http\Request;
 use Symfony\Component\HttpFoundation\StreamedResponse;
@@ -49,7 +50,7 @@ class BackupController extends Controller
 
         // streamTableCsv 404s on anything outside the allow-list, so a crafted
         // table name cannot be used to read somewhere it should not.
-        $filename = 'bbt-'.$table.'-'.now()->format('Y-m-d').'.csv';
+        $filename = 'bbt-'.$table.'-'.Clock::now()->format('Y-m-d').'.csv';
 
         Audit::record('Table exported', $actor, [
             'subject_label' => $table,

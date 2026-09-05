@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Models\User;
+use App\Support\Format;
 use App\Support\Period;
 
 /**
@@ -67,7 +68,11 @@ class ReportBook
         $preamble = [
             config('institute.name', 'Big Binary Tech Institute'),
             'Report period: '.$period->label().' ('.$period->rangeLabel().')',
-            'Generated: '.now()->format('d M Y H:i'),
+            // On the institute's clock, and SAID so. This file gets emailed and
+            // filed; a bare "10:44" on a report generated at 10:44 UTC read as
+            // the middle of the morning when the counter had already been open
+            // for six hours.
+            'Generated: '.Format::dateTime(now()).' '.Format::zone(),
             'Scope: '.($user->can('scope.all') ? 'All registrations' : 'Own enrolments only'),
         ];
 

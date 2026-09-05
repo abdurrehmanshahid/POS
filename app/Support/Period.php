@@ -94,11 +94,16 @@ final class Period
     /** Human-readable resolved range, shown so the filter is never ambiguous. */
     public function rangeLabel(): string
     {
+        // calendarDate, NOT date. `to` is held at 23:59:59 so the window
+        // includes its final day; converting that to the institute's clock
+        // carries it into the next morning, and the quarter printed as
+        // "01 Jul 2026 to 01 Oct 2026". These two are already the dates the
+        // institute asked for — there is nothing to convert.
         if ($this->from->isSameDay($this->to)) {
-            return Format::date($this->from);
+            return Format::calendarDate($this->from);
         }
 
-        return Format::date($this->from).' to '.Format::date($this->to);
+        return Format::calendarDate($this->from).' to '.Format::calendarDate($this->to);
     }
 
     /**
