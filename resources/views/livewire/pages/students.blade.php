@@ -335,15 +335,13 @@ new class extends Component {
                             @endif
                         </tr>
                     @empty
-                        <tr>
-                            <td colspan="{{ $canEdit ? 7 : 6 }}" class="empty-state">
-                                @if ($q !== '')
-                                    No students match your filter.
-                                @else
-                                    No students yet. @if ($canCreate)Use <strong>Add student</strong> to create the first record.@endif
-                                @endif
-                            </td>
-                        </tr>
+                        <x-ui.table-empty :cols="$canEdit ? 7 : 6" target="q">
+                            @if ($q !== '')
+                                No students match your filter.
+                            @else
+                                No students yet. @if ($canCreate)Use <strong>Add student</strong> to create the first record.@endif
+                            @endif
+                        </x-ui.table-empty>
                     @endforelse
                 </tbody>
             </table>

@@ -100,24 +100,49 @@ window.bbtApplyMask = function (el, fn) {
     el.dispatchEvent(new Event('input', { bubbles: true }));
 };
 
-// ---- Navigation progress ---------------------------------------------------
+// ---- Request progress ------------------------------------------------------
 //
-// wire:navigate fetches the next page over the wire, so a slow query reads as a
-// dead click. A 2px bar creeping across the top says "received, working" without
-// the layout shift a skeleton would cause on every single navigation.
+// Every trip to the server, not just the ones that change the page.
+//
+// wire:navigate already had this: a 2px bar creeping across the top, which says
+// "received, working" without the layout shift a skeleton would cause. In-page
+// actions had nothing. That is the wrong way round — an officer navigates a
+// handful of times an hour and clicks Save, Collect, Search and Open forty
+// times, and it was the forty that gave back no sign of life.
+//
+// The wait is real and it is not the application's fault: the box answers in
+// 5-14ms and sits in Frankfurt while the counter is in Lahore, so ~140ms of
+// every click is the packet travelling. Nothing here makes that shorter. It
+// makes it visible, which is the half of "slow" that belongs to the interface.
 (function () {
     let bar = null;
     let timer = null;
+    let watchdog = null;
+
+    // Requests overlap — a poll can land while a search is out, and a
+    // navigation can start while either is running — so the count is what stops
+    // the first response back from clearing a bar the others still need.
+    let inFlight = 0;
+
+    // A boolean rather than part of the count, because `navigate` and
+    // `navigated` do not pair up: clicking a second link before the first
+    // arrives fires `navigate` twice and `navigated` once.
+    let navigating = false;
 
     const start = () => {
         if (bar) return;
         bar = document.createElement('div');
-        bar.className = 'nav-progress';
-        document.body.appendChild(bar);
+        bar.className = 'busy-bar';
+        // <html>, not <body>. wire:navigate REPLACES the body and only then
+        // dispatches `livewire:navigated`, so a bar parented to the body is
+        // already detached by the time the handler tries to finish it — the
+        // `is-done` snap to 100% and the fade were being played to a node no
+        // longer in the document, and the bar just vanished at the swap.
+        document.documentElement.appendChild(bar);
         requestAnimationFrame(() => bar && bar.classList.add('is-running'));
     };
 
-    const done = () => {
+    const clear = () => {
         clearTimeout(timer);
         if (!bar) return;
         const el = bar;
@@ -126,13 +151,120 @@ window.bbtApplyMask = function (el, fn) {
         setTimeout(() => el.remove(), 260);
     };
 
-    // Only show it if the navigation is slow enough to notice. Under ~120ms a
-    // flashing bar is more distracting than the wait it describes.
-    document.addEventListener('livewire:navigate', () => {
-        clearTimeout(timer);
+    // Read back from the DOM rather than remembered in an array. A Livewire
+    // re-render replaces the button that was clicked, and a list of nodes would
+    // go on holding the detached original until the next navigation.
+    const release = () => document.querySelectorAll('.is-pending')
+        .forEach((el) => el.classList.remove('is-pending'));
+
+    // Everything back to rest, from any state. Called both when the last
+    // request settles and, as a backstop, when one never does.
+    const reset = () => {
+        inFlight = 0;
+        navigating = false;
+        clearTimeout(watchdog);
+        watchdog = null;
+        clear();
+        release();
+    };
+
+    // Only show it if the wait is long enough to notice. Under ~120ms a bar
+    // that flashes on and off is more distracting than the pause it describes,
+    // and on a fast local network most requests finish inside that.
+    //
+    // The guard is on the COUNT, not on whether a timer handle happens to be
+    // set. Reading a spent handle as "a bar is already scheduled" made this
+    // return early on every request after the first, and the bar was never seen
+    // again for the life of the page.
+    const begin = () => {
+        // THE BACKSTOP, and it is not paranoia. Livewire's own navigate fetch
+        // chains .then().then() with no .catch, so a rejected request — dropped
+        // wifi, a reset connection, exactly what the connection banner below
+        // exists to explain — never dispatches `navigated` and never settles.
+        // Without this the counter stays above zero for the life of the page:
+        // the bar freezes at 90%, and the next button pressed keeps
+        // `.is-pending`, whose `pointer-events:none` leaves it dead to the
+        // mouse until a reload. Re-armed by each new request, so a genuinely
+        // slow one is never cut off early.
+        clearTimeout(watchdog);
+        watchdog = setTimeout(reset, 15000);
+
+        if (++inFlight > 1) return;
         timer = setTimeout(start, 120);
+    };
+
+    const end = () => {
+        if (--inFlight > 0) return;
+        reset();
+    };
+
+    document.addEventListener('livewire:navigate', () => {
+        if (!navigating) { navigating = true; begin(); }
     });
-    document.addEventListener('livewire:navigated', done);
+    document.addEventListener('livewire:navigated', () => {
+        if (navigating) { navigating = false; end(); }
+    });
+
+    document.addEventListener('livewire:init', () => {
+        // `request`, not `commit`. A commit is per COMPONENT and Livewire pools
+        // several into one round trip, so `commit` fires two or three times for
+        // one journey to Frankfurt and needed a counter and a double-settle
+        // guard purely to undo its own fan-out. `request` is the round trip
+        // itself, which is the thing being waited on — and is the hook the
+        // connection banner below already listens to.
+        window.Livewire.hook('request', ({ succeed, fail }) => {
+            begin();
+            succeed(end);
+            fail(end);
+        });
+    });
+
+    // ---- The button that was pressed ---------------------------------------
+    //
+    // The bar answers for the page; it does not answer for the thing under the
+    // cursor. A button that looks identical the instant after it is clicked
+    // reads as one that was not clicked, and the reasonable response to that is
+    // to click it again — on a payment, twice.
+    //
+    // Only elements that GENUINELY cause a round trip are marked. Stamping any
+    // clicked button would catch the theme toggle and the drawer close, which
+    // are pure Alpine, complete instantly and would sit spinning forever
+    // waiting for a request that was never made.
+
+    // A wire: directive can carry modifiers (`wire:click.stop`), so the
+    // attribute name is matched by prefix rather than by equality.
+    const hasWire = (node, name) => !!node
+        && node.getAttributeNames().some((a) => a.startsWith(name));
+
+    document.addEventListener('click', (e) => {
+        // `.btn-icon` is a sibling class, not a `.btn` modifier — nothing in
+        // the views writes `class="btn btn-icon"` — so matching only `.btn`
+        // skipped every icon-only action button. On the student drawer that
+        // meant Edit spun while the close button beside it, making the same
+        // kind of round trip, stayed inert: the controls with no room for a
+        // label were the ones left with no feedback.
+        const el = e.target.closest('.btn, .btn-icon');
+
+        if (!el || el.disabled) return;
+
+        // Already waiting. `pointer-events:none` stops the mouse but not the
+        // keyboard — a focused button still fires `click` on Enter or Space —
+        // and the whole point of this treatment is that the second press is
+        // the one that books a payment twice. Capture phase, so this runs
+        // before Livewire's own listener.
+        if (el.classList.contains('is-pending')) {
+            e.preventDefault();
+            e.stopImmediatePropagation();
+            return;
+        }
+
+        // Either the button carries the directive, or it submits a form that
+        // does.
+        const acts = hasWire(el, 'wire:click')
+            || (el.type === 'submit' && hasWire(el.form, 'wire:submit'));
+
+        if (acts) el.classList.add('is-pending');
+    }, true);
 })();
 
 // Toast host component (spec §9.11). Bottom-right, auto-dismiss ~3.4s.

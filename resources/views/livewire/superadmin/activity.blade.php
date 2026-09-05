@@ -114,7 +114,7 @@ new #[Layout('components.layouts.super')] class extends Component {
                             <td class="tnum" style="color:var(--faint);font-size:var(--fs-xs)">{{ $row->ip_address ?: 'n/a' }}</td>
                         </tr>
                     @empty
-                        <tr><td colspan="6" class="empty-state">No events match.</td></tr>
+                        <x-ui.table-empty :cols="6" target="q,filter">No events match.</x-ui.table-empty>
                     @endforelse
                 </tbody>
             </table>

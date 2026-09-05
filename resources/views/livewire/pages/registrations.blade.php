@@ -671,7 +671,9 @@ new class extends Component {
                             <td><x-ui.pill :tone="$pillTone" :dot="! $cancelled">{{ $pillLabel }}</x-ui.pill></td>
                         </tr>
                     @empty
-                        <tr><td colspan="6" class="empty-state">No registrations match your filter.</td></tr>
+                        <x-ui.table-empty :cols="6" target="q">
+                            No registrations match your filter.
+                        </x-ui.table-empty>
                     @endforelse
                 </tbody>
             </table>

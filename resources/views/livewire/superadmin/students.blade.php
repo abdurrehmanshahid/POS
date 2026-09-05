@@ -217,7 +217,7 @@ new #[Layout('components.layouts.super')] class extends Component {
                             </td>
                         </tr>
                     @empty
-                        <tr><td colspan="7" class="empty-state">No students match.</td></tr>
+                        <x-ui.table-empty :cols="7" target="q,showRemoved">No students match.</x-ui.table-empty>
                     @endforelse
                 </tbody>
             </table>

@@ -241,7 +241,9 @@ new class extends Component {
                         </td>
                     </tr>
                 @empty
-                    <tr><td colspan="7" class="empty-state">No challans match your filter.</td></tr>
+                    <x-ui.table-empty :cols="7" target="q,state">
+                        No challans match your filter.
+                    </x-ui.table-empty>
                 @endforelse
             </tbody>
         </table>

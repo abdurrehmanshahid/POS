@@ -44,10 +44,21 @@
     <div x-show="mobileOpen" x-cloak @click="mobileOpen = false" class="drawer-backdrop" style="z-index:64"></div>
 
     <aside class="sidebar" :class="{ collapsed: collapsed, open: mobileOpen }">
-        <div class="sidebar-logo" style="gap:9px">
+        {{-- Clickable for the same reason the staff logo is: it is the gesture
+             people make without thinking. The destination is the SUPER
+             dashboard, never the staff one — the two portals share an origin and
+             deliberately look alike, and a header that quietly moved an owner
+             between them would undo the whole point of the colour shift below.
+
+             No `.hover`: this anchor is the whole 70px header row, so a pointer
+             travelling to the nav below crosses it every time, and a prefetch
+             of the page you are already on is a full render thrown away. --}}
+        <a href="{{ route('superadmin.dashboard') }}" wire:navigate
+           class="sidebar-logo" style="gap:9px"
+           title="Go to the super admin dashboard">
             <x-icon name="shield" :size="20" style="color:var(--orange2);flex:none" />
             <span class="nav-label" style="color:#fff;font-weight:800;font-size:var(--fs-base);letter-spacing:-.01em">Super Admin</span>
-        </div>
+        </a>
 
         <nav class="nav">
             @foreach ($sections as $section => $items)

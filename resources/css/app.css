@@ -365,6 +365,16 @@ td.tnum, th.tnum { white-space: nowrap; }
 .sidebar { flex:0 0 auto; width:256px; background:linear-gradient(180deg,var(--navy),var(--navy-deep));
   display:flex; flex-direction:column; transition:width .18s; }
 .sidebar.collapsed { width:76px; }
+/* The logo is a link home in both portals. Declared here so the two layouts
+   share one treatment rather than each carrying its own inline style — see
+   FRONTEND_CONVENTIONS.md on preferring a class where one exists. */
+.sidebar-logo a, a.sidebar-logo { text-decoration: none; }
+/* Only the NESTED anchor gets `line-height:0`, and only because it wraps the
+   logo image and nothing else — it kills the descender space under the img.
+   The super-admin header is itself the anchor and holds a text label, which
+   would render outside a zero-height line box. */
+.sidebar-logo a { display: block; line-height: 0; }
+
 .sidebar-logo { height:70px; flex:0 0 auto; display:flex; align-items:center; gap:12px; padding:0 18px; border-bottom:1px solid rgba(255,255,255,.08); }
 .nav { flex:1; overflow-y:auto; padding:16px 12px; display:flex; flex-direction:column; gap:3px; }
 .nav-section { font-size:var(--fs-3xs); font-weight:700; letter-spacing:.08em; text-transform:uppercase; color:#7f83b0; padding:14px 12px 6px; }
@@ -508,21 +518,22 @@ td.tnum, th.tnum { white-space: nowrap; }
   gap:12px; flex-wrap:wrap; padding-top:8px; border-top:1px solid var(--surface3); }
 .card-foot-actions { display:flex; align-items:center; gap:7px; flex:0 0 auto; }
 
-/* ---- Navigation progress ---------------------------------------------- */
+/* ---- Request progress -------------------------------------------------- */
 /* Fixed to the viewport top, above everything including drawers. Width is
-   driven by a transition rather than real progress, because wire:navigate
-   cannot report how far along a fetch is; it eases to 90% and the `is-done`
-   class snaps it home. */
-.nav-progress { position:fixed; top:0; left:0; z-index:200; height:2px; width:0;
+   driven by a transition rather than real progress, because neither
+   wire:navigate nor a Livewire commit can report how far along a fetch is; it
+   eases to 90% and the `is-done` class snaps it home.
+                                                                             .
+   Named for the request, not for navigation, because it now answers for BOTH:
+   moving between pages AND every in-page action. Those are the same wait to
+   the person doing them — the server is in Frankfurt and the counter is in
+   Lahore, so a click costs ~140ms of travel before anything can change — and
+   the bar was previously shown for one of them and not the other. */
+.busy-bar { position:fixed; top:0; left:0; z-index:200; height:2px; width:0;
   background:linear-gradient(90deg,var(--iris),var(--orange));
   transition:width .45s cubic-bezier(.2,.8,.2,1), opacity .25s ease; }
-.nav-progress.is-running { width:90%; transition-duration:8s; }
-.nav-progress.is-done { width:100%; opacity:0; transition-duration:.18s,.22s; }
-
-/* Livewire dims a region it is refreshing, so a slow filter reads as pending
-   rather than as stale data the user assumes is current. */
-[wire\:loading\.class~="is-busy"].is-busy, .is-busy { opacity:.55; pointer-events:none;
-  transition:opacity .12s ease; }
+.busy-bar.is-running { width:90%; transition-duration:8s; }
+.busy-bar.is-done { width:100%; opacity:0; transition-duration:.18s,.22s; }
 
 /* ---- Super admin panel ------------------------------------------------
    The panel reuses the entire design system but shifts the sidebar accent from
@@ -582,9 +593,15 @@ body.is-impersonating .shell { height:calc(100vh - 44px); }
        threshold by a few milliseconds does not read as a flicker. */
     animation: bbtFade .15s;
 }
-.busy::before {
-    content: ''; width: 12px; height: 12px; flex: none;
-    border: 2px solid var(--border2); border-top-color: var(--accent);
+/* One ring, two homes. `.busy` sets it beside a filter and `.is-pending` puts
+   it where a button's icon was, but the construction — a square with a rounded
+   border and one edge in a different colour, spun — is the same object and was
+   written out twice, down to the duplicated reduced-motion override. Size and
+   colours stay per-context; the geometry does not. */
+.busy::before, .is-pending::before {
+    content: ''; width: var(--ring-size, 12px); height: var(--ring-size, 12px); flex: none;
+    border: 2px solid var(--ring-track, var(--border2));
+    border-top-color: var(--ring-head, var(--accent));
     border-radius: 50%; animation: bbtSpin .6s linear infinite;
 }
 
@@ -592,14 +609,106 @@ body.is-impersonating .shell { height:calc(100vh - 44px); }
    stay legible and usable — dimming it would hide the very value you are
    trying to read back — while the rows underneath visibly step aside for
    whatever is replacing them. `pointer-events:none` is the useful half: it
-   stops a second click landing on a row that is about to be gone. */
-.is-busy { opacity: .45; pointer-events: none; transition: opacity .12s ease-out; }
+   stops a second click landing on a row that is about to be gone.
+                                                                             .
+   .72, NOT .45. At 45% the rows read as a broken render rather than a pending
+   one — real data, legible a moment ago, suddenly washed out — and "the screen
+   went faint" is not a sentence anyone connects to "the server is thinking".
+   The state is carried instead by the sweep below and by the bar at the top of
+   the viewport, both of which MOVE. Movement says working; fading says wrong.
+                                                                             .
+   This rule was also written twice, at .55 and at .45, so the value that
+   applied was whichever came last in the file.
+                                                                             .
+   The movement that says "working" lives elsewhere on purpose: the bar at the
+   top of the viewport, the "Searching…" spinner beside the filter, and the
+   shimmer on the skeleton rows below. A fourth animation swept across the
+   region here and was cut — on an empty table it ran on top of the skeleton's
+   own shimmer, so two different things pulsed over one another. */
+.is-busy { opacity: .72; pointer-events: none; transition: opacity .12s ease-out; }
+
+/* ---- Skeleton placeholder ----------------------------------------------
+   For the one case dimming cannot cover: there is nothing on screen to dim.
+   A search that empties the table, or a filter whose first result set has not
+   arrived, leaves a blank panel — and a blank panel is indistinguishable from
+   "no results", so the officer reads a finished answer where there is a
+   pending question and types the search again.
+                                                                             .
+   Deliberately NOT used where rows already exist. Replacing real rows with
+   grey bars on every keystroke throws away the content the user is reading and
+   makes the table jump; the dim above is the right treatment there. Skeletons
+   are for empty space only.
+                                                                             .
+   Both states live inside the ONE `colspan` cell the empty message already
+   occupies — see components/ui/table-empty.blade.php. Nothing here assigns a
+   display value to a row, which is what keeps this working under `.table-cards`
+   on a phone, where `tr` and `td` are re-declared as blocks. */
+.empty-row .skeleton-stack { display: none; }
+.empty-row.is-waiting .empty-msg { display: none; }
+.empty-row.is-waiting .skeleton-stack {
+    display: flex; flex-direction: column; gap: 14px; width: 100%;
+}
+
+/* --border2, not --surface2. The panel behind these is --surface, and in dark
+   mode --surface2 (#2b2f50) sits eight hex points from it — a bar the eye
+   cannot find, made fainter still by the .72 dim of the region it lives in.
+   --border2 (#474d78) is the lightest neutral in the palette and reads on both
+   themes at that opacity. */
+.skeleton-bar { display:block; height:11px; border-radius:6px;
+  background:linear-gradient(90deg,var(--surface3),var(--border2),var(--surface3));
+  background-size:200% 100%; animation:bbtShimmer 1.2s ease-in-out infinite; }
+
+/* Ragged widths so four identical bars do not read as a rendering artefact.
+   Done here rather than as an inline style per bar, which put a `style`
+   attribute on every one of them to decorate something marked aria-hidden. */
+.skeleton-bar:nth-child(4n+1) { width: 88%; }
+.skeleton-bar:nth-child(4n+2) { width: 62%; }
+.skeleton-bar:nth-child(4n+3) { width: 94%; }
+.skeleton-bar:nth-child(4n+4) { width: 71%; }
+
+@keyframes bbtShimmer { from { background-position:200% 0; } to { background-position:-200% 0; } }
+
+/* ---- Pending button ----------------------------------------------------
+   The button you just pressed is the thing you are looking at, so it is the
+   thing that has to answer. Until now nothing changed under the cursor for the
+   ~140ms round trip, and an unchanged button reads as an unpressed one.
+                                                                             .
+   Keyed on `.is-pending` alone rather than on `.btn.is-pending`: app.js applies
+   it to `.btn` and to `.btn-icon`, which are sibling classes and not variants
+   of one another, and the icon-only buttons are the ones too small to carry a
+   label saying what is happening.
+                                                                             .
+   The ring takes the ICON'S PLACE IN FLOW — `display:none` on the svg, and
+   `::before` is a flex container's first child, which is exactly where the icon
+   was. It is not absolutely positioned: `.btn` is `justify-content:center`, so
+   a ring pinned to `left:13px` sat at the far edge of a full-width submit
+   button while the hole it was meant to fill opened in the middle of the
+   centred label. 15px against a 17px icon leaves the button within a couple of
+   pixels of its resting width, and `.btn-icon` is a fixed square so it does not
+   move at all. */
+.is-pending { pointer-events: none; opacity: .82;
+  --ring-size: 15px; --ring-track: currentColor; --ring-head: transparent; }
+.is-pending > svg { display: none; }
+.is-pending::before { opacity: .85; }
+
+/* No icon means no space the ring can occupy, so it would have to either widen
+   the button or cover the label. Both are worse than not drawing it: the
+   status chips on the challan and activity screens are icon-less `.btn-sm`s in
+   a flex-wrap row, and growing one by a ring plus a gap shoves its neighbours
+   sideways — or rewraps the row — for the whole round trip, which is the
+   shuffle this treatment exists to avoid. They still dim, still stop taking
+   clicks, and the bar still runs at the top of the viewport. Asked of the DOM
+   rather than computed in JS and written back as a second class that had to be
+   added and removed in step with the first. */
+.is-pending:not(:has(svg))::before { display: none; }
 
 /* Respect the system setting. A spinner is decoration; the opacity change
    still communicates the state without anything moving. */
 @media (prefers-reduced-motion: reduce) {
-    .busy::before { animation: none; border-top-color: var(--border2); }
+    .busy::before, .is-pending::before { animation: none;
+      border-top-color: var(--ring-track, var(--border2)); }
     .busy { animation: none; }
+    .skeleton-bar { animation: none; }
 }
 
 /* ---------------------------------------------------------------------------

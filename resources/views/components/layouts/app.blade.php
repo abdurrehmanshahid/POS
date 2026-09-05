@@ -66,15 +66,34 @@
     {{-- Sidebar --}}
     <aside class="sidebar" :class="{ collapsed: collapsed, open: mobileOpen }">
         <div class="sidebar-logo">
-            {{-- The ternary must yield a string in BOTH branches. `collapsed && '…'`
-                 evaluates to boolean false when expanded, and Alpine treats a
-                 falsy :style as "clear the attribute", which wiped the inline
-                 height and let the logo render at its natural size, overflowing
-                 the 70px header. --}}
-            <img src="{{ asset('assets/bbt-logo-white.png') }}" alt="BBT"
-                 style="height:26px;display:block;width:auto"
-                 :style="collapsed ? 'height:20px;width:auto' : 'height:26px;width:auto'"
-                 onerror="this.style.display='none';this.insertAdjacentHTML('afterend','<span style=&quot;color:#fff;font-weight:800;font-size:var(--fs-md)&quot;>Big Binary Tech</span>')">
+            {{-- The logo goes home, because every other application's does and
+                 people click it expecting that. It was inert, so the one gesture
+                 someone makes without thinking did nothing at all.
+
+                 `wire:navigate` so it behaves like the nav links beside it, but
+                 deliberately WITHOUT `.hover`. The nav links prefetch on hover
+                 because a pointer landing on one is most of a click; a pointer
+                 landing on the logo usually just passed through the corner it
+                 lives in. Worse, the dashboard is where people already are, and
+                 hovering the logo there fetched a page they were looking at —
+                 twelve queries and a whole document over the Frankfurt link,
+                 discarded. Livewire still prefetches on mousedown, which buys
+                 back the latency for a click that is actually happening.
+
+                 Both roles that reach this layout hold `dashboard.view`, so this
+                 cannot land anyone on a 403. --}}
+            <a href="{{ route('dashboard') }}" wire:navigate
+               title="Go to dashboard" aria-label="Big Binary Tech — go to dashboard">
+                {{-- The ternary must yield a string in BOTH branches. `collapsed && '…'`
+                     evaluates to boolean false when expanded, and Alpine treats a
+                     falsy :style as "clear the attribute", which wiped the inline
+                     height and let the logo render at its natural size, overflowing
+                     the 70px header. --}}
+                <img src="{{ asset('assets/bbt-logo-white.png') }}" alt="BBT"
+                     style="height:26px;display:block;width:auto"
+                     :style="collapsed ? 'height:20px;width:auto' : 'height:26px;width:auto'"
+                     onerror="this.style.display='none';this.insertAdjacentHTML('afterend','<span style=&quot;color:#fff;font-weight:800;font-size:var(--fs-md)&quot;>Big Binary Tech</span>')">
+            </a>
         </div>
         <nav class="nav">
             @foreach ($sections as $section => $items)
