@@ -5,11 +5,21 @@ on:
     branches: [main]
   push:
     branches: [main]
+  # Deployment is started by a person, from Actions -> CI -> Run workflow, on
+  # main. See "the approval" in the header below for why it is not a push.
+  workflow_dispatch:
 
-# Cancel superseded runs on the same ref
+# Cancel superseded runs on the same ref.
+#
+# Only for pull requests. A run on main can be in the middle of a deployment,
+# and cancelling that is precisely the failure `deploy.sh` is built to avoid:
+# the process is killed wherever it happens to be — mid-migration, or with the
+# site in maintenance mode and no step left to take it out. The event is part
+# of the group as well, so a push landing during a manual deployment run cannot
+# collide with it at all.
 concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  group: ci-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
@@ -46,11 +56,38 @@ permissions:
 # itself, because anything it said about who may approve it is something a pull
 # request could change.
 #
-#   Environment `production`  ->  Required reviewers      (a human presses go)
-#                             ->  Deployment branches: main only
+#   Environment `production`  ->  Deployment branches: main only
+#   `workflow_dispatch`       ->  a human presses go (see below)
 #   `concurrency` below       ->  one release at a time
 #   `flock` in deploy.sh      ->  the lock that actually matters, because it
 #                                 also covers a human running a release by hand
+#
+# ── The approval, and why it is where it is ────────────────────────────────
+#
+# It was meant to be the Environment's Required reviewers, for the reason
+# above: a workflow file cannot meaningfully gate itself, because anything it
+# says about who may approve a deployment is something a pull request could
+# change. That is still the right answer and it is still not available here.
+# GitHub refuses the rule outright on this repository — it is private on a
+# personal plan, and required reviewers on an Environment is a paid feature:
+#
+#     422  Failed to create the environment protection rule. Please ensure the
+#          billing plan supports the required reviewers protection rule.
+#
+# So the deploy job runs on `workflow_dispatch` and not on `push`. Landing on
+# main no longer deploys anything; a person opens Actions -> CI -> Run workflow
+# and picks main, which runs the tests and then the deployment. The human is
+# still the one who presses go, which is the property that matters on software
+# that bills course fees.
+#
+# Be clear about what is weaker: this gate lives in a file, so a pull request
+# can move it, where a reviewer requirement lives in settings and cannot be. It
+# is second best, chosen because the alternative on this plan is not "reviewer
+# approval" but "every green push deploys itself unattended".
+#
+# If the plan is ever upgraded: add Required reviewers to the `production`
+# Environment, put `push` back in the deploy job's `if:`, and delete this
+# section. The rest of the file does not change.
 #
 # ── The required status check ──────────────────────────────────────────────
 #
@@ -302,8 +339,9 @@ jobs:
   deploy:
     name: Deploy to production
     needs: [CI]
+    # Started by a person, never by a push. See "The approval" in the header.
     if: >-
-      github.event_name == 'push' &&
+      github.event_name == 'workflow_dispatch' &&
       github.ref == 'refs/heads/main' &&
       needs.CI.result == 'success'
     runs-on: [self-hosted, institute-prod]
