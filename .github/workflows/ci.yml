@@ -78,7 +78,7 @@ env:
   # one revert. Do NOT make it a workflow_dispatch input. It is a convenience
   # gate, NOT the security control — the Environment's reviewers and branch
   # restriction are.
-  DEPLOY_ENABLED: 'false'
+  DEPLOY_ENABLED: 'true'
   PRODUCTION_HOST: pos.bigbinaryerp.com
   BUILD_STAGE_DIR: /var/www/institute-builds
 
