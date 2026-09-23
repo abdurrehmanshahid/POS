@@ -300,7 +300,7 @@ jobs:
           find public/build -type f
 
       - name: Publish build-assets
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: build-assets
           # The CONTENTS of public/build, so the artifact unpacks to
