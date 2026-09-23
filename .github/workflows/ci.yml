@@ -377,7 +377,7 @@ jobs:
           fi
 
       - name: Download the tested build
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: build-assets
           path: ${{ runner.temp }}/build-assets
