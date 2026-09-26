@@ -6,7 +6,7 @@
 #
 # Get REG_TOKEN with (it expires in one hour):
 #
-#   gh api -X POST repos/GhazanfarSheikh/POS/actions/runners/registration-token --jq .token
+#   gh api -X POST repos/abdurrehmanshahid/POS/actions/runners/registration-token --jq .token
 #
 # ---------------------------------------------------------------------------
 # Why this is a script and not a paragraph in a document.
@@ -35,7 +35,7 @@
 #
 set -euo pipefail
 
-REPO_URL="${REPO_URL:-https://github.com/GhazanfarSheikh/POS}"
+REPO_URL="${REPO_URL:-https://github.com/abdurrehmanshahid/POS}"
 RUNNER_DIR="${RUNNER_DIR:-/opt/actions-runner}"
 APP_USER="${APP_USER:-institute}"
 # Must match `runs-on: [self-hosted, institute-prod]` in .github/workflows/ci.yml.
@@ -69,6 +69,13 @@ else
     log "Runner package already present, reusing it"
 fi
 
+# config.sh and svc.sh both resolve ./bin against the CURRENT directory, not
+# their own. Run from anywhere else, config.sh prints ldd errors and svc.sh
+# refuses with "Must run from runner root or install is corrupt" — after the
+# registration has already succeeded, leaving a runner GitHub knows about and
+# nothing on the box running it.
+cd "$RUNNER_DIR"
+
 if [[ ! -f "${RUNNER_DIR}/.runner" ]]; then
     log "Registering with ${REPO_URL}"
     # --unattended so it never waits on a prompt; --replace so re-running after a
@@ -88,9 +95,15 @@ fi
 
 log "Installing the systemd service"
 # The runner ships its own installer, which writes a unit that starts at boot.
-# Passing the user is what keeps this off root.
-"${RUNNER_DIR}/svc.sh" install "$APP_USER"
-"${RUNNER_DIR}/svc.sh" start
+# Passing the user is what keeps this off root. svc.sh records the unit it
+# wrote in .service and refuses to install twice, so a re-run skips straight
+# to start instead of dying here.
+if [[ ! -f "${RUNNER_DIR}/.service" ]]; then
+    ./svc.sh install "$APP_USER"
+else
+    log "Service already installed ($(cat "${RUNNER_DIR}/.service")), starting it"
+fi
+./svc.sh start
 
 sleep 3
 log "Status"
@@ -101,7 +114,7 @@ cat <<'NEXT'
 Next, and NOT done by this script:
 
   1. Confirm the runner shows Idle:
-       gh api repos/GhazanfarSheikh/POS/actions/runners --jq '.runners[]|{name,status,labels:[.labels[].name]}'
+       gh api repos/abdurrehmanshahid/POS/actions/runners --jq '.runners[]|{name,status,labels:[.labels[].name]}'
 
   2. Flip DEPLOY_ENABLED to 'true' in .github/workflows/ci.yml.
      That is deliberately a commit, reviewed like any other, so enabling
