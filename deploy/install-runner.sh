@@ -122,7 +122,8 @@ Next, and NOT done by this script:
 
   3. Check the `production` Environment still restricts deployments to
      protected branches. Required reviewers are a paid feature on private
-     repositories; where they are unavailable, the human gate is the pull
-     request review into `main`, which branch protection already enforces.
+     repositories. Pull requests into `main` need the "CI" check to pass,
+     not a reviewer, so the human gate is the person who runs the deploy
+     from Actions -> CI -> Run workflow.
 
 NEXT

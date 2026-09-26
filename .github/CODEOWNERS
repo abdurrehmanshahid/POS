@@ -1,8 +1,0 @@
-# Code owners — automatically requested for review on matching paths.
-# The owner is required to approve changes to protected areas.
-
-# Default owner for everything in the repo
-*                       @acadaktidha-lang
-
-# CI / repository governance
-/.github/               @acadaktidha-lang
