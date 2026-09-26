@@ -183,7 +183,7 @@
                         @foreach ($schedule as $part)
                             <div style="display:flex;justify-content:space-between;align-items:center;padding:9px 0;font-size:var(--fs-sm){{ ! $loop->last ? ';border-bottom:1px solid var(--surface3)' : '' }}">
                                 <span style="color:var(--ink2)">
-                                    {{ $part->seq === 1 ? '1st installment' : $part->seq.($part->seq === 2 ? 'nd' : 'th').' installment' }}
+                                    {{ (['1st', '2nd', '3rd'][$part->seq - 1] ?? $part->seq.'th').' installment' }}
                                     <span class="tnum" style="color:var(--faint)"> &middot; by {{ Format::date($part->due_date) }}</span>
                                 </span>
                                 <span style="display:flex;align-items:center;gap:10px">
@@ -400,30 +400,53 @@
             <div class="dialog-body">
                 <h3 style="font-size:var(--fs-lg);font-weight:800;color:var(--ink);margin:0 0 4px">Installment plan</h3>
                 <p style="font-size:var(--fs-sm);color:var(--muted);margin:0 0 16px">
-                    {{ $planChallan->challan_no }} &middot; fee {{ Format::money($planNet) }}. Split into an advance and a balance.
+                    {{ $planChallan->challan_no }} &middot; fee {{ Format::money($planNet) }}. The last installment is whatever is left.
                 </p>
+
+                <div style="display:flex;gap:8px;margin-bottom:14px">
+                    <button type="button" wire:click="$set('planParts', 2)"
+                            class="btn btn-sm {{ (int) $planParts === 2 ? 'btn-primary' : 'btn-ghost' }}">Two installments</button>
+                    <button type="button" wire:click="$set('planParts', 3)"
+                            class="btn btn-sm {{ (int) $planParts === 3 ? 'btn-primary' : 'btn-ghost' }}">Three installments</button>
+                </div>
 
                 <div class="grid-2" style="gap:12px">
                     <div>
-                        <div class="label">Advance (1st installment)</div>
+                        <div class="label">1st installment{{ $planChallan->certificate_amount > 0 ? ' (incl. certificate)' : '' }}</div>
                         <input type="number" min="1" max="{{ max(1, $planNet - 1) }}" class="input tnum" wire:model.live.debounce.400ms="planAdvanceAmount">
                     </div>
                     <div>
-                        <div class="label">Advance due by</div>
+                        <div class="label">Due by</div>
                         <input type="date" class="input tnum" wire:model="planDueFirst">
                     </div>
                 </div>
 
+                @if ((int) $planParts === 3)
+                    <div class="grid-2" style="gap:12px;margin-top:12px">
+                        <div>
+                            <div class="label">2nd installment</div>
+                            <input type="number" min="1" max="{{ max(1, $planNet - (int) $planAdvanceAmount - 1) }}"
+                                   class="input tnum" wire:model.live.debounce.400ms="planSecondAmount">
+                        </div>
+                        <div>
+                            <div class="label">Due by</div>
+                            <input type="date" class="input tnum" wire:model="planDueSecond" min="{{ $planDueFirst }}">
+                        </div>
+                    </div>
+                @endif
+
                 <div class="grid-2" style="gap:12px;margin-top:12px">
                     <div>
-                        <div class="label">Balance (2nd installment) &middot; derived</div>
+                        <div class="label">{{ (int) $planParts === 3 ? '3rd' : '2nd' }} installment &middot; derived</div>
                         <div class="input tnum" style="background:var(--surface3);color:var(--ink);font-weight:700">
-                            {{ Format::money(max(0, $planNet - (int) $planAdvanceAmount)) }}
+                            {{ Format::money(max(0, $planNet - (int) $planAdvanceAmount - ((int) $planParts === 3 ? (int) $planSecondAmount : 0))) }}
                         </div>
                     </div>
                     <div>
-                        <div class="label">Balance due by</div>
-                        <input type="date" class="input tnum" wire:model="planDueSecond" min="{{ $planDueFirst }}">
+                        <div class="label">Due by</div>
+                        <input type="date" class="input tnum"
+                               wire:model="{{ (int) $planParts === 3 ? 'planDueThird' : 'planDueSecond' }}"
+                               min="{{ (int) $planParts === 3 ? $planDueSecond : $planDueFirst }}">
                     </div>
                 </div>
 

@@ -259,13 +259,25 @@
                             {{-- Only for a course that is actually divided up.
                                  A course priced whole has nothing to choose. --}}
                             @if ($mods->isNotEmpty())
-                                <div style="display:flex;justify-content:space-between;align-items:center;margin-top:12px">
-                                    <div style="font-size:var(--fs-2xs);color:var(--faint);text-transform:uppercase;letter-spacing:.04em">Modules</div>
-                                    @if (count($taken) < $mods->count())
-                                        <button type="button" class="btn btn-sm btn-ghost" wire:click="takeWholeCourse({{ $c->id }})">Take whole course</button>
-                                    @else
-                                        <span style="font-size:var(--fs-2xs);font-weight:700;color:var(--ok)">Full course</span>
-                                    @endif
+                                {{-- An explicit either/or, not just a row of
+                                     ticks. "All modules selected" and "the
+                                     full course" are the same thing here, but
+                                     only one of them looks like a decision the
+                                     officer made, and the whole point of the
+                                     screen is that they made it on purpose. --}}
+                                @php $whole = count($taken) === $mods->count(); @endphp
+                                <div style="display:flex;gap:8px;margin-top:12px">
+                                    <button type="button" wire:click="takeWholeCourse({{ $c->id }})"
+                                            class="btn btn-sm {{ $whole ? 'btn-primary' : 'btn-ghost' }}">
+                                        Full course &middot; {{ Format::money($c->priceFor()) }}
+                                    </button>
+                                    <button type="button" wire:click="chooseModules({{ $c->id }})"
+                                            class="btn btn-sm {{ $whole ? 'btn-ghost' : 'btn-primary' }}">
+                                        Choose modules
+                                    </button>
+                                </div>
+                                <div style="font-size:var(--fs-2xs);color:var(--faint);text-transform:uppercase;letter-spacing:.04em;margin-top:12px">
+                                    {{ $whole ? 'All '.$mods->count().' modules included' : 'Tick the modules this student is taking' }}
                                 </div>
                                 <div style="display:flex;flex-direction:column;gap:6px;margin-top:8px">
                                     @foreach ($mods as $m)
@@ -282,6 +294,19 @@
                                             <span class="tnum" style="font-size:var(--fs-xs);font-weight:700;color:{{ $on ? 'var(--navy)' : 'var(--faint)' }}">{{ Format::money($m->fee) }}</span>
                                         </button>
                                     @endforeach
+                                </div>
+                            @endif
+
+                            {{-- Why there is nothing to choose. Without this
+                                 a course priced whole is indistinguishable
+                                 from one whose module picker failed to
+                                 render, and the officer has no way to tell
+                                 "this course is not divided up" from "the
+                                 screen is broken". --}}
+                            @if ($mods->isEmpty())
+                                <div style="margin-top:10px;font-size:var(--fs-2xs);color:var(--muted)">
+                                    Sold as a whole course. To sell it by the module, add modules to
+                                    {{ $c->code }} under Courses.
                                 </div>
                             @endif
 
@@ -363,11 +388,13 @@
                      the counter could not agree one at all. --}}
                 <div style="margin-top:16px;padding-top:14px;border-top:1px solid var(--border2)">
                     <label class="label">Payment plan</label>
-                    <div style="display:flex;gap:8px">
-                        <button type="button" wire:click="$set('payPlan', 'full')"
+                    <div style="display:flex;gap:8px;flex-wrap:wrap">
+                        <button type="button" wire:click="setPlan('full')"
                                 class="btn btn-sm {{ $payPlan === 'full' ? 'btn-primary' : 'btn-ghost' }}">Pay in full</button>
-                        <button type="button" wire:click="$set('payPlan', 'split')"
-                                class="btn btn-sm {{ $payPlan === 'split' ? 'btn-primary' : 'btn-ghost' }}">Two installments</button>
+                        <button type="button" wire:click="setPlan('split', 2)"
+                                class="btn btn-sm {{ $payPlan === 'split' && $planCount === 2 ? 'btn-primary' : 'btn-ghost' }}">Two installments</button>
+                        <button type="button" wire:click="setPlan('split', 3)"
+                                class="btn btn-sm {{ $payPlan === 'split' && $planCount === 3 ? 'btn-primary' : 'btn-ghost' }}">Three installments</button>
                     </div>
 
                     @if ($payPlan === 'split')
@@ -382,30 +409,47 @@
                         @else
                             <div class="grid-2" style="gap:12px;margin-top:12px">
                                 <div>
-                                    <label class="label">Advance (1st installment)</label>
-                                    <input type="number" min="1" max="{{ $net - 1 }}" wire:model.live.debounce.500ms="planAdvance"
+                                    <label class="label">1st installment{{ $certificateFee > 0 ? ' (incl. certificate)' : '' }}</label>
+                                    <input type="number" min="1" max="{{ $net - ($planCount - 1) }}" wire:model.live.debounce.500ms="planAdvance"
                                            class="input tnum">
                                 </div>
                                 <div>
-                                    <label class="label">Advance due by</label>
+                                    <label class="label">Due by</label>
                                     <input type="date" wire:model.live="planFirstDue" class="input tnum">
                                 </div>
                             </div>
+
+                            @if ($planCount > 2)
+                                <div class="grid-2" style="gap:12px;margin-top:10px">
+                                    <div>
+                                        <label class="label">2nd installment</label>
+                                        <input type="number" min="1" max="{{ max(1, $net - $planAdvance - 1) }}"
+                                               wire:model.live.debounce.500ms="planSecondAmount" class="input tnum">
+                                    </div>
+                                    <div>
+                                        <label class="label">Due by</label>
+                                        <input type="date" wire:model.live="planSecondDue" class="input tnum" min="{{ $planFirstDue }}">
+                                    </div>
+                                </div>
+                            @endif
+
                             <div class="grid-2" style="gap:12px;margin-top:10px">
                                 <div>
-                                    {{-- Shown, never typed. Deriving the
-                                         balance is what makes an invalid plan
-                                         impossible: the two always sum to the
-                                         fee, which is the one thing
+                                    {{-- Shown, never typed. Deriving the LAST
+                                         part is what makes an invalid plan
+                                         impossible: the parts always sum to
+                                         the fee, which is the one thing
                                          Installments::schedule() refuses. --}}
-                                    <label class="label">Balance (2nd installment) &middot; derived</label>
+                                    <label class="label">{{ $planCount > 2 ? '3rd' : '2nd' }} installment &middot; derived</label>
                                     <div class="input tnum" style="background:var(--surface3);color:var(--ink);font-weight:700">
-                                        {{ Format::money(max(0, $net - $planAdvance)) }}
+                                        {{ Format::money(max(0, $net - $planAdvance - ($planCount > 2 ? $planSecondAmount : 0))) }}
                                     </div>
                                 </div>
                                 <div>
-                                    <label class="label">Balance due by</label>
-                                    <input type="date" wire:model.live="planSecondDue" class="input tnum" min="{{ $planFirstDue }}">
+                                    <label class="label">Due by</label>
+                                    <input type="date" class="input tnum"
+                                           wire:model.live="{{ $planCount > 2 ? 'planThirdDue' : 'planSecondDue' }}"
+                                           min="{{ $planCount > 2 ? $planSecondDue : $planFirstDue }}">
                                 </div>
                             </div>
                         @endif
@@ -462,7 +506,7 @@
                         <div style="margin-top:10px;padding-top:10px;border-top:1px dashed var(--border2)">
                             @foreach ($planPreview as $i => $part)
                                 <div style="display:flex;justify-content:space-between;padding:4px 0;font-size:var(--fs-xs)">
-                                    <span style="color:var(--muted)">{{ $i === 0 ? '1st installment' : '2nd installment' }} &middot; by {{ Format::date($part['due_date']) }}</span>
+                                    <span style="color:var(--muted)">{{ ['1st', '2nd', '3rd'][$i] ?? ($i + 1).'th' }} installment &middot; by {{ Format::date($part['due_date']) }}</span>
                                     <span class="tnum" style="font-weight:700;color:var(--ink)">{{ Format::money($part['amount']) }}</span>
                                 </div>
                             @endforeach

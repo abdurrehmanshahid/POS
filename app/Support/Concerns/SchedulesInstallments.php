@@ -43,11 +43,18 @@ trait SchedulesInstallments
 {
     public ?int $planId = null;
 
+    /** 2 or 3. See the wizard's `planCount` for why the column stays 'split'. */
+    public int $planParts = 2;
+
     public int $planAdvanceAmount = 0;
+
+    public int $planSecondAmount = 0;
 
     public string $planDueFirst = '';
 
     public string $planDueSecond = '';
+
+    public string $planDueThird = '';
 
     public string $planError = '';
 
@@ -65,19 +72,21 @@ trait SchedulesInstallments
         $existing = $challan->installments->sortBy('seq')->values();
 
         // Editing an existing plan starts from that plan, not from a fresh
-        // half-and-half: an officer opening it to move one date by a week
-        // should not have to re-derive the amounts they agreed last month.
-        $this->planAdvanceAmount = $existing->isNotEmpty()
-            ? (int) $existing->first()->amount
-            : app(Installments::class)->defaultPlan($challan)[0]['amount'];
+        // even split: an officer opening it to move one date by a week should
+        // not have to re-derive the amounts they agreed last month.
+        $this->planParts = $existing->count() > 2 ? 3 : 2;
 
-        $this->planDueFirst = $existing->isNotEmpty()
-            ? $existing->first()->due_date->toDateString()
-            : Clock::today()->copy()->addDays(7)->toDateString();
+        $default = app(Installments::class)->defaultPlan($challan, $this->planParts);
 
-        $this->planDueSecond = $existing->count() > 1
-            ? $existing->last()->due_date->toDateString()
-            : Clock::today()->copy()->addDays(37)->toDateString();
+        $this->planAdvanceAmount = (int) ($existing[0]->amount ?? $default[0]['amount']);
+        $this->planSecondAmount = (int) ($existing[1]->amount ?? $default[1]['amount'] ?? 0);
+
+        $this->planDueFirst = ($existing[0]->due_date ?? null)?->toDateString()
+            ?? Clock::today()->copy()->addDays(7)->toDateString();
+        $this->planDueSecond = ($existing[1]->due_date ?? null)?->toDateString()
+            ?? Clock::today()->copy()->addDays(37)->toDateString();
+        $this->planDueThird = ($existing[2]->due_date ?? null)?->toDateString()
+            ?? Clock::today()->copy()->addDays(67)->toDateString();
 
         $this->planId = $challanId;
         $this->planError = '';
@@ -98,36 +107,52 @@ trait SchedulesInstallments
         }
 
         $net = (int) $challan->net_amount;
+        $count = max(2, min($this->planParts, Installments::MAX_PARTS));
         $advance = (int) $this->planAdvanceAmount;
+        $second = $count > 2 ? (int) $this->planSecondAmount : 0;
         $minimum = app(Installments::class)->minimumAdvance($challan);
 
         // Checked here for the message, and again inside schedule() for the
-        // guarantee. An advance equal to the fee is not a plan, and one above
-        // it would make the balance negative.
-        if ($advance >= $net) {
-            $this->planError = 'The advance must be less than the full fee of '.number_format($net).'.';
+        // guarantee. Every part after the typed ones still needs a rupee of
+        // its own, or the derived last part comes out zero or negative.
+        if ($advance + $second > $net - 1) {
+            $this->planError = 'The typed installments leave nothing for the last one. '
+                .'They must come to less than the fee of '.number_format($net).'.';
+
+            return;
+        }
+
+        if ($count > 2 && $second < 1) {
+            $this->planError = 'The 2nd installment must be more than zero.';
 
             return;
         }
 
         // The certificate charge is incurred on enrolment and collected at the
-        // counter, so it cannot be deferred into the balance. Said as a floor
+        // counter, so it cannot be deferred into a later part. Said as a floor
         // rather than silently topped up, because an officer who typed 5,000
         // and got a 5,700 plan would reasonably think the screen was broken.
         if ($advance < $minimum) {
             $this->planError = $challan->certificate_amount > 0
-                ? 'The advance must be at least '.number_format($minimum)
-                    .', the certificate charges, which are collected with the first installment.'
-                : 'The advance must be more than zero.';
+                ? 'The 1st installment must be at least '.number_format($minimum)
+                    .', the certificate charges, which are collected with it.'
+                : 'The 1st installment must be more than zero.';
 
             return;
         }
 
+        // The LAST part is derived, never typed, so the schedule always sums
+        // to the fee exactly.
+        $parts = [['amount' => $advance, 'due_date' => $this->planDueFirst]];
+        if ($count > 2) {
+            $parts[] = ['amount' => $second, 'due_date' => $this->planDueSecond];
+            $parts[] = ['amount' => $net - $advance - $second, 'due_date' => $this->planDueThird];
+        } else {
+            $parts[] = ['amount' => $net - $advance, 'due_date' => $this->planDueSecond];
+        }
+
         try {
-            app(Installments::class)->schedule($challan, [
-                ['amount' => $advance, 'due_date' => $this->planDueFirst],
-                ['amount' => $net - $advance, 'due_date' => $this->planDueSecond],
-            ]);
+            app(Installments::class)->schedule($challan, $parts);
         } catch (Throwable $e) {
             $this->planError = $e->getMessage();
 
@@ -136,7 +161,8 @@ trait SchedulesInstallments
 
         $this->planId = null;
         $this->dispatch('bbt-toast', tone: 'ok', title: 'Installment plan set',
-            msg: $challan->challan_no, note: number_format($advance).' then '.number_format($net - $advance));
+            msg: $challan->challan_no,
+            note: collect($parts)->map(fn ($p) => number_format($p['amount']))->implode(' + '));
     }
 
     /**

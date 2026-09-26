@@ -35,20 +35,34 @@ use InvalidArgumentException;
 class Installments
 {
     /**
-     * Put a challan onto a two-part schedule.
+     * The most parts a schedule may carry.
+     *
+     * Three, because the institute asked for three and because the reasons to
+     * stop somewhere are real: every part is a date somebody has to chase, and
+     * `reconcile()` settles them oldest-first, so a long tail of small
+     * instalments turns one late payment into a row of unpaid flags. Raising
+     * this needs nothing but the number — the rest of the class is written for
+     * N parts already.
+     */
+    public const MAX_PARTS = 3;
+
+    /**
+     * Put a challan onto a schedule of up to {@see MAX_PARTS} parts.
      *
      * The amounts must sum to exactly `net_amount`. A schedule that does not
      * add up to the fee is worse than no schedule: it silently changes what the
      * student owes, and every ageing report downstream would inherit the error.
      *
-     * @param  list<array{amount:int,due_date:string}>  $parts  1 or 2 parts, in order
+     * @param  list<array{amount:int,due_date:string}>  $parts  1 to MAX_PARTS, in order
      */
     public function schedule(Challan $challan, array $parts): Challan
     {
         $parts = array_values($parts);
 
-        if ($parts === [] || count($parts) > 2) {
-            throw new InvalidArgumentException('A challan carries one or two installments.');
+        if ($parts === [] || count($parts) > self::MAX_PARTS) {
+            throw new InvalidArgumentException(
+                'A challan carries one to '.self::MAX_PARTS.' installments.'
+            );
         }
 
         $total = 0;
@@ -200,16 +214,31 @@ class Installments
      *
      * @return list<array{amount:int,due_date:string}>
      */
-    public function defaultPlan(Challan $challan, ?string $firstDue = null, ?string $secondDue = null): array
+    public function defaultPlan(Challan $challan, int $count = 2): array
     {
+        $count = max(1, min($count, self::MAX_PARTS));
+
         $net = (int) $challan->net_amount;
         $certificate = (int) $challan->certificate_amount;
-        $first = $certificate + (int) ceil(($net - $certificate) / 2);
+        $tuition = $net - $certificate;
 
-        return [
-            ['amount' => $first, 'due_date' => $firstDue ?? Clock::today()->copy()->addDays(7)->toDateString()],
-            ['amount' => $net - $first, 'due_date' => $secondDue ?? Clock::today()->copy()->addDays(37)->toDateString()],
-        ];
+        // Every part after the first carries an equal share of the tuition.
+        $later = intdiv($tuition, $count);
+
+        $parts = [];
+        for ($i = 0; $i < $count; $i++) {
+            $parts[] = [
+                // The first part carries the certificate charge AND whatever
+                // the division left over, so the parts sum to the fee exactly
+                // without a second round() that could miss it by a rupee.
+                'amount' => $i === 0 ? $net - $later * ($count - 1) : $later,
+                // A month apart, starting a week out: the first is collected at
+                // the counter on admission day and the rest are month ends.
+                'due_date' => Clock::today()->copy()->addDays(7 + 30 * $i)->toDateString(),
+            ];
+        }
+
+        return $parts;
     }
 
     /**

@@ -71,12 +71,27 @@ new class extends Component {
     public string $payPlan = 'full';
 
     /**
-     * The advance, in whole rupees. The second installment is whatever is
-     * left, and is never typed - see planParts().
+     * How many parts the plan has: 2 or 3. Only read when payPlan is 'split'.
+     *
+     * `challans.plan` stays 'split' either way — the column answers "is this
+     * paid in one go?", and the schedule itself says how many parts there are.
+     * So a third instalment needs no migration.
+     */
+    public int $planCount = 2;
+
+    /**
+     * The typed parts, in whole rupees.
+     *
+     * The LAST part is never typed: it is the fee less the ones above it, so
+     * the schedule always sums to the fee exactly, which is the one thing
+     * `Installments::schedule()` refuses outright. On a two-part plan only
+     * `planAdvance` is typed; on a three-part plan `planSecondAmount` as well.
      */
     public int $planAdvance = 0;
+    public int $planSecondAmount = 0;
     public string $planFirstDue = '';
     public string $planSecondDue = '';
+    public string $planThirdDue = '';
 
     public int $discountPct = 0;
     public string $discountReason = '';
@@ -173,7 +188,8 @@ new class extends Component {
     {
         $this->reset(['step', 'mode', 'studentSearch', 'pickedStudentId', 'newType', 'newName',
             'newGuardian', 'newPhone', 'newCnic', 'courseIds', 'discountPct', 'discountReason', 'paymentMethod',
-            'moduleIds', 'batchIds', 'payPlan', 'planAdvance', 'planFirstDue', 'planSecondDue',
+            'moduleIds', 'batchIds', 'payPlan', 'planCount', 'planAdvance', 'planSecondAmount',
+            'planFirstDue', 'planSecondDue', 'planThirdDue',
             'wizErrors', 'wizTouched']);
         $this->step = 1;
         $this->mode = 'new';
@@ -249,6 +265,31 @@ new class extends Component {
         $this->syncPlanToFee();
     }
 
+    /**
+     * Switch this course from "full course" to picking modules.
+     *
+     * Drops the LAST module rather than clearing the list, because an empty
+     * selection is read as the whole course by both this component and
+     * RegistrationService — so clearing it would silently mean the opposite of
+     * what the button says. Starting from "all but the last" also leaves the
+     * officer un-ticking rather than starting from nothing.
+     */
+    public function chooseModules(int $courseId): void
+    {
+        $course = Course::find($courseId);
+        if (! $course || ! in_array($courseId, $this->courseIds, true)) { return; }
+
+        $modules = $course->sellableModules();
+        if ($modules->count() < 2) { return; }
+
+        $current = $this->moduleIds[$courseId] ?? [];
+        if (count($current) < $modules->count()) { return; }
+
+        $this->moduleIds[$courseId] = $modules->pluck('id')->map(fn ($m) => (int) $m)
+            ->slice(0, $modules->count() - 1)->values()->all();
+        $this->syncPlanToFee();
+    }
+
     /** Put every module of this course back on. */
     public function takeWholeCourse(int $courseId): void
     {
@@ -263,6 +304,23 @@ new class extends Component {
     public function updatedPayPlan(): void { $this->syncPlanToFee(); }
     public function updatedDiscountPct(): void { $this->syncPlanToFee(); }
     public function updatedPlanAdvance(): void { $this->syncPlanToFee(); }
+    public function updatedPlanSecondAmount(): void { $this->syncPlanToFee(); }
+
+    /**
+     * Switch between a two- and three-part plan.
+     *
+     * The amounts are reset rather than carried across, because a split that
+     * was sensible over two parts is rarely the one wanted over three, and a
+     * stale advance here is a number the officer did not choose.
+     */
+    public function setPlan(string $plan, int $count = 2): void
+    {
+        $this->payPlan = $plan;
+        $this->planCount = max(2, min($count, \App\Services\Installments::MAX_PARTS));
+        $this->planAdvance = 0;
+        $this->planSecondAmount = 0;
+        $this->syncPlanToFee();
+    }
 
     /**
      * Keep the advance inside the fee as the fee moves.
@@ -278,18 +336,34 @@ new class extends Component {
     {
         $net = $this->netFee();
         if ($this->payPlan !== 'split' || $net <= 0) { return; }
-        if ($this->planFirstDue === '') { $this->planFirstDue = Clock::today()->copy()->addDays(7)->toDateString(); }
-        if ($this->planSecondDue === '') { $this->planSecondDue = Clock::today()->copy()->addDays(37)->toDateString(); }
-        // Matching Installments::defaultPlan(): the certificate charge whole,
-        // plus half the tuition. The charge is incurred on enrolment, so it is
-        // collected at the counter rather than chased in instalments.
+
+        $today = Clock::today();
+        if ($this->planFirstDue === '') { $this->planFirstDue = $today->copy()->addDays(7)->toDateString(); }
+        if ($this->planSecondDue === '') { $this->planSecondDue = $today->copy()->addDays(37)->toDateString(); }
+        if ($this->planThirdDue === '') { $this->planThirdDue = $today->copy()->addDays(67)->toDateString(); }
+
+        // Seeded from the service, so the wizard's suggestion and the plan the
+        // service would have built on its own are the same numbers rather than
+        // two implementations of "split it evenly".
         $certificate = $this->certificateFee();
-        if ($this->planAdvance <= 0) { $this->planAdvance = $certificate + (int) ceil(($net - $certificate) / 2); }
-        // Floor is the certificate charge, so an officer editing the advance
-        // down cannot push it into the balance. Ceiling is one rupee under the
-        // fee: an advance equal to the whole thing is not a plan, and one
-        // above it is a refund waiting to happen.
-        $this->planAdvance = max(max(1, $certificate), min($this->planAdvance, $net - 1));
+        $tuition = $net - $certificate;
+        $later = intdiv($tuition, $this->planCount);
+
+        if ($this->planAdvance <= 0) { $this->planAdvance = $net - $later * ($this->planCount - 1); }
+        if ($this->planCount > 2 && $this->planSecondAmount <= 0) { $this->planSecondAmount = $later; }
+
+        // Floor on the advance is the certificate charge, so editing it down
+        // cannot push the charge into a later part. Every part after the first
+        // needs at least a rupee left for it, which is what bounds the typed
+        // amounts from above.
+        $floor = max(1, $certificate);
+        $this->planAdvance = max($floor, min($this->planAdvance, $net - ($this->planCount - 1)));
+
+        if ($this->planCount > 2) {
+            $this->planSecondAmount = max(1, min($this->planSecondAmount, $net - $this->planAdvance - 1));
+        } else {
+            $this->planSecondAmount = 0;
+        }
     }
 
     /**
@@ -303,11 +377,23 @@ new class extends Component {
     private function planParts(): array
     {
         $net = $this->netFee();
-        $advance = max(max(1, $this->certificateFee()), min($this->planAdvance, $net - 1));
+        $floor = max(1, $this->certificateFee());
+        $advance = max($floor, min($this->planAdvance, $net - ($this->planCount - 1)));
+
+        if ($this->planCount < 3) {
+            return [
+                ['amount' => $advance, 'due_date' => $this->planFirstDue],
+                ['amount' => $net - $advance, 'due_date' => $this->planSecondDue],
+            ];
+        }
+
+        $second = max(1, min($this->planSecondAmount, $net - $advance - 1));
 
         return [
             ['amount' => $advance, 'due_date' => $this->planFirstDue],
-            ['amount' => $net - $advance, 'due_date' => $this->planSecondDue],
+            ['amount' => $second, 'due_date' => $this->planSecondDue],
+            // Derived, so the three always sum to the fee exactly.
+            ['amount' => $net - $advance - $second, 'due_date' => $this->planThirdDue],
         ];
     }
 

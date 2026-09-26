@@ -11,6 +11,7 @@ use App\Models\Setting;
 use App\Models\Student;
 use App\Models\User;
 use App\Services\ChallanActions;
+use App\Services\Installments;
 use App\Services\RegistrationService;
 use App\Services\Reporting;
 use App\Support\Period;
@@ -335,12 +336,79 @@ class ModulesAndPlansTest extends TestCase
             ->set('planAdvanceAmount', (int) $challan->net_amount)
             ->call('confirmPlan');
 
-        $this->assertStringContainsString('less than the full fee', $component->get('planError'));
+        $this->assertStringContainsString('leave nothing for the last one', $component->get('planError'));
         // Refused, so nothing was written and the dialog stays open on the
         // number the officer typed rather than closing over a silent failure.
         $this->assertNotNull($component->get('planId'));
         $this->assertCount(0, $challan->fresh()->installments);
         $this->assertSame('full', $challan->fresh()->plan);
+    }
+
+    public function test_a_plan_may_have_three_parts(): void
+    {
+        $course = Course::where('code', 'SHOP-101')->firstOrFail();
+
+        $result = app(RegistrationService::class)->register($this->admin(), [
+            'student_id' => $this->student()->id,
+            'course_ids' => [$course->id],
+        ]);
+
+        $challan = $result['challans'][0];
+        $net = (int) $challan->net_amount;
+
+        Livewire::actingAs($this->admin())->test('pages.challans')
+            ->call('askPlan', $challan->id)
+            ->set('planParts', 3)
+            ->set('planAdvanceAmount', 5000)
+            ->set('planSecondAmount', 6000)
+            ->call('confirmPlan')
+            ->assertSet('planError', '');
+
+        $parts = $challan->fresh('installments')->installments->sortBy('seq')->values();
+
+        $this->assertCount(3, $parts);
+        $this->assertSame(5000, (int) $parts[0]->amount);
+        $this->assertSame(6000, (int) $parts[1]->amount);
+        // The last is derived, so the three sum to the fee exactly.
+        $this->assertSame($net - 11000, (int) $parts[2]->amount);
+        $this->assertSame($net, (int) $parts->sum('amount'));
+        $this->assertSame('split', $challan->fresh()->plan);
+    }
+
+    public function test_a_three_part_plan_that_leaves_nothing_for_the_last_is_refused(): void
+    {
+        $result = app(RegistrationService::class)->register($this->admin(), [
+            'student_id' => $this->student()->id,
+            'course_ids' => [Course::where('code', 'SHOP-101')->firstOrFail()->id],
+        ]);
+
+        $challan = $result['challans'][0];
+
+        $component = Livewire::actingAs($this->admin())->test('pages.challans')
+            ->call('askPlan', $challan->id)
+            ->set('planParts', 3)
+            ->set('planAdvanceAmount', (int) $challan->net_amount - 1)
+            ->set('planSecondAmount', 5000)
+            ->call('confirmPlan');
+
+        $this->assertStringContainsString('leave nothing for the last one', $component->get('planError'));
+        $this->assertCount(0, $challan->fresh()->installments);
+    }
+
+    public function test_the_service_refuses_more_than_three_installments(): void
+    {
+        $challan = Challan::whereDoesntHave('installments')->where('status', 'unpaid')->firstOrFail();
+        $quarter = intdiv((int) $challan->net_amount, 4);
+
+        $this->expectException(InvalidArgumentException::class);
+        $this->expectExceptionMessage('one to 3 installments');
+
+        app(Installments::class)->schedule($challan, [
+            ['amount' => (int) $challan->net_amount - 3 * $quarter, 'due_date' => '2026-07-22'],
+            ['amount' => $quarter, 'due_date' => '2026-08-22'],
+            ['amount' => $quarter, 'due_date' => '2026-09-22'],
+            ['amount' => $quarter, 'due_date' => '2026-10-22'],
+        ]);
     }
 
     // ---- The wizard --------------------------------------------------------
@@ -381,6 +449,57 @@ class ModulesAndPlansTest extends TestCase
         $this->assertSame($batch->id, $admission->cohort_id);
         $this->assertSame(90000, (int) $admission->billed_amount);
         $this->assertCount(2, $admission->challan->installments);
+    }
+
+    public function test_the_wizard_can_agree_a_three_part_plan(): void
+    {
+        $course = Course::where('code', 'SHOP-101')->firstOrFail();
+
+        $component = Livewire::actingAs($this->admin())->test('pages.registrations')
+            ->call('openWizard')
+            ->set('mode', 'existing')
+            ->set('pickedStudentId', $this->student()->id)
+            ->set('step', 2)
+            ->call('toggleCourse', $course->id)
+            ->call('setPlan', 'split', 3);
+
+        $net = $component->instance()->netFee();
+        $certificate = $component->instance()->certificateFee();
+
+        // The first part carries the certificate charge whole AND whatever the
+        // three-way division of the tuition left over, so the parts sum to the
+        // fee exactly rather than a rupee under it.
+        $later = intdiv($net - $certificate, 3);
+        $this->assertSame($net - $later * 2, $component->get('planAdvance'));
+        $this->assertGreaterThan($certificate + $later - 1, $component->get('planAdvance'));
+
+        $component->call('submit')->assertSet('wizardOpen', false);
+
+        $parts = Admission::latest('id')->first()->challan->installments->sortBy('seq')->values();
+        $this->assertCount(3, $parts);
+        $this->assertSame($net, (int) $parts->sum('amount'));
+        $this->assertGreaterThanOrEqual($certificate, (int) $parts[0]->amount);
+    }
+
+    public function test_full_course_and_choose_modules_are_an_explicit_pair(): void
+    {
+        $course = $this->modularCourse();
+        $mods = $course->sellableModules();
+
+        $component = Livewire::actingAs($this->admin())->test('pages.registrations')
+            ->call('openWizard')->set('step', 2)
+            ->call('toggleCourse', $course->id);
+
+        // Selecting the course means the whole of it.
+        $this->assertCount(3, $component->get('moduleIds')[$course->id]);
+
+        // "Choose modules" drops one rather than clearing the list, because an
+        // empty list is read as the whole course and would mean the opposite.
+        $component->call('chooseModules', $course->id);
+        $this->assertSame([$mods[0]->id, $mods[1]->id], $component->get('moduleIds')[$course->id]);
+
+        $component->call('takeWholeCourse', $course->id);
+        $this->assertCount(3, $component->get('moduleIds')[$course->id]);
     }
 
     public function test_the_last_module_cannot_be_unticked(): void
