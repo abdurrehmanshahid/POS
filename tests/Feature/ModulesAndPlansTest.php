@@ -716,6 +716,69 @@ class ModulesAndPlansTest extends TestCase
             ->assertHeader('content-type', 'application/pdf');
     }
 
+    // ---- The career tracks -------------------------------------------------
+
+    public function test_the_seven_career_tracks_exist_and_are_sold_by_the_module(): void
+    {
+        $tracks = Course::where('code', 'like', 'TRK-%')->with('modules')->orderBy('code')->get();
+
+        $this->assertCount(7, $tracks, 'The site advertises seven career tracks.');
+
+        foreach ($tracks as $track) {
+            $modules = $track->sellableModules();
+
+            $this->assertCount(3, $modules, $track->code.' should carry three modules.');
+            $this->assertSame([45000, 30000, 45000], $modules->pluck('fee')->all(), $track->code);
+            $this->assertSame(['Module 1', 'Module 2', 'Module 3'], $modules->pluck('title')->all(), $track->code);
+            $this->assertSame(120000, $track->priceFor(), $track->code.' full track.');
+            // `fee` agrees with what the modules add up to, so the row still
+            // quotes the right price if every module is ever retired.
+            $this->assertSame(120000, (int) $track->fee, $track->code);
+            $this->assertTrue($track->is_active, $track->code);
+        }
+    }
+
+    public function test_the_tracks_did_not_disturb_the_courses_they_grew_out_of(): void
+    {
+        // A track is a different product from the older course it resembles,
+        // and renaming or re-pricing that course would rewrite what its
+        // students already bought.
+        foreach ([
+            'ODOO-301' => 80000,
+            'CS-101' => 30000,
+            'GAI-601' => 60000,
+            'WD-101' => 20000,
+            'GD-101' => 20000,
+            'DMM-601' => 40000,
+        ] as $code => $fee) {
+            $course = Course::where('code', $code)->firstOrFail();
+
+            $this->assertSame($fee, (int) $course->fee, $code.' was re-priced.');
+            $this->assertFalse($course->hasModules(), $code.' was divided up without being asked.');
+            $this->assertSame($fee, $course->priceFor(), $code.' no longer quotes its own fee.');
+        }
+    }
+
+    public function test_one_module_of_a_track_bills_that_module_plus_the_certificate(): void
+    {
+        $track = Course::where('code', 'TRK-GAAI')->with('modules')->firstOrFail();
+        $modules = $track->sellableModules();
+
+        $result = app(RegistrationService::class)->register($this->admin(), [
+            'student_id' => $this->student()->id,
+            'course_ids' => [$track->id],
+            'modules' => [$track->id => [$modules[1]->id]],
+        ]);
+
+        $admission = $result['admissions'][0]->fresh('modules.module');
+        $challan = $result['challans'][0];
+
+        $this->assertSame('Module 2', $admission->moduleLabel());
+        $this->assertSame(30000, (int) $admission->billed_amount);
+        $this->assertSame(700, (int) $challan->certificate_amount);
+        $this->assertSame(30700, (int) $challan->net_amount);
+    }
+
     // ---- The courses screen ------------------------------------------------
 
     public function test_the_courses_screen_creates_and_prices_modules(): void
