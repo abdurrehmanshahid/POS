@@ -2,7 +2,7 @@
 # The owner is required to approve changes to protected areas.
 
 # Default owner for everything in the repo
-*                       @GhazanfarSheikh
+*                       @GhazanfarSheikh @acadaktidha-lang
 
 # CI / repository governance
-/.github/               @GhazanfarSheikh
+/.github/               @GhazanfarSheikh @acadaktidha-lang
