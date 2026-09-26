@@ -30,26 +30,39 @@ use InvalidArgumentException;
  * The two are never allowed to disagree. Installment status is DERIVED from the
  * payments ledger by `reconcile()` rather than maintained alongside it, so no
  * sequence of collections, corrections or imports can leave the schedule
- * claiming something the money does not support. This is the same reasoning
- * that made `active_slot` a generated column rather than a maintained one.
+ * claiming something the money does not support.
  */
 class Installments
 {
     /**
-     * Put a challan onto a two-part schedule.
+     * The most parts a schedule may carry.
+     *
+     * Three, because the institute asked for three and because the reasons to
+     * stop somewhere are real: every part is a date somebody has to chase, and
+     * `reconcile()` settles them oldest-first, so a long tail of small
+     * instalments turns one late payment into a row of unpaid flags. Raising
+     * this needs nothing but the number — the rest of the class is written for
+     * N parts already.
+     */
+    public const MAX_PARTS = 3;
+
+    /**
+     * Put a challan onto a schedule of up to {@see MAX_PARTS} parts.
      *
      * The amounts must sum to exactly `net_amount`. A schedule that does not
      * add up to the fee is worse than no schedule: it silently changes what the
      * student owes, and every ageing report downstream would inherit the error.
      *
-     * @param  list<array{amount:int,due_date:string}>  $parts  1 or 2 parts, in order
+     * @param  list<array{amount:int,due_date:string}>  $parts  1 to MAX_PARTS, in order
      */
     public function schedule(Challan $challan, array $parts): Challan
     {
         $parts = array_values($parts);
 
-        if ($parts === [] || count($parts) > 2) {
-            throw new InvalidArgumentException('A challan carries one or two installments.');
+        if ($parts === [] || count($parts) > self::MAX_PARTS) {
+            throw new InvalidArgumentException(
+                'A challan carries one to '.self::MAX_PARTS.' installments.'
+            );
         }
 
         $total = 0;
@@ -192,16 +205,52 @@ class Installments
      * later is the round number. `net − first` rather than a second round()
      * guarantees the two always sum to the fee exactly.
      *
+     * The CERTIFICATE CHARGE is added to the first installment whole, and the
+     * tuition is what gets halved. It is a cost the institute incurs on
+     * enrolment rather than over the course, so splitting it across two dates
+     * would mean chasing 350 rupees in October for something already paid for
+     * in July. {@see minimumAdvance()} is the same rule stated as a floor, so
+     * an officer editing the amounts cannot push the charge into the balance.
+     *
      * @return list<array{amount:int,due_date:string}>
      */
-    public function defaultPlan(Challan $challan, ?string $firstDue = null, ?string $secondDue = null): array
+    public function defaultPlan(Challan $challan, int $count = 2): array
     {
-        $net = (int) $challan->net_amount;
-        $first = (int) ceil($net / 2);
+        $count = max(1, min($count, self::MAX_PARTS));
 
-        return [
-            ['amount' => $first, 'due_date' => $firstDue ?? Clock::today()->copy()->addDays(7)->toDateString()],
-            ['amount' => $net - $first, 'due_date' => $secondDue ?? Clock::today()->copy()->addDays(37)->toDateString()],
-        ];
+        $net = (int) $challan->net_amount;
+        $certificate = (int) $challan->certificate_amount;
+        $tuition = $net - $certificate;
+
+        // Every part after the first carries an equal share of the tuition.
+        $later = intdiv($tuition, $count);
+
+        $parts = [];
+        for ($i = 0; $i < $count; $i++) {
+            $parts[] = [
+                // The first part carries the certificate charge AND whatever
+                // the division left over, so the parts sum to the fee exactly
+                // without a second round() that could miss it by a rupee.
+                'amount' => $i === 0 ? $net - $later * ($count - 1) : $later,
+                // A month apart, starting a week out: the first is collected at
+                // the counter on admission day and the rest are month ends.
+                'due_date' => Clock::today()->copy()->addDays(7 + 30 * $i)->toDateString(),
+            ];
+        }
+
+        return $parts;
+    }
+
+    /**
+     * The least the first installment may be.
+     *
+     * The certificate charge, or one rupee on an invoice that carries none.
+     * Stated here so the registration wizard and the challan drawer enforce
+     * the same floor rather than each inventing one, and so the rule lives
+     * beside the default plan that already honours it.
+     */
+    public function minimumAdvance(Challan $challan): int
+    {
+        return max(1, (int) $challan->certificate_amount);
     }
 }

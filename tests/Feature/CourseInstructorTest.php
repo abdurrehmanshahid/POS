@@ -52,7 +52,7 @@ class CourseInstructorTest extends TestCase
 
     private function admin(): User
     {
-        return $this->enrolTwoFactor(User::where('username', 'adminansar')->firstOrFail());
+        return User::where('username', 'adminansar')->firstOrFail();
     }
 
     private function saveCourse(array $fields = []): Testable

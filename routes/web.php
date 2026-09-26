@@ -16,10 +16,6 @@ Route::middleware('guest')->group(function () {
     Volt::route('login', 'pages.auth.login')->name('login');
     Volt::route('forgot-password', 'pages.auth.forgot')->name('password.request');
 
-    // The second factor sits BETWEEN password and session, so it must be
-    // reachable while still a guest, there is no session yet by design.
-    Volt::route('two-factor', 'pages.auth.two-factor-challenge')->name('two-factor.challenge');
-
     // Landing page for the emailed reset link. The component 404s unless
     // INSTITUTE_SELF_SERVICE_RESET is on; the route always exists so the
     // password broker can generate URLs for it.
@@ -48,13 +44,9 @@ Route::middleware('auth')->group(function () {
     // to secure themselves.
     Volt::route('change-password', 'pages.auth.change-password')->name('password.change');
 
-    // TOTP enrolment. Outside the RequirePasswordReset/2fa group because it is
-    // the one place an un-enrolled user is allowed to reach.
-    Volt::route('two-factor/setup', 'pages.auth.two-factor-setup')->name('two-factor.setup');
-
     // `active` runs on every authenticated request so a deactivated account
     // loses its live session immediately, not at next sign-in (spec §15).
-    Route::middleware(['active', '2fa', RequirePasswordReset::class])->group(function () {
+    Route::middleware(['active', RequirePasswordReset::class])->group(function () {
         // Each screen is permission-gated on the server, not just hidden in nav (spec §15).
         Volt::route('dashboard', 'pages.dashboard')->middleware('permission:dashboard.view')->name('dashboard');
         Volt::route('registrations', 'pages.registrations')->middleware('permission:registrations.view')->name('registrations');

@@ -5,7 +5,9 @@ namespace App\Services;
 use App\Models\Admission;
 use App\Models\AppNotification;
 use App\Models\Challan;
+use App\Models\Cohort;
 use App\Models\Course;
+use App\Models\CourseModule;
 use App\Models\Student;
 use App\Models\User;
 use App\Support\Clock;
@@ -21,16 +23,24 @@ use InvalidArgumentException;
  */
 class RegistrationService
 {
-    public function __construct(private Sequences $sequences, private Cohorts $cohorts) {}
+    public function __construct(
+        private Sequences $sequences,
+        private Cohorts $cohorts,
+        private Installments $installments,
+    ) {}
 
     /**
      * @param  array{
      *   student_id?:int|null,
      *   new_student?:array{type:string,name:string,guardian_name:string,phone:string,cnic:string}|null,
      *   course_ids:array<int>,
+     *   modules?:array<int,list<int>>,
+     *   cohorts?:array<int,int|null>,
      *   discount_pct?:int,
      *   discount_reason?:string|null,
-     *   generate_challans?:bool
+     *   generate_challans?:bool,
+     *   plan?:string,
+     *   installments?:list<array{amount:int,due_date:string}>
      * }  $data
      * @return array{student:Student, admissions:list<Admission>, challans:list<Challan>}
      */
@@ -72,7 +82,33 @@ class RegistrationService
 
         $issueChallans = (bool) ($data['generate_challans'] ?? true);
 
-        return DB::transaction(function () use ($actor, $data, $courseIds, $pct, $reason, $method, $issueChallans) {
+        // Keyed by course id, because the wizard asks these questions per
+        // course: a three-course registration can take all of one, half of
+        // another, and put the third into a different batch.
+        //
+        // Both default to "not stated", and not stating them is the behaviour
+        // every caller had before modules and batch-picking existed: the whole
+        // course, in whichever intake is open. That is what keeps the roll
+        // importer and the existing tests working untouched.
+        $moduleChoice = (array) ($data['modules'] ?? []);
+        $cohortChoice = (array) ($data['cohorts'] ?? []);
+
+        // A plan cannot be honoured without an invoice to hang it on. Silently
+        // dropping it would tell the officer the student is on installments
+        // when nothing was scheduled, which is the worst of the three
+        // outcomes — worse than refusing, and far worse than billing.
+        $wantsSplit = ($data['plan'] ?? 'full') === 'split';
+
+        if ($wantsSplit && ! $issueChallans) {
+            throw new InvalidArgumentException(
+                'An installment plan needs a fee challan. Tick "Generate fee challan(s) on submit" or choose Full payment.'
+            );
+        }
+
+        return DB::transaction(function () use (
+            $actor, $data, $courseIds, $pct, $reason, $method, $issueChallans,
+            $moduleChoice, $cohortChoice, $wantsSplit
+        ) {
             // Resolve and validate the courses BEFORE creating the student, so a
             // registration that cannot proceed does not leave a person behind.
             //
@@ -82,6 +118,15 @@ class RegistrationService
             $courses = Course::query()->whereIn('id', $courseIds)->lockForUpdate()->get();
 
             $this->assertCoursesAreEnrollable($courses, $courseIds);
+
+            // Loaded after the lock, not through `with()` on it: `lockForUpdate`
+            // locks the rows the query returns, and eager loads run as their own
+            // statements, so pulling modules in there would have locked nothing
+            // extra while making the intent look stronger than it is.
+            $courses->load('modules');
+
+            $moduleChoice = $this->resolveModules($courses, $moduleChoice);
+            $cohortChoice = $this->resolveCohorts($courses, $cohortChoice);
 
             // Put them back in the order the officer picked them.
             //
@@ -98,8 +143,6 @@ class RegistrationService
 
             $student = $this->resolveStudent($actor, $data);
 
-            $this->assertNotAlreadyEnrolled($student, $courses);
-
             $this->promoteIfContact($student, $actor);
 
             $due = Clock::today()->copy()->addDays(7)->toDateString();
@@ -108,17 +151,31 @@ class RegistrationService
             $challans = [];
 
             foreach ($courses as $course) {
-                $admissions[] = Admission::create([
+                $admission = Admission::create([
                     'reg_no' => $this->sequences->nextAdmissionNo(),
                     'student_id' => $student->id,
                     'course_id' => $course->id,
-                    // Joins whichever batch of this course is currently taking
-                    // students. Null when the course runs no batches, which is
-                    // valid: not every course is taught in intakes.
-                    'cohort_id' => $this->cohorts->openFor($course->id)?->id,
+                    // The batch the officer picked on the wizard, already
+                    // checked against this course by resolveCohorts(). Null is
+                    // valid and always was: not every course is taught in
+                    // intakes, and one with no open batch has none to join.
+                    'cohort_id' => $cohortChoice[$course->id] ?? null,
                     'enrolled_by' => $actor->id,
                     'status' => 'validated',
                 ]);
+
+                // Only for a course that is actually divided up. A course
+                // priced whole has nothing to record here, and writing a row
+                // per "module" it does not have would make `isPartial()` lie.
+                foreach ($moduleChoice[$course->id] ?? [] as $module) {
+                    $admission->modules()->create([
+                        'course_module_id' => $module->id,
+                        // Snapshot. See 2026_09_17_000002.
+                        'billed_amount' => (int) $module->fee,
+                    ]);
+                }
+
+                $admissions[] = $admission;
             }
 
             // The wizard's "Generate fee challan(s) on submit" checkbox. The
@@ -130,7 +187,23 @@ class RegistrationService
                 // courses listed on it. Raising a separate challan per course
                 // meant a three-course registration handed the student three
                 // invoices to reconcile and three balances to chase.
-                $base = (int) $courses->sum('fee');
+                // Per course, priced by what was actually bought: the whole
+                // thing for a course with no modules, or the sum of the
+                // modules taken for one that has them. `courses.fee` is no
+                // longer the only answer, so summing it here would bill a
+                // one-module student for the entire syllabus.
+                $prices = $courses->mapWithKeys(fn (Course $course) => [
+                    $course->id => $course->priceFor(
+                        array_map(fn (CourseModule $m) => $m->id, $moduleChoice[$course->id] ?? [])
+                    ),
+                ]);
+
+                $base = (int) $prices->sum();
+
+                // One per course enrolled on, because one certificate is
+                // issued per course. Snapshotted onto the challan below rather
+                // than looked up at print time — see 2026_09_17_000003.
+                $certificate = (int) config('institute.certificate_fee') * $courses->count();
                 $discount = $pct > 0 ? (int) round($base * $pct / 100) : 0;
 
                 $challan = Challan::create([
@@ -147,7 +220,11 @@ class RegistrationService
                     'discount_amount' => $discount,
                     'discount_reason' => $discount > 0 ? $reason : null,
                     'discount_approved_by' => $discount > 0 ? $actor->id : null,
-                    'net_amount' => $base - $discount,
+                    'certificate_amount' => $certificate,
+                    // Outside the discount: a scholarship is negotiated on
+                    // tuition and does not reduce what the certificate costs
+                    // the institute to issue.
+                    'net_amount' => $base - $discount + $certificate,
                     'plan' => 'full',
                     // What was AGREED. `paid_via` records what happened, and
                     // the voucher prefers that once money has arrived.
@@ -163,13 +240,26 @@ class RegistrationService
                 foreach ($courses as $i => $course) {
                     $admissions[$i]->update([
                         'challan_id' => $challan->id,
-                        'billed_amount' => (int) $course->fee,
+                        'billed_amount' => (int) $prices[$course->id],
                     ]);
                 }
 
                 Audit::issued($challan, $actor);
                 if ($discount > 0) {
                     Audit::discountApplied($challan, $actor);
+                }
+
+                // Scheduled last, so it is written against the invoice's final
+                // net_amount. `Installments::schedule()` refuses a plan that
+                // does not sum to the fee exactly, which is the check that
+                // makes a discount and a plan safe to set in the same submit.
+                if ($wantsSplit) {
+                    $this->installments->schedule(
+                        $challan,
+                        $data['installments'] ?? $this->installments->defaultPlan($challan)
+                    );
+
+                    $challan->refresh();
                 }
 
                 $challans[] = $challan;
@@ -228,41 +318,132 @@ class RegistrationService
     }
 
     /**
-     * Refuse to enrol somebody onto a course they are already on.
+     * Turn the officer's module ticks into checked CourseModule rows.
      *
-     * The database enforces this too (see the migration adding
-     * `admissions_live_enrolment_unique`), and the index is what actually makes
-     * it true under concurrency. This check exists so the officer reads
-     * "Maha Asim is already enrolled on Shopify" instead of a driver-level
-     * integrity error, and so the whole registration is refused before any of it
-     * is written rather than part-way through a multi-course fan-out.
+     * Returns a map of course id => list<CourseModule>, holding an entry only
+     * for courses that are actually divided into modules. A course priced
+     * whole is absent, which is what the billing loop and the admission
+     * fan-out both read as "there is nothing per-module to do here".
      *
-     * Cancelled enrolments do not count. Somebody who dropped the course in
-     * March is entitled to take it again.
+     * Not stating a choice for a modular course means the FULL course, i.e.
+     * every sellable module. That default is load-bearing: it is what lets the
+     * roll importer, the tests and any other existing caller keep passing bare
+     * `course_ids` and get the same bill they always got.
      *
      * @param  Collection<int,Course>  $courses
+     * @param  array<int,list<int>>  $choice
+     * @return array<int,list<CourseModule>>
      */
-    private function assertNotAlreadyEnrolled(Student $student, Collection $courses): void
+    private function resolveModules(Collection $courses, array $choice): array
     {
-        $existing = Admission::query()
-            ->where('student_id', $student->id)
-            ->whereIn('course_id', $courses->pluck('id'))
-            ->where('status', '!=', 'cancelled')
-            ->pluck('course_id')
-            ->all();
+        $resolved = [];
 
-        if ($existing === []) {
-            return;
+        foreach ($courses as $course) {
+            $sellable = $course->sellableModules();
+
+            if ($sellable->isEmpty()) {
+                // A course with no modules cannot be bought by the module. An
+                // officer sending ids for one is working from a stale screen —
+                // the course was priced whole after their wizard opened — and
+                // billing them the whole fee while they believe they picked
+                // parts is the silent overcharge this refuses to make.
+                if (($choice[$course->id] ?? []) !== []) {
+                    throw new InvalidArgumentException(
+                        $course->title.' ('.$course->code.') is not sold by the module. Reopen the wizard and choose again.'
+                    );
+                }
+
+                continue;
+            }
+
+            $wanted = array_values(array_unique(array_map('intval', $choice[$course->id] ?? [])));
+
+            if ($wanted === []) {
+                $resolved[$course->id] = $sellable->all();
+
+                continue;
+            }
+
+            $picked = $sellable->whereIn('id', $wanted)->values();
+
+            // Every id must land. A module retired or deleted between opening
+            // the wizard and submitting it would otherwise just drop out of
+            // the total, handing the student a cheaper invoice than the one
+            // they agreed to and a voucher missing a line it should carry.
+            if ($picked->count() !== count($wanted)) {
+                throw new InvalidArgumentException(
+                    'One or more selected modules of '.$course->title.' ('.$course->code
+                    .') is no longer available. Reopen the wizard and choose again.'
+                );
+            }
+
+            $resolved[$course->id] = $picked->all();
         }
 
-        $clash = $courses->whereIn('id', $existing)
-            ->map(fn (Course $c) => $c->title.' ('.$c->code.')')
-            ->implode(', ');
+        return $resolved;
+    }
 
-        throw new InvalidArgumentException(
-            $student->name.' is already enrolled on '.$clash
-            .'. Cancel the existing registration first if this one is meant to replace it.'
-        );
+    /**
+     * Settle which batch each enrolment joins.
+     *
+     * Three inputs, deliberately distinguished:
+     *
+     *   key absent   the officer was not asked — every caller that predates
+     *                the wizard's batch picker. Falls back to the open intake,
+     *                which is exactly what this service did before.
+     *   key => null  the officer WAS asked and chose "no batch". Honoured as
+     *                stated; a course can legitimately run without intakes.
+     *   key => id    that batch, checked to belong to this course.
+     *
+     * Collapsing the first two would make the picker unable to express "none",
+     * because clearing the dropdown would silently re-attach the open intake.
+     *
+     * @param  Collection<int,Course>  $courses
+     * @param  array<int,int|null>  $choice
+     * @return array<int,int|null>
+     */
+    private function resolveCohorts(Collection $courses, array $choice): array
+    {
+        $resolved = [];
+
+        foreach ($courses as $course) {
+            if (! array_key_exists($course->id, $choice)) {
+                $resolved[$course->id] = $this->cohorts->openFor($course->id)?->id;
+
+                continue;
+            }
+
+            $wanted = $choice[$course->id];
+
+            if ($wanted === null || $wanted === '' || (int) $wanted === 0) {
+                $resolved[$course->id] = null;
+
+                continue;
+            }
+
+            $cohort = Cohort::where('course_id', $course->id)->find((int) $wanted);
+
+            // Belonging is checked, not assumed. The id arrives over the wire,
+            // and a batch of another course would put the student in an intake
+            // they are not enrolled on — visible on the attendance register,
+            // which reads batch membership, long before anybody looked at the
+            // registration again.
+            if (! $cohort) {
+                throw new InvalidArgumentException(
+                    'That batch does not belong to '.$course->title.' ('.$course->code.').'
+                );
+            }
+
+            if ($cohort->isFull()) {
+                throw new InvalidArgumentException(
+                    $cohort->name.' is full. Choose another batch for '.$course->title.' ('.$course->code.').'
+                );
+            }
+
+            $resolved[$course->id] = $cohort->id;
+        }
+
+        return $resolved;
     }
 
     /**

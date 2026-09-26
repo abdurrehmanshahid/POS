@@ -3,7 +3,6 @@
 use App\Http\Controllers\ReadinessController;
 use App\Http\Middleware\EnsureActiveUser;
 use App\Http\Middleware\EnsurePermission;
-use App\Http\Middleware\EnsureTwoFactorEnrolled;
 use App\Support\Theme;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
@@ -73,9 +72,6 @@ return Application::configure(basePath: dirname(__DIR__))
             // Kill the session of anyone deactivated or deleted mid-session.
             // Usage: middleware('active') or middleware('active:superadmin').
             'active' => EnsureActiveUser::class,
-            // Pin un-enrolled users to the TOTP setup screen when their role
-            // requires a second factor. Usage: middleware('2fa').
-            '2fa' => EnsureTwoFactorEnrolled::class,
         ]);
 
         /*

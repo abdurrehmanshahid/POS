@@ -7,12 +7,13 @@ use App\Services\Ledger;
 use App\Support\Concerns\CollectsPayments;
 use App\Support\Concerns\GuardsDoubleSubmit;
 use App\Support\Concerns\ReversesPayments;
+use App\Support\Concerns\SchedulesInstallments;
 use App\Support\Matcher;
 use Illuminate\Database\Eloquent\Builder;
 use Livewire\Volt\Component;
 
 new class extends Component {
-    use CollectsPayments, GuardsDoubleSubmit, ReversesPayments;
+    use CollectsPayments, GuardsDoubleSubmit, ReversesPayments, SchedulesInstallments;
 
     public string $q = '';
 
@@ -134,6 +135,10 @@ new class extends Component {
             // Officer deliberately does not, because the control is that the
             // person who mistyped the amount is not the person who undoes it.
             'canReverse' => $user->can('payments.reverse'),
+            // Same key the wizard already uses to agree a plan while raising
+            // the challan; see SchedulesInstallments::plannableChallan().
+            'canPlan' => $user->can('registrations.create'),
+            'planChallan' => $this->planId ? $this->scopedChallans()->with('installments')->find($this->planId) : null,
             'billed' => $L->billed($user),
             'received' => $L->received($user),
             'outstanding' => $L->outstanding($user),

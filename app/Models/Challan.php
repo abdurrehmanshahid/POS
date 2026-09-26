@@ -23,13 +23,14 @@ class Challan extends Model
     protected $fillable = [
         'challan_no', 'admission_id', 'student_id', 'raised_by', 'description', 'import_key',
         'base_amount', 'discount_amount',
-        'discount_reason', 'discount_approved_by', 'net_amount', 'plan',
+        'discount_reason', 'discount_approved_by', 'certificate_amount', 'net_amount', 'plan',
         'payment_method', 'due_date', 'status', 'paid_via', 'paid_at',
     ];
 
     protected $casts = [
         'base_amount' => 'integer',
         'discount_amount' => 'integer',
+        'certificate_amount' => 'integer',
         'net_amount' => 'integer',
         'due_date' => 'date',
         'paid_at' => 'datetime',

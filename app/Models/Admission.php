@@ -7,6 +7,7 @@ use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 
 /**
  * One enrolment: student × course (spec §2.7). `enrolled_by` is the source of
@@ -42,6 +43,53 @@ class Admission extends Model
     public function cohort(): BelongsTo
     {
         return $this->belongsTo(Cohort::class);
+    }
+
+    /**
+     * The modules this enrolment bought, in teaching order.
+     *
+     * Empty means the whole course — either because the course is not divided
+     * into modules at all, or because the officer took all of them. Both read
+     * the same on the voucher, which is correct: the student is on the whole
+     * course either way.
+     */
+    public function modules(): HasMany
+    {
+        return $this->hasMany(AdmissionModule::class);
+    }
+
+    /** Was this enrolment sold as parts rather than the whole course? */
+    public function isPartial(): bool
+    {
+        $bought = $this->relationLoaded('modules')
+            ? $this->modules->count()
+            : $this->modules()->count();
+
+        if ($bought === 0) {
+            return false;
+        }
+
+        return $bought < $this->course->sellableModules()->count();
+    }
+
+    /**
+     * What this enrolment covers, said the way a voucher should say it.
+     *
+     * "Module 1, Module 3" when they bought parts; "Full course" when they
+     * bought all of them; an empty string for a course with no modules, where
+     * the course title alone already says everything there is to say.
+     */
+    public function moduleLabel(): string
+    {
+        $bought = $this->modules->sortBy(fn (AdmissionModule $m) => $m->module?->seq ?? 0);
+
+        if ($bought->isEmpty()) {
+            return '';
+        }
+
+        return $this->isPartial()
+            ? $bought->map(fn (AdmissionModule $m) => $m->module?->title)->filter()->implode(', ')
+            : 'Full course';
     }
 
     /**
@@ -95,8 +143,17 @@ class Admission extends Model
         // come from one rule, and divided by the LIVE total for the same reason
         // the SQL is: after a cancellation the remaining courses carry the whole
         // invoice between them, and the shares still add up to it.
+        //
+        // TUITION, not the invoice total: the certificate charge is billed per
+        // registration rather than earned by a course, and
+        // `RevenueShare::sumOfBilled()` excludes it for the same reason. If
+        // this apportioned the whole net, the per-course figure in the student
+        // drawer would disagree with the per-course figure on the Reports
+        // screen — which is the exact divergence the note above exists to
+        // prevent. The charge itself is shown on the invoice, where it is
+        // levied, not spread across the courses.
         return RevenueShare::of(
-            (int) $challan->net_amount,
+            (int) $challan->net_amount - (int) $challan->certificate_amount,
             $this->billed_amount,
             $challan->liveBilledTotal(),
         );

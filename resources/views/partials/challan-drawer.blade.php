@@ -3,14 +3,17 @@
   The including Livewire component must define: public props drawerId, payId,
   payMethod, cancelAdmId, cancelReason, cancelError, reverseId, reverseAmount,
   reverseReason, reverseError; methods closeDrawer, askPay, confirmPay,
-  askCancel, confirmCancel, askReverse, confirmReverse; and pass view vars
-  $selected, $payChallan, $reversePayment, $canPay, $canCancel, $canReverse,
-  $payMethod, $cancelAdmId, $cancelError, $reverseAmount, $reverseReason,
-  $reverseError.
+  askCancel, confirmCancel, askReverse, confirmReverse; the plan props
+  planId, planAdvanceAmount, planDueFirst, planDueSecond, planError and methods
+  askPlan, confirmPlan, clearPlan; and pass view vars
+  $selected, $payChallan, $planChallan, $reversePayment, $canPay, $canCancel,
+  $canReverse, $canPlan, $payMethod, $cancelAdmId, $cancelError,
+  $reverseAmount, $reverseReason, $reverseError.
 
-  The reversal half comes from the ReversesPayments trait, exactly as the
-  payment half comes from CollectsPayments — both screens include this file, so
-  behaviour written into one component and not the other is how the two drift.
+  The reversal half comes from the ReversesPayments trait, the payment half
+  from CollectsPayments and the installment half from SchedulesInstallments —
+  both screens include this file, so behaviour written into one component and
+  not the other is how the two drift.
 --}}
 @php
     use App\Support\Format;
@@ -160,6 +163,48 @@
                     @endforeach
                 </div>
             </div>
+            {{-- The fee schedule. A two-part plan existed in the database
+                 and appeared on no screen, so an officer looking at a
+                 part-paid challan could not tell whether the balance was
+                 overdue or simply not due yet. --}}
+            @php $schedule = $selected->installments->sortBy('seq')->values(); @endphp
+            @if ($schedule->isNotEmpty())
+                <div class="panel" style="margin-bottom:16px">
+                    <div class="panel-head" style="padding:14px 16px;display:flex;justify-content:space-between;align-items:center">
+                        <h3 class="panel-title" style="font-size:var(--fs-sm)">Installment plan</h3>
+                        @if ($canPlan && ! $selected->isPaid())
+                            <div style="display:flex;gap:6px">
+                                <button class="btn btn-sm btn-ghost" wire:click="askPlan({{ $selected->id }})">Edit</button>
+                                <button class="btn btn-sm btn-ghost" wire:click="clearPlan({{ $selected->id }})">Remove</button>
+                            </div>
+                        @endif
+                    </div>
+                    <div style="padding:6px 16px 14px">
+                        @foreach ($schedule as $part)
+                            <div style="display:flex;justify-content:space-between;align-items:center;padding:9px 0;font-size:var(--fs-sm){{ ! $loop->last ? ';border-bottom:1px solid var(--surface3)' : '' }}">
+                                <span style="color:var(--ink2)">
+                                    {{ (['1st', '2nd', '3rd'][$part->seq - 1] ?? $part->seq.'th').' installment' }}
+                                    <span class="tnum" style="color:var(--faint)"> &middot; by {{ Format::date($part->due_date) }}</span>
+                                </span>
+                                <span style="display:flex;align-items:center;gap:10px">
+                                    <span class="tnum" style="font-weight:700;color:var(--ink)">{{ Format::money($part->amount) }}</span>
+                                    @if ($part->status === 'paid')
+                                        <span class="pill pill-ok" style="font-size:var(--fs-2xs)">Paid</span>
+                                    @else
+                                        <span class="pill" style="font-size:var(--fs-2xs);color:var(--due)">Due</span>
+                                    @endif
+                                </span>
+                            </div>
+                        @endforeach
+                        {{-- Derived, not stored. Status comes from the ledger
+                             on every collection, so this cannot disagree with
+                             the money actually received. --}}
+                        <p style="font-size:var(--fs-2xs);color:var(--muted);margin:10px 0 0">
+                            Each installment is marked paid from the payments ledger, oldest first.
+                        </p>
+                    </div>
+                </div>
+            @endif
         </div>
         <div class="drawer-foot">
             @if ($canPay && ! $selected->isPaid() && $a?->status !== 'cancelled')
@@ -169,6 +214,11 @@
                  at a counter, and it used to mean download → find the file →
                  open → print → delete. This opens it in the browser's viewer,
                  where Ctrl+P is one key away and nothing lands in Downloads. --}}
+            {{-- Offered only when there is no plan yet; editing one is done
+                 from the panel above, next to the schedule it changes. --}}
+            @if ($canPlan && $selected->installments->isEmpty() && ! $selected->isPaid() && $a?->status !== 'cancelled')
+                <button class="btn btn-ghost" wire:click="askPlan({{ $selected->id }})"><x-icon name="clock" :size="16" /> Installment plan</button>
+            @endif
             <a class="btn btn-ghost" href="{{ route('challans.view', $selected) }}" target="_blank"><x-icon name="printer" :size="16" /> View &amp; print</a>
             <a class="btn btn-ghost" href="{{ route('challans.pdf', $selected) }}"><x-icon name="download" :size="16" /> Download</a>
             {{-- Same predicate the server enforces in ChallanActions::cancel(), so
@@ -331,6 +381,80 @@
                 <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:16px">
                     <button class="btn btn-ghost" wire:click="$set('cancelAdmId', null)">Keep</button>
                     <button class="btn btn-danger" wire:click="confirmCancel">Cancel registration</button>
+                </div>
+            </div>
+        </div>
+    </div>
+@endif
+
+{{-- Installment plan dialog.
+
+     The advance and the two dates are asked for; the balance is shown and
+     never typed. That is what makes an invalid plan unreachable from this
+     screen: `Installments::schedule()` refuses parts that do not sum to
+     net_amount exactly, and a second typed amount is the only way to miss. --}}
+@if ($planId && $planChallan)
+    @php $planNet = (int) $planChallan->net_amount; @endphp
+    <div class="dialog-backdrop" wire:click.self="$set('planId', null)">
+        <div class="dialog">
+            <div class="dialog-body">
+                <h3 style="font-size:var(--fs-lg);font-weight:800;color:var(--ink);margin:0 0 4px">Installment plan</h3>
+                <p style="font-size:var(--fs-sm);color:var(--muted);margin:0 0 16px">
+                    {{ $planChallan->challan_no }} &middot; fee {{ Format::money($planNet) }}. The last installment is whatever is left.
+                </p>
+
+                <div style="display:flex;gap:8px;margin-bottom:14px">
+                    <button type="button" wire:click="$set('planParts', 2)"
+                            class="btn btn-sm {{ (int) $planParts === 2 ? 'btn-primary' : 'btn-ghost' }}">Two installments</button>
+                    <button type="button" wire:click="$set('planParts', 3)"
+                            class="btn btn-sm {{ (int) $planParts === 3 ? 'btn-primary' : 'btn-ghost' }}">Three installments</button>
+                </div>
+
+                <div class="grid-2" style="gap:12px">
+                    <div>
+                        <div class="label">1st installment{{ $planChallan->certificate_amount > 0 ? ' (incl. certificate)' : '' }}</div>
+                        <input type="number" min="1" max="{{ max(1, $planNet - 1) }}" class="input tnum" wire:model.live.debounce.400ms="planAdvanceAmount">
+                    </div>
+                    <div>
+                        <div class="label">Due by</div>
+                        <input type="date" class="input tnum" wire:model="planDueFirst">
+                    </div>
+                </div>
+
+                @if ((int) $planParts === 3)
+                    <div class="grid-2" style="gap:12px;margin-top:12px">
+                        <div>
+                            <div class="label">2nd installment</div>
+                            <input type="number" min="1" max="{{ max(1, $planNet - (int) $planAdvanceAmount - 1) }}"
+                                   class="input tnum" wire:model.live.debounce.400ms="planSecondAmount">
+                        </div>
+                        <div>
+                            <div class="label">Due by</div>
+                            <input type="date" class="input tnum" wire:model="planDueSecond" min="{{ $planDueFirst }}">
+                        </div>
+                    </div>
+                @endif
+
+                <div class="grid-2" style="gap:12px;margin-top:12px">
+                    <div>
+                        <div class="label">{{ (int) $planParts === 3 ? '3rd' : '2nd' }} installment &middot; derived</div>
+                        <div class="input tnum" style="background:var(--surface3);color:var(--ink);font-weight:700">
+                            {{ Format::money(max(0, $planNet - (int) $planAdvanceAmount - ((int) $planParts === 3 ? (int) $planSecondAmount : 0))) }}
+                        </div>
+                    </div>
+                    <div>
+                        <div class="label">Due by</div>
+                        <input type="date" class="input tnum"
+                               wire:model="{{ (int) $planParts === 3 ? 'planDueThird' : 'planDueSecond' }}"
+                               min="{{ (int) $planParts === 3 ? $planDueSecond : $planDueFirst }}">
+                    </div>
+                </div>
+
+                @if ($planError)<span class="field-error">{{ $planError }}</span>@endif
+
+                <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:16px">
+                    <button class="btn btn-ghost" wire:click="$set('planId', null)">Cancel</button>
+                    <button class="btn btn-accent" wire:click="confirmPlan">Save plan</button>
                 </div>
             </div>
         </div>

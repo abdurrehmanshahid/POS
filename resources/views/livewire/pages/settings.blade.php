@@ -8,7 +8,6 @@ new class extends Component {
     public string $bank = '';
     public string $account = '';
     public string $iban = '';
-    public bool $twofa = false;
     public int $nextSerial = 0;
 
     public function mount(): void
@@ -18,7 +17,6 @@ new class extends Component {
         $this->bank = (string) $s->bank;
         $this->account = (string) $s->account;
         $this->iban = (string) $s->iban;
-        $this->twofa = (bool) $s->twofa_required;
         $this->nextSerial = (int) $s->next_challan_serial;
     }
 
@@ -31,7 +29,6 @@ new class extends Component {
             'bank' => $this->bank,
             'account' => $this->account,
             'iban' => $this->iban,
-            'twofa_required' => $this->twofa,
         ]);
 
         $this->dispatch('bbt-toast', tone: 'ok', title: 'Settings saved', msg: 'Changes recorded in audit log');
@@ -80,22 +77,6 @@ new class extends Component {
                     <div style="font-size:var(--fs-xs);color:var(--muted)">System-generated &amp; atomic · cannot be reset by hand.</div>
                 </div>
                 <span class="tnum" style="font-size:var(--fs-md);font-weight:800;color:var(--ink);font-family:ui-monospace,'SF Mono',Menlo,monospace">{{ \App\Services\Sequences::challanNo($nextSerial) }}</span>
-            </div>
-        </div>
-    </div>
-
-    {{-- Security --}}
-    <div class="panel" style="margin-bottom:22px">
-        <div class="panel-head"><x-icon name="lock" :size="18" style="color:var(--iris)" /><h3 class="panel-title">Security</h3></div>
-        <div style="padding:20px 22px">
-            <div style="display:flex;align-items:center;gap:14px" x-data="{ on: @entangle('twofa') }">
-                <button type="button" role="switch" :aria-checked="on" @click="on = !on"
-                        style="position:relative;width:46px;height:27px;border-radius:999px;border:none;cursor:pointer;flex:0 0 auto;transition:background .15s"
-                        :style="on ? 'background:var(--paid)' : 'background:var(--border2)'">
-                    <span style="position:absolute;top:3px;left:3px;width:21px;height:21px;border-radius:50%;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.25);transition:transform .15s"
-                          :style="on ? 'transform:translateX(19px)' : ''"></span>
-                </button>
-                <div style="font-size:var(--fs-sm);font-weight:600;color:var(--ink2);cursor:pointer" @click="on = !on">Require two-factor for admins on new devices</div>
             </div>
         </div>
     </div>

@@ -41,7 +41,7 @@ class ReportsTest extends TestCase
 
     private function admin(): User
     {
-        return $this->enrolTwoFactor(User::where('username', 'adminansar')->firstOrFail());
+        return User::where('username', 'adminansar')->firstOrFail();
     }
 
     private function officer(): User
@@ -266,8 +266,11 @@ class ReportsTest extends TestCase
             'discount_reason' => 'Referral',
         ]);
 
+        // 40,000 tuition less 10%, plus 700 certificate charges per course.
         $invoice = $result['challans'][0];
-        $this->assertSame(36000, $invoice->net_amount);
+        $this->assertSame(36000, $invoice->base_amount - $invoice->discount_amount);
+        $this->assertSame(1400, $invoice->certificate_amount);
+        $this->assertSame(37400, $invoice->net_amount);
 
         // Permitted: nothing has been collected yet.
         app(ChallanActions::class)->cancel($result['admissions'][1], $admin, 'Student dropped it');
@@ -277,12 +280,15 @@ class ReportsTest extends TestCase
         $collected = $reporting->summary($admin, $period)['collected'] - $beforeCollected;
         $byCourse = $reporting->revenueByCourse($admin, $period, 50)->sum('total') - $beforeByCourse;
 
-        $this->assertSame(36000, $collected);
-        $this->assertSame(
-            $collected,
-            $byCourse,
-            'The remaining course carries the whole invoice, so the shares still add up to what was banked.'
-        );
+        $this->assertSame(37400, $collected);
+
+        // The shares still reconcile with what was banked — but against the
+        // TUITION, because the certificate charge is levied on the invoice
+        // rather than earned by a course and is deliberately left out of
+        // revenue-by-course. Collected = course revenue + certificate charges,
+        // and the remaining course carries the whole of the first.
+        $this->assertSame(36000, $byCourse);
+        $this->assertSame($collected, $byCourse + (int) $invoice->certificate_amount);
 
         // And the dropped course is worth nothing to the student.
         $this->assertSame(0, $result['admissions'][1]->refresh()->netShare());

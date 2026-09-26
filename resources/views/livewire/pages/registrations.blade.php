@@ -8,16 +8,18 @@ use App\Models\Student;
 use App\Services\ChallanActions;
 use App\Services\Operations;
 use App\Services\RegistrationService;
+use App\Support\Clock;
 use App\Support\Concerns\CollectsPayments;
 use App\Support\Concerns\GuardsDoubleSubmit;
 use App\Support\Concerns\ReversesPayments;
+use App\Support\Concerns\SchedulesInstallments;
 use App\Support\Contact;
 use App\Support\Matcher;
 use Illuminate\Database\Eloquent\Builder;
 use Livewire\Volt\Component;
 
 new class extends Component {
-    use CollectsPayments, GuardsDoubleSubmit, ReversesPayments;
+    use CollectsPayments, GuardsDoubleSubmit, ReversesPayments, SchedulesInstallments;
 
     // List + shared drawer state
     public string $q = '';
@@ -38,6 +40,59 @@ new class extends Component {
     public string $newPhone = '';
     public string $newCnic = '';
     public array $courseIds = [];
+
+    /**
+     * Modules taken, per course: [courseId => list<moduleId>].
+     *
+     * Only ever holds an entry for a course that is actually divided into
+     * modules. Selecting such a course seeds it with ALL of them, because the
+     * full course is what an officer means by default and un-ticking two is
+     * less work than ticking three.
+     */
+    public array $moduleIds = [];
+
+    /**
+     * Batch chosen per course: [courseId => cohortId|''].
+     *
+     * '' means "no batch", and it is a real answer rather than an unset one -
+     * see RegistrationService::resolveCohorts(). Seeded with the open intake
+     * when the course is selected, which is what the system used to do
+     * silently and now does visibly.
+     */
+    public array $batchIds = [];
+
+    /**
+     * full | split. The fee in one payment, or an advance and a balance.
+     *
+     * The Installments service has supported this since it was written and
+     * nothing ever offered it: `schedule()` was reachable only from the roll
+     * importer, so a plan could be imported but never agreed at the counter.
+     */
+    public string $payPlan = 'full';
+
+    /**
+     * How many parts the plan has: 2 or 3. Only read when payPlan is 'split'.
+     *
+     * `challans.plan` stays 'split' either way — the column answers "is this
+     * paid in one go?", and the schedule itself says how many parts there are.
+     * So a third instalment needs no migration.
+     */
+    public int $planCount = 2;
+
+    /**
+     * The typed parts, in whole rupees.
+     *
+     * The LAST part is never typed: it is the fee less the ones above it, so
+     * the schedule always sums to the fee exactly, which is the one thing
+     * `Installments::schedule()` refuses outright. On a two-part plan only
+     * `planAdvance` is typed; on a three-part plan `planSecondAmount` as well.
+     */
+    public int $planAdvance = 0;
+    public int $planSecondAmount = 0;
+    public string $planFirstDue = '';
+    public string $planSecondDue = '';
+    public string $planThirdDue = '';
+
     public int $discountPct = 0;
     public string $discountReason = '';
 
@@ -133,6 +188,8 @@ new class extends Component {
     {
         $this->reset(['step', 'mode', 'studentSearch', 'pickedStudentId', 'newType', 'newName',
             'newGuardian', 'newPhone', 'newCnic', 'courseIds', 'discountPct', 'discountReason', 'paymentMethod',
+            'moduleIds', 'batchIds', 'payPlan', 'planCount', 'planAdvance', 'planSecondAmount',
+            'planFirstDue', 'planSecondDue', 'planThirdDue',
             'wizErrors', 'wizTouched']);
         $this->step = 1;
         $this->mode = 'new';
@@ -155,16 +212,217 @@ new class extends Component {
             $this->dispatch('bbt-toast', tone: 'warn', title: 'Course is full', msg: $course?->title);
             return;
         }
-        // Caught here so the officer learns before the review step, not after
-        // pressing Register. The service and a unique index both refuse it too.
-        if (in_array($id, $this->enrolledCourseIds(), true)) {
+        // A course the student already holds is still selectable: a repeat
+        // sitting, or a second batch taken alongside the first, is a real
+        // registration the institute takes. The card says so, and so does the
+        // toast, so the accidental double-submit is still visible - it is
+        // warned about rather than refused.
+        if (in_array($id, $this->enrolledCourseIds(), true) && ! in_array($id, $this->courseIds)) {
             $this->dispatch('bbt-toast', tone: 'warn', title: 'Already enrolled',
-                msg: 'This student is already on '.$course->title.'.');
-            return;
+                msg: 'This student is already on '.$course->title.'. Adding a second enrolment.');
         }
-        $this->courseIds = in_array($id, $this->courseIds)
-            ? array_values(array_diff($this->courseIds, [$id]))
-            : [...$this->courseIds, $id];
+        if (in_array($id, $this->courseIds)) {
+            $this->courseIds = array_values(array_diff($this->courseIds, [$id]));
+            // Dropped with the course. Leaving them behind meant un-ticking a
+            // course and re-ticking it silently restored a half-selection the
+            // officer could no longer see.
+            unset($this->moduleIds[$id], $this->batchIds[$id]);
+        } else {
+            $this->courseIds = [...$this->courseIds, $id];
+            // Full course by default - every module ticked. The officer
+            // narrows it down from there.
+            $modules = $course->sellableModules();
+            if ($modules->isNotEmpty()) { $this->moduleIds[$id] = $modules->pluck('id')->map(fn ($m) => (int) $m)->all(); }
+            // The open intake, which is what registration assigned on its own
+            // before this dropdown existed. Now it is merely the default.
+            $this->batchIds[$id] = (string) ($course->openCohort()?->id ?? '');
+        }
+        $this->syncPlanToFee();
+    }
+
+    /**
+     * Take or drop one module of a course already on the registration.
+     *
+     * Refuses to empty the list: a course with no modules selected is not a
+     * cheaper registration, it is a meaningless one, and the service reads an
+     * empty array as "the whole course" and bills the full fee. The officer
+     * un-ticks the course itself to drop it.
+     */
+    public function toggleModule(int $courseId, int $moduleId): void
+    {
+        if (! in_array($courseId, $this->courseIds, true)) { return; }
+        $current = $this->moduleIds[$courseId] ?? [];
+        if (in_array($moduleId, $current, true)) {
+            if (count($current) === 1) {
+                $this->dispatch('bbt-toast', tone: 'warn', title: 'Keep at least one module',
+                    msg: 'Un-tick the course itself to remove it from this registration.');
+                return;
+            }
+            $this->moduleIds[$courseId] = array_values(array_diff($current, [$moduleId]));
+        } else {
+            $this->moduleIds[$courseId] = [...$current, $moduleId];
+        }
+        $this->syncPlanToFee();
+    }
+
+    /**
+     * Switch this course from "full course" to picking modules.
+     *
+     * Drops the LAST module rather than clearing the list, because an empty
+     * selection is read as the whole course by both this component and
+     * RegistrationService — so clearing it would silently mean the opposite of
+     * what the button says. Starting from "all but the last" also leaves the
+     * officer un-ticking rather than starting from nothing.
+     */
+    public function chooseModules(int $courseId): void
+    {
+        $course = Course::find($courseId);
+        if (! $course || ! in_array($courseId, $this->courseIds, true)) { return; }
+
+        $modules = $course->sellableModules();
+        if ($modules->count() < 2) { return; }
+
+        $current = $this->moduleIds[$courseId] ?? [];
+        if (count($current) < $modules->count()) { return; }
+
+        $this->moduleIds[$courseId] = $modules->pluck('id')->map(fn ($m) => (int) $m)
+            ->slice(0, $modules->count() - 1)->values()->all();
+        $this->syncPlanToFee();
+    }
+
+    /** Put every module of this course back on. */
+    public function takeWholeCourse(int $courseId): void
+    {
+        $course = Course::find($courseId);
+        if (! $course || ! in_array($courseId, $this->courseIds, true)) { return; }
+        $this->moduleIds[$courseId] = $course->sellableModules()->pluck('id')->map(fn ($m) => (int) $m)->all();
+        $this->syncPlanToFee();
+    }
+
+    // ---- Payment plan ------------------------------------------------------
+
+    public function updatedPayPlan(): void { $this->syncPlanToFee(); }
+    public function updatedDiscountPct(): void { $this->syncPlanToFee(); }
+    public function updatedPlanAdvance(): void { $this->syncPlanToFee(); }
+    public function updatedPlanSecondAmount(): void { $this->syncPlanToFee(); }
+
+    /**
+     * Switch between a two- and three-part plan.
+     *
+     * The amounts are reset rather than carried across, because a split that
+     * was sensible over two parts is rarely the one wanted over three, and a
+     * stale advance here is a number the officer did not choose.
+     */
+    public function setPlan(string $plan, int $count = 2): void
+    {
+        $this->payPlan = $plan;
+        $this->planCount = max(2, min($count, \App\Services\Installments::MAX_PARTS));
+        $this->planAdvance = 0;
+        $this->planSecondAmount = 0;
+        $this->syncPlanToFee();
+    }
+
+    /**
+     * Keep the advance inside the fee as the fee moves.
+     *
+     * The fee is not fixed while the wizard is open - every course tick,
+     * module tick and nudge of the discount slider changes it. An advance
+     * typed against the old total is silently wrong against the new one, and
+     * the officer would only find out when the service refused the whole
+     * registration on submit. So it is clamped here, and seeded to half on the
+     * first switch into a plan.
+     */
+    private function syncPlanToFee(): void
+    {
+        $net = $this->netFee();
+        if ($this->payPlan !== 'split' || $net <= 0) { return; }
+
+        $today = Clock::today();
+        if ($this->planFirstDue === '') { $this->planFirstDue = $today->copy()->addDays(7)->toDateString(); }
+        if ($this->planSecondDue === '') { $this->planSecondDue = $today->copy()->addDays(37)->toDateString(); }
+        if ($this->planThirdDue === '') { $this->planThirdDue = $today->copy()->addDays(67)->toDateString(); }
+
+        // Seeded from the service, so the wizard's suggestion and the plan the
+        // service would have built on its own are the same numbers rather than
+        // two implementations of "split it evenly".
+        $certificate = $this->certificateFee();
+        $tuition = $net - $certificate;
+        $later = intdiv($tuition, $this->planCount);
+
+        if ($this->planAdvance <= 0) { $this->planAdvance = $net - $later * ($this->planCount - 1); }
+        if ($this->planCount > 2 && $this->planSecondAmount <= 0) { $this->planSecondAmount = $later; }
+
+        // Floor on the advance is the certificate charge, so editing it down
+        // cannot push the charge into a later part. Every part after the first
+        // needs at least a rupee left for it, which is what bounds the typed
+        // amounts from above.
+        $floor = max(1, $certificate);
+        $this->planAdvance = max($floor, min($this->planAdvance, $net - ($this->planCount - 1)));
+
+        if ($this->planCount > 2) {
+            $this->planSecondAmount = max(1, min($this->planSecondAmount, $net - $this->planAdvance - 1));
+        } else {
+            $this->planSecondAmount = 0;
+        }
+    }
+
+    /**
+     * The two parts, as Installments::schedule() wants them.
+     *
+     * The balance is derived, never typed, so the pair always sums to the fee
+     * exactly - which is the one thing schedule() refuses outright.
+     *
+     * @return list<array{amount:int,due_date:string}>
+     */
+    private function planParts(): array
+    {
+        $net = $this->netFee();
+        $floor = max(1, $this->certificateFee());
+        $advance = max($floor, min($this->planAdvance, $net - ($this->planCount - 1)));
+
+        if ($this->planCount < 3) {
+            return [
+                ['amount' => $advance, 'due_date' => $this->planFirstDue],
+                ['amount' => $net - $advance, 'due_date' => $this->planSecondDue],
+            ];
+        }
+
+        $second = max(1, min($this->planSecondAmount, $net - $advance - 1));
+
+        return [
+            ['amount' => $advance, 'due_date' => $this->planFirstDue],
+            ['amount' => $second, 'due_date' => $this->planSecondDue],
+            // Derived, so the three always sum to the fee exactly.
+            ['amount' => $net - $advance - $second, 'due_date' => $this->planThirdDue],
+        ];
+    }
+
+    /** What the registration will actually bill: tuition, discount, certificate. */
+    public function netFee(): int
+    {
+        $base = $this->baseFee();
+
+        return $base
+            - ($this->discountPct > 0 ? (int) round($base * $this->discountPct / 100) : 0)
+            + $this->certificateFee();
+    }
+
+    /**
+     * The certificate charge this registration will carry.
+     *
+     * One per course, matching RegistrationService. Outside the discount, so
+     * it is added after it in netFee() rather than folded into the base.
+     */
+    public function certificateFee(): int
+    {
+        return (int) config('institute.certificate_fee') * count($this->courseIds);
+    }
+
+    /** The fee before discount: each course priced by the modules taken. */
+    public function baseFee(): int
+    {
+        return (int) Course::with('modules')->whereIn('id', $this->courseIds)->get()
+            ->sum(fn (Course $c) => $c->priceFor($this->moduleIds[$c->id] ?? null));
     }
 
     public function back(): void { if ($this->step > 1) { $this->step--; } }
@@ -172,7 +430,8 @@ new class extends Component {
     /**
      * Courses the selected student already holds a live enrolment on.
      *
-     * Empty for a brand new student, who by definition is on nothing yet.
+     * Marks the cards; it does not gate them. Empty for a brand new student,
+     * who by definition is on nothing yet.
      *
      * @return list<int>
      */
@@ -498,6 +757,18 @@ new class extends Component {
         if (! $this->wizardOpen) { return; }
         $data = [
             'course_ids' => $this->courseIds,
+            // Only for the courses that are actually divided up. `moduleIds`
+            // never holds a key for a course priced whole, and the service
+            // refuses module ids sent against one.
+            'modules' => $this->moduleIds,
+            // Every selected course, so a cleared dropdown reaches the service
+            // as an explicit "no batch" instead of falling back to the open
+            // intake the officer just chose to leave.
+            'cohorts' => collect($this->courseIds)
+                ->mapWithKeys(fn ($id) => [$id => ($this->batchIds[$id] ?? '') === '' ? null : (int) $this->batchIds[$id]])
+                ->all(),
+            'plan' => $this->payPlan,
+            'installments' => $this->payPlan === 'split' ? $this->planParts() : null,
             'discount_pct' => $this->discountPct,
             'discount_reason' => $this->discountReason,
             'payment_method' => $this->paymentMethod,
@@ -516,8 +787,11 @@ new class extends Component {
         }
         try {
             // Guarded because the new-student path has no natural key to fall
-            // back on. An existing student is caught by the unique live
-            // enrolment index (BUG-17), but a brand new one is a brand new row
+            // back on. This used to lean on the unique live enrolment index
+            // (BUG-17) to catch a repeated existing-student submit; that index
+            // was lifted in 2026_09_17_000001, so this token is now the only
+            // thing between a double-click and two of everything.
+            // A brand new student always was a brand new row
             // every time: submitted twice it produced two people, two
             // admissions and two challans, billing the family double.
             $op = app(Operations::class)->once($this->operationKey('enrol'), 'registration.create',
@@ -562,9 +836,16 @@ new class extends Component {
 
         $wizard = [];
         if ($this->wizardOpen) {
-            $activeCourses = Course::where('is_active', true)->with('admissions')->orderBy('code')->get();
+            // `modules` and `cohorts` eager loaded: step 2 draws a fee, a
+            // module list and a batch dropdown for every course in the
+            // catalogue, and without these that is three queries per course
+            // across forty-one of them on every keystroke of the filter.
+            $activeCourses = Course::where('is_active', true)
+                ->with(['admissions', 'modules', 'cohorts'])->orderBy('code')->get();
             $selectedCourses = $activeCourses->whereIn('id', $this->courseIds);
-            $base = (int) $selectedCourses->sum('fee');
+            // Priced by what is actually being bought, not by courses.fee -
+            // which for a modular course is not the price of anything.
+            $base = (int) $selectedCourses->sum(fn (Course $c) => $c->priceFor($this->moduleIds[$c->id] ?? null));
             $disc = $this->discountPct > 0 ? (int) round($base * $this->discountPct / 100) : 0;
             $nextAdm = (int) (Counter::where('key', 'admission')->value('value') ?? 12);
             $nextStud = (int) (Counter::where('key', 'student:'.$this->newType)->value('value') ?? 1);
@@ -575,9 +856,19 @@ new class extends Component {
 
             $wizard = [
                 'enrolledCourseIds' => $this->enrolledCourseIds(),
+                // Keyed by course so the step-2 card can draw its own batch
+                // dropdown without a query of its own.
+                'batchOptions' => $selectedCourses->mapWithKeys(fn (Course $c) => [
+                    $c->id => $c->cohorts->where('is_open', true)->sortBy('name')->values(),
+                ]),
+                'certificateFee' => $this->certificateFee(),
+                'planPreview' => $this->payPlan === 'split' && $this->netFee() > 1 ? $this->planParts() : null,
                 'activeCourses' => $activeCourses,
                 'selectedCourses' => $selectedCourses,
-                'base' => $base, 'disc' => $disc, 'net' => $base - $disc,
+                // `net` is what the student actually owes: tuition, less the
+                // discount, plus the certificate charge. The wizard's totals
+                // and the challan it creates have to agree to the rupee.
+                'base' => $base, 'disc' => $disc, 'net' => $base - $disc + $this->certificateFee(),
                 'studentCodePreview' => $seq::studentCode($this->newType, $nextStud),
                 'admPreview' => $count === 1
                     ? $seq::admissionNo($nextAdm)
@@ -606,6 +897,10 @@ new class extends Component {
             // Supervisor only, and identical to the Challans screen — both
             // include the same drawer partial, so both must supply it.
             'canReverse' => $user->can('payments.reverse'),
+            // Same key the wizard already uses to agree a plan while raising
+            // the challan; see SchedulesInstallments::plannableChallan().
+            'canPlan' => $user->can('registrations.create'),
+            'planChallan' => $this->planId ? $this->scopedChallans()->with('installments')->find($this->planId) : null,
             'scopeLabel' => $canAll ? 'All registrations' : 'My registrations',
             'rows' => $admissions,
             'selected' => $this->drawerId

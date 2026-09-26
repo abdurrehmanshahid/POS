@@ -262,7 +262,7 @@ class Analytics
 
         $byAction = AuditLog::query()
             ->where('created_at', '>=', $since)
-            ->whereIn('action', ['Signed in', 'Sign-in failed', 'Two-factor failed', 'Recovery code used', 'Password reset by admin'])
+            ->whereIn('action', ['Signed in', 'Sign-in failed', 'Password reset by admin'])
             ->groupBy('action')
             ->select('action', DB::raw('COUNT(*) as total'))
             ->pluck('total', 'action');
@@ -271,8 +271,6 @@ class Analytics
             'days' => $days,
             'sign_ins' => (int) ($byAction['Signed in'] ?? 0),
             'failed' => (int) ($byAction['Sign-in failed'] ?? 0),
-            'twofa_failed' => (int) ($byAction['Two-factor failed'] ?? 0),
-            'recovery_used' => (int) ($byAction['Recovery code used'] ?? 0),
             'admin_resets' => (int) ($byAction['Password reset by admin'] ?? 0),
         ];
     }

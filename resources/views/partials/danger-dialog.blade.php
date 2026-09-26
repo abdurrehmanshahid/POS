@@ -48,18 +48,9 @@
                            placeholder="{{ $dangerPhrase }}" style="margin-bottom:16px" autocomplete="off">
                 @endif
 
-                <label class="label">{{ $this->dangerChallengeLabel() }}</label>
-                @if ($this->dangerUsesTotp())
-                    <input wire:model="dangerSecret" type="text" inputmode="numeric" maxlength="6"
-                           autocomplete="one-time-code" placeholder="000000" class="input tnum"
-                           style="font-size:var(--fs-lg);letter-spacing:.32em;text-align:center;font-weight:700">
-                    <div style="font-size:var(--fs-2xs);color:var(--muted);margin-top:7px;line-height:1.5">
-                        A fresh code is required for every destructive action, a used code will not work twice.
-                    </div>
-                @else
-                    <input wire:model="dangerSecret" type="password" class="input"
-                           placeholder="Re-enter your password" autocomplete="current-password">
-                @endif
+                <label class="label">Your password</label>
+                <input wire:model="dangerSecret" type="password" class="input"
+                       placeholder="Re-enter your password" autocomplete="current-password">
 
                 @if ($dangerError)
                     <div style="display:flex;align-items:flex-start;gap:7px;font-size:var(--fs-xs);color:var(--over);margin-top:12px;line-height:1.5">

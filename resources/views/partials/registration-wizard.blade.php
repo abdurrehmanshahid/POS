@@ -204,11 +204,13 @@
                         $sel = in_array($c->id, $courseIds);
                         $full = $c->isFull();
                         $left = $c->seatsLeft();
-                        // Enrolling the same person on the same course twice
-                        // creates two challans for one seat, so the card says so
-                        // rather than letting it happen and failing on submit.
+                        // Flagged, not blocked. Enrolling the same person on
+                        // the same course twice is usually the officer being
+                        // unsure the first one saved — but it is sometimes a
+                        // repeat sitting, so the card warns and lets them
+                        // through. A full course is still a hard no.
                         $already = in_array($c->id, $enrolledCourseIds, true);
-                        $blocked = $full || $already;
+                        $blocked = $full;
                     @endphp
                     <div wire:click="toggleCourse({{ $c->id }})"
                          data-course="{{ Str::lower($c->code.' '.$c->title.' '.$c->trainer?->name) }}"
@@ -220,7 +222,7 @@
                         <div style="display:flex;justify-content:space-between;margin-top:10px;font-size:var(--fs-2xs);color:var(--muted)">
                             <span>{{ $c->trainer?->name }}</span>
                             <span @if ($already) style="color:var(--due);font-weight:700" @endif>
-                                {{ $already ? 'Already enrolled' : ($full ? 'Course full' : ($left === null ? 'Open' : $left.' seats left')) }}
+                                {{ $full ? 'Course full' : ($already ? 'Already enrolled — will add another' : ($left === null ? 'Open' : $left.' seats left')) }}
                             </span>
                         </div>
                         <div class="tnum" style="font-size:var(--fs-base);font-weight:800;color:var(--navy);margin-top:8px">{{ Format::money($c->fee) }}</div>
@@ -228,12 +230,125 @@
                 @endforeach
             </div>
 
+            {{-- What of each course, and in which batch.
+                 Both questions used to be answered silently and wrongly. The
+                 whole course was the only thing sellable, so a student who
+                 wanted one module was billed for three and given an ad-hoc
+                 discount to bring it back; and the batch was whatever intake
+                 happened to be open, which for 36 of 41 courses is none at
+                 all, so the fee voucher printed "Batch  -" and the office had
+                 no way to say otherwise. --}}
+            @if ($selectedCourses->isNotEmpty())
+                <div class="card" style="padding:0;background:var(--surface2);margin-bottom:20px;overflow:hidden">
+                    @foreach ($selectedCourses as $c)
+                        @php
+                            $mods = $c->sellableModules();
+                            $taken = $moduleIds[$c->id] ?? [];
+                            $batches = $batchOptions[$c->id] ?? collect();
+                        @endphp
+                        <div style="padding:14px 18px;{{ ! $loop->last ? 'border-bottom:1px solid var(--border2)' : '' }}">
+                            <div style="display:flex;justify-content:space-between;align-items:baseline;gap:12px;flex-wrap:wrap">
+                                <div style="font-size:var(--fs-sm);font-weight:700;color:var(--ink)">
+                                    {{ $c->title }} <span class="tnum" style="font-weight:600;color:var(--faint)">({{ $c->code }})</span>
+                                </div>
+                                <div class="tnum" style="font-size:var(--fs-sm);font-weight:800;color:var(--navy)">
+                                    {{ Format::money($c->priceFor($taken ?: null)) }}
+                                </div>
+                            </div>
+
+                            {{-- Only for a course that is actually divided up.
+                                 A course priced whole has nothing to choose. --}}
+                            @if ($mods->isNotEmpty())
+                                {{-- An explicit either/or, not just a row of
+                                     ticks. "All modules selected" and "the
+                                     full course" are the same thing here, but
+                                     only one of them looks like a decision the
+                                     officer made, and the whole point of the
+                                     screen is that they made it on purpose. --}}
+                                @php $whole = count($taken) === $mods->count(); @endphp
+                                <div style="display:flex;gap:8px;margin-top:12px">
+                                    <button type="button" wire:click="takeWholeCourse({{ $c->id }})"
+                                            class="btn btn-sm {{ $whole ? 'btn-primary' : 'btn-ghost' }}">
+                                        Full course &middot; {{ Format::money($c->priceFor()) }}
+                                    </button>
+                                    <button type="button" wire:click="chooseModules({{ $c->id }})"
+                                            class="btn btn-sm {{ $whole ? 'btn-ghost' : 'btn-primary' }}">
+                                        Choose modules
+                                    </button>
+                                </div>
+                                <div style="font-size:var(--fs-2xs);color:var(--faint);text-transform:uppercase;letter-spacing:.04em;margin-top:12px">
+                                    {{ $whole ? 'All '.$mods->count().' modules included' : 'Tick the modules this student is taking' }}
+                                </div>
+                                <div style="display:flex;flex-direction:column;gap:6px;margin-top:8px">
+                                    @foreach ($mods as $m)
+                                        @php $on = in_array($m->id, $taken); @endphp
+                                        <button type="button" wire:click="toggleModule({{ $c->id }}, {{ $m->id }})"
+                                                style="display:flex;align-items:center;gap:10px;width:100%;text-align:left;padding:9px 11px;cursor:pointer;
+                                                       border:1.5px solid {{ $on ? 'var(--iris)' : 'var(--border2)' }};
+                                                       background:{{ $on ? 'var(--iris-bg)' : 'var(--surface)' }};border-radius:9px">
+                                            <span style="flex:none;width:16px;height:16px;border-radius:5px;display:inline-flex;align-items:center;justify-content:center;
+                                                         border:1.5px solid {{ $on ? 'var(--iris)' : 'var(--border)' }};background:{{ $on ? 'var(--iris)' : 'transparent' }}">
+                                                @if ($on)<x-icon name="check" :size="11" style="color:#fff" />@endif
+                                            </span>
+                                            <span style="flex:1;font-size:var(--fs-xs);font-weight:600;color:var(--ink)">{{ $m->title }}</span>
+                                            <span class="tnum" style="font-size:var(--fs-xs);font-weight:700;color:{{ $on ? 'var(--navy)' : 'var(--faint)' }}">{{ Format::money($m->fee) }}</span>
+                                        </button>
+                                    @endforeach
+                                </div>
+                            @endif
+
+                            {{-- Why there is nothing to choose. Without this
+                                 a course priced whole is indistinguishable
+                                 from one whose module picker failed to
+                                 render, and the officer has no way to tell
+                                 "this course is not divided up" from "the
+                                 screen is broken". --}}
+                            @if ($mods->isEmpty())
+                                <div style="margin-top:10px;font-size:var(--fs-2xs);color:var(--muted)">
+                                    Sold as a whole course. To sell it by the module, add modules to
+                                    {{ $c->code }} under Courses.
+                                </div>
+                            @endif
+
+                            <div style="margin-top:12px">
+                                <div style="font-size:var(--fs-2xs);color:var(--faint);text-transform:uppercase;letter-spacing:.04em;margin-bottom:6px">Batch</div>
+                                <select wire:model.live="batchIds.{{ $c->id }}" class="input" style="padding:8px 11px;font-size:var(--fs-xs)">
+                                    <option value="">No batch</option>
+                                    @foreach ($batches as $b)
+                                        <option value="{{ $b->id }}">{{ $b->name }}@if ($b->isFull()) (full)@endif</option>
+                                    @endforeach
+                                </select>
+                                {{-- Said plainly rather than left as an empty
+                                     dropdown, because the consequence lands on
+                                     a document somebody else reads. --}}
+                                @if ($batches->isEmpty())
+                                    <span class="field-hint">{{ $c->code }} has no open batch. The fee voucher will print "Batch  -". Create one under Batches to name it.</span>
+                                @endif
+                            </div>
+                        </div>
+                    @endforeach
+                </div>
+            @endif
+
             <div class="card" style="padding:16px 18px;background:var(--surface2)">
                 <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
                     <label class="label" style="margin:0">Discount</label>
                     <span class="tnum" style="font-size:var(--fs-sm);font-weight:700;color:var(--orange)">{{ $discountPct }}%</span>
                 </div>
                 <input type="range" min="0" max="100" step="5" wire:model.live="discountPct" style="width:100%;accent-color:var(--orange)">
+                {{-- Stated on its own line, not folded into the base. It sits
+                     outside the discount, so a student on a scholarship still
+                     sees the full charge and the total still adds up on the
+                     screen the officer is reading it from. --}}
+                @if ($certificateFee > 0)
+                    <div style="display:flex;justify-content:space-between;align-items:center;margin-top:14px;padding:9px 12px;background:var(--surface3);border-radius:9px">
+                        <span style="font-size:var(--fs-xs);color:var(--ink2)">
+                            Certificate charges
+                            <span style="color:var(--faint)">&middot; {{ Format::money(config('institute.certificate_fee')) }} &times; {{ count($courseIds) }} course{{ count($courseIds) === 1 ? '' : 's' }}</span>
+                        </span>
+                        <span class="tnum" style="font-size:var(--fs-sm);font-weight:700;color:var(--ink)">{{ Format::money($certificateFee) }}</span>
+                    </div>
+                @endif
                 <div class="grid-3" style="margin-top:14px;gap:12px">
                     <div><div style="font-size:var(--fs-2xs);color:var(--faint);text-transform:uppercase;letter-spacing:.04em">Base</div><div class="tnum" style="font-size:var(--fs-md);font-weight:800;color:var(--ink)">{{ Format::money($base) }}</div></div>
                     <div><div style="font-size:var(--fs-2xs);color:var(--faint);text-transform:uppercase;letter-spacing:.04em">Discount</div><div class="tnum" style="font-size:var(--fs-md);font-weight:800;color:var(--over)">− {{ Format::money($disc) }}</div></div>
@@ -265,6 +380,81 @@
                     </div>
                     @if ($wizErrors['method'] ?? false)<span class="field-error">{{ $wizErrors['method'] }}</span>@endif
                 </div>
+
+                {{-- The fee in one payment, or an advance and a balance.
+                     `Installments` has been able to do this since it was
+                     written; nothing ever offered it, so the only challans on
+                     a plan were ones the roll importer created. An officer at
+                     the counter could not agree one at all. --}}
+                <div style="margin-top:16px;padding-top:14px;border-top:1px solid var(--border2)">
+                    <label class="label">Payment plan</label>
+                    <div style="display:flex;gap:8px;flex-wrap:wrap">
+                        <button type="button" wire:click="setPlan('full')"
+                                class="btn btn-sm {{ $payPlan === 'full' ? 'btn-primary' : 'btn-ghost' }}">Pay in full</button>
+                        <button type="button" wire:click="setPlan('split', 2)"
+                                class="btn btn-sm {{ $payPlan === 'split' && $planCount === 2 ? 'btn-primary' : 'btn-ghost' }}">Two installments</button>
+                        <button type="button" wire:click="setPlan('split', 3)"
+                                class="btn btn-sm {{ $payPlan === 'split' && $planCount === 3 ? 'btn-primary' : 'btn-ghost' }}">Three installments</button>
+                    </div>
+
+                    @if ($payPlan === 'split')
+                        @if (! $genChallans)
+                            <div style="margin-top:12px;padding:11px 14px;background:var(--due-bg);border-radius:10px;font-size:var(--fs-xs);color:var(--due)">
+                                A plan needs a challan to hang on. Tick &ldquo;Generate fee challan(s) on submit&rdquo; on the next step, or choose Pay in full.
+                            </div>
+                        @elseif ($net <= 1)
+                            <div style="margin-top:12px;padding:11px 14px;background:var(--due-bg);border-radius:10px;font-size:var(--fs-xs);color:var(--due)">
+                                Select a course first, so there is a fee to split.
+                            </div>
+                        @else
+                            <div class="grid-2" style="gap:12px;margin-top:12px">
+                                <div>
+                                    <label class="label">1st installment{{ $certificateFee > 0 ? ' (incl. certificate)' : '' }}</label>
+                                    <input type="number" min="1" max="{{ $net - ($planCount - 1) }}" wire:model.live.debounce.500ms="planAdvance"
+                                           class="input tnum">
+                                </div>
+                                <div>
+                                    <label class="label">Due by</label>
+                                    <input type="date" wire:model.live="planFirstDue" class="input tnum">
+                                </div>
+                            </div>
+
+                            @if ($planCount > 2)
+                                <div class="grid-2" style="gap:12px;margin-top:10px">
+                                    <div>
+                                        <label class="label">2nd installment</label>
+                                        <input type="number" min="1" max="{{ max(1, $net - $planAdvance - 1) }}"
+                                               wire:model.live.debounce.500ms="planSecondAmount" class="input tnum">
+                                    </div>
+                                    <div>
+                                        <label class="label">Due by</label>
+                                        <input type="date" wire:model.live="planSecondDue" class="input tnum" min="{{ $planFirstDue }}">
+                                    </div>
+                                </div>
+                            @endif
+
+                            <div class="grid-2" style="gap:12px;margin-top:10px">
+                                <div>
+                                    {{-- Shown, never typed. Deriving the LAST
+                                         part is what makes an invalid plan
+                                         impossible: the parts always sum to
+                                         the fee, which is the one thing
+                                         Installments::schedule() refuses. --}}
+                                    <label class="label">{{ $planCount > 2 ? '3rd' : '2nd' }} installment &middot; derived</label>
+                                    <div class="input tnum" style="background:var(--surface3);color:var(--ink);font-weight:700">
+                                        {{ Format::money(max(0, $net - $planAdvance - ($planCount > 2 ? $planSecondAmount : 0))) }}
+                                    </div>
+                                </div>
+                                <div>
+                                    <label class="label">Due by</label>
+                                    <input type="date" class="input tnum"
+                                           wire:model.live="{{ $planCount > 2 ? 'planThirdDue' : 'planSecondDue' }}"
+                                           min="{{ $planCount > 2 ? $planSecondDue : $planFirstDue }}">
+                                </div>
+                            </div>
+                        @endif
+                    @endif
+                </div>
             </div>
         @endif
 
@@ -283,13 +473,45 @@
                 <div class="panel-head" style="padding:14px 16px"><h3 class="panel-title" style="font-size:var(--fs-sm)">Charges · derived</h3></div>
                 <div style="padding:6px 16px 14px">
                     @foreach ($selectedCourses as $c)
-                        <div style="display:flex;justify-content:space-between;padding:8px 0;font-size:var(--fs-sm);border-bottom:1px solid var(--surface3)"><span style="color:var(--ink2)">{{ $c->title }} <span class="tnum" style="color:var(--faint)">({{ $c->code }})</span></span><span class="tnum" style="font-weight:600">{{ Format::money($c->fee) }}</span></div>
+                        @php
+                            $taken = $moduleIds[$c->id] ?? [];
+                            $mods = $c->sellableModules();
+                        @endphp
+                        <div style="display:flex;justify-content:space-between;padding:8px 0;font-size:var(--fs-sm);border-bottom:1px solid var(--surface3)">
+                            <span style="color:var(--ink2)">{{ $c->title }} <span class="tnum" style="color:var(--faint)">({{ $c->code }})</span>
+                                {{-- Named on the review line too, because this
+                                     is the last screen before the money is
+                                     committed and "which modules?" is exactly
+                                     what an officer re-checks here. --}}
+                                @if ($mods->isNotEmpty())
+                                    <div style="font-size:var(--fs-2xs);color:var(--muted)">
+                                        {{ count($taken) === $mods->count() ? 'Full course' : $mods->whereIn('id', $taken)->pluck('title')->implode(', ') }}
+                                    </div>
+                                @endif
+                            </span>
+                            <span class="tnum" style="font-weight:600">{{ Format::money($c->priceFor($taken ?: null)) }}</span>
+                        </div>
                     @endforeach
                     <div style="display:flex;justify-content:space-between;padding:8px 0;font-size:var(--fs-sm)"><span style="color:var(--muted)">Combined base</span><span class="tnum" style="font-weight:600">{{ Format::money($base) }}</span></div>
                     @if ($disc > 0)
                         <div style="display:flex;justify-content:space-between;padding:8px 0;font-size:var(--fs-sm)"><span style="color:var(--muted)">Discount ({{ $discountPct }}%)</span><span class="tnum" style="font-weight:600;color:var(--over)">− {{ Format::money($disc) }}</span></div>
                     @endif
+                    @if ($certificateFee > 0)
+                        {{-- After the discount, because it is not discounted. --}}
+                        <div style="display:flex;justify-content:space-between;padding:8px 0;font-size:var(--fs-sm);border-top:1px solid var(--surface3)"><span style="color:var(--muted)">Subtotal</span><span class="tnum" style="font-weight:600">{{ Format::money($base - $disc) }}</span></div>
+                        <div style="display:flex;justify-content:space-between;padding:8px 0;font-size:var(--fs-sm)"><span style="color:var(--muted)">Certificate charges <span class="tnum" style="color:var(--faint)">({{ Format::money(config('institute.certificate_fee')) }} × {{ $selectedCourses->count() }})</span></span><span class="tnum" style="font-weight:600">{{ Format::money($certificateFee) }}</span></div>
+                    @endif
                     <div style="display:flex;justify-content:space-between;padding:10px 0 4px;font-size:var(--fs-md);border-top:2px solid var(--border)"><span style="font-weight:800;color:var(--ink)">Total net payable (derived)</span><span class="tnum" style="font-weight:800;color:var(--navy)">{{ Format::money($net) }}</span></div>
+                    @if ($planPreview)
+                        <div style="margin-top:10px;padding-top:10px;border-top:1px dashed var(--border2)">
+                            @foreach ($planPreview as $i => $part)
+                                <div style="display:flex;justify-content:space-between;padding:4px 0;font-size:var(--fs-xs)">
+                                    <span style="color:var(--muted)">{{ ['1st', '2nd', '3rd'][$i] ?? ($i + 1).'th' }} installment &middot; by {{ Format::date($part['due_date']) }}</span>
+                                    <span class="tnum" style="font-weight:700;color:var(--ink)">{{ Format::money($part['amount']) }}</span>
+                                </div>
+                            @endforeach
+                        </div>
+                    @endif
                 </div>
             </div>
 

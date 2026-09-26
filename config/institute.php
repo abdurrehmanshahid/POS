@@ -89,6 +89,28 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Certificate charge
+    |--------------------------------------------------------------------------
+    |
+    | A fixed charge added to every registration, ONCE PER COURSE enrolled on,
+    | for the certificate issued on completion. It is a cost the institute
+    | passes on rather than tuition, so it sits outside the discount: a student
+    | on a 50% scholarship still pays it in full.
+    |
+    | Configurable because it is a price, and prices change. Changing it here
+    | does NOT re-price challans already raised — `challans.certificate_amount`
+    | snapshots what was charged, for the same reason every other money column
+    | in this system does: a voucher that stops adding up to its own total is
+    | one the office cannot reconcile against the cash it took.
+    |
+    | Set to 0 to stop charging it. Existing challans keep whatever they were
+    | raised with.
+    |
+    */
+    'certificate_fee' => (int) env('INSTITUTE_CERTIFICATE_FEE', 700),
+
+    /*
+    |--------------------------------------------------------------------------
     | Contact details printed on the fee voucher
     |--------------------------------------------------------------------------
     |
