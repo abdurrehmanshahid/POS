@@ -101,8 +101,6 @@ new #[Layout('components.layouts.super')] class extends Component {
                 @foreach ([
                     ['Successful sign-ins', $security['sign_ins'], 'var(--paid)'],
                     ['Failed sign-in attempts', $security['failed'], $security['failed'] > 10 ? 'var(--over)' : 'var(--ink)'],
-                    ['Failed two-factor codes', $security['twofa_failed'], $security['twofa_failed'] > 5 ? 'var(--over)' : 'var(--ink)'],
-                    ['Recovery codes used', $security['recovery_used'], $security['recovery_used'] > 0 ? 'var(--due)' : 'var(--ink)'],
                     ['Admin password resets', $security['admin_resets'], 'var(--ink)'],
                 ] as [$label, $value, $colour])
                     <div style="display:flex;align-items:center;justify-content:space-between;padding:11px 0;border-bottom:1px solid var(--border)">

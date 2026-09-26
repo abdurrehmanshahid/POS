@@ -81,18 +81,6 @@ new #[Layout('components.layouts.super')] class extends Component {
         ]);
     }
 
-    public function askResetTwoFactor(int $id): void
-    {
-        $u = User::withTrashed()->findOrFail($id);
-        $this->askDanger([
-            'kind' => 'reset-2fa',
-            'id' => $u->id,
-            'title' => 'Reset two-factor for '.$u->name,
-            'body' => 'Clears their authenticator secret and all recovery codes. If their role requires a second factor they will be forced to enrol a new one at next sign-in. Use this when a phone is lost.',
-            'confirmLabel' => 'Reset two-factor',
-        ]);
-    }
-
     public function askToggleActive(int $id): void
     {
         $u = User::withTrashed()->findOrFail($id);
@@ -104,8 +92,6 @@ new #[Layout('components.layouts.super')] class extends Component {
         // `doToggleActive` flips whatever it finds, so two confirmations
         // landing together flipped twice and left the account exactly as it
         // started, while the toast and the audit row both said it had changed.
-        // Step-up hides that for anyone on TOTP because the accepted timestep
-        // is burned; an actor falling back to password re-entry got the bug.
         //
         // Recording the state we came FROM rather than the state we want keeps
         // the audit row's old_value derived from the row instead of asserted by
@@ -209,7 +195,6 @@ new #[Layout('components.layouts.super')] class extends Component {
 
         match ($kind) {
             'reset-password' => $this->doResetPassword($u),
-            'reset-2fa' => $this->doResetTwoFactor($u),
             'toggle-active' => $this->doToggleActive($u),
             'remove' => $removal->remove($u, $this->actor(), $reason),
             'restore' => $removal->restore($u, $this->actor()),
@@ -223,7 +208,6 @@ new #[Layout('components.layouts.super')] class extends Component {
             $this->dispatch('bbt-toast',
                 tone: $kind === 'purge' ? 'err' : 'ok',
                 title: match ($kind) {
-                    'reset-2fa' => 'Two-factor reset',
                     'toggle-active' => $u->fresh()?->is_active ? 'Account reactivated' : 'Account deactivated',
                     'remove' => 'Account removed',
                     'restore' => 'Account restored',
@@ -259,19 +243,6 @@ new #[Layout('components.layouts.super')] class extends Component {
 
         $this->issuedPassword = $temp;
         $this->issuedFor = $u->name;
-    }
-
-    private function doResetTwoFactor(User $u): void
-    {
-        $u->clearTwoFactor();
-
-        Audit::record('Two-factor reset by super admin', $this->actor(), [
-            'subject' => $u,
-            'subject_label' => $u->username.' · '.$u->name,
-            'field' => 'two_factor_secret',
-            'old_value' => 'enrolled',
-            'new_value' => 'cleared',
-        ]);
     }
 
     private function doToggleActive(User $u): void
@@ -344,7 +315,7 @@ new #[Layout('components.layouts.super')] class extends Component {
             <table class="table">
                 <thead>
                     <tr>
-                        <th>Account</th><th>Role</th><th>Two-factor</th><th>Last sign-in</th><th>Status</th>
+                        <th>Account</th><th>Role</th><th>Last sign-in</th><th>Status</th>
                         <th class="right">Actions</th>
                     </tr>
                 </thead>
@@ -361,15 +332,6 @@ new #[Layout('components.layouts.super')] class extends Component {
                                 </div>
                             </td>
                             <td><x-ui.pill :tone="$u->role?->tone ?? 'iris'">{{ $u->roleLabel() }}</x-ui.pill></td>
-                            <td>
-                                @if ($u->hasTwoFactorEnabled())
-                                    <x-ui.pill tone="paid" :dot="true">Enrolled</x-ui.pill>
-                                @elseif ($u->requiresTwoFactor())
-                                    <x-ui.pill tone="unpaid" :dot="true">Required</x-ui.pill>
-                                @else
-                                    <span style="font-size:var(--fs-xs);color:var(--faint)">Not required</span>
-                                @endif
-                            </td>
                             <td class="tnum" style="color:var(--muted);white-space:nowrap">
                                 {{ $u->last_login_at ? Format::date($u->last_login_at) : 'Never' }}
                             </td>
@@ -393,9 +355,6 @@ new #[Layout('components.layouts.super')] class extends Component {
                                 @else
                                     <button class="btn btn-ghost btn-sm" wire:click="askResetPassword({{ $u->id }})" title="Issue a temporary password">
                                         <x-icon name="key" :size="14" />
-                                    </button>
-                                    <button class="btn btn-ghost btn-sm" wire:click="askResetTwoFactor({{ $u->id }})" title="Reset two-factor">
-                                        <x-icon name="shield" :size="14" />
                                     </button>
                                     @if ($u->is_active)
                                         <button class="btn btn-ghost btn-sm" wire:click="impersonate({{ $u->id }})" title="View the portal as this user">

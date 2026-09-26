@@ -18,12 +18,10 @@ use RuntimeException;
  *      is the record's identifier, never a generic word like DELETE, because a
  *      constant phrase becomes muscle memory within a week.
  *
- *   2. **A fresh authenticator code.** Defends against the wrong *person*, an
- *      unattended, unlocked machine. Because TwoFactor::verify() burns the
- *      timestep it accepts, one code cannot authorise two deletions.
+ *   2. **The actor's password, again.** Defends against the wrong *person*, an
+ *      unattended, unlocked machine (see StepUp).
  *
  * Neither check subsumes the other, which is why both are required.
- * Non-enrolled actors fall back to re-entering their password (see StepUp).
  */
 trait ConfirmsDangerously
 {
@@ -43,7 +41,7 @@ trait ConfirmsDangerously
 
     public string $dangerTyped = '';
 
-    /** TOTP code, or password for actors without a second factor. */
+    /** The actor's password, re-entered. */
     public string $dangerSecret = '';
 
     public string $dangerError = '';
@@ -118,20 +116,5 @@ trait ConfirmsDangerously
         }
 
         return true;
-    }
-
-    /** Label for the step-up input, so the dialog asks for the right thing. */
-    public function dangerChallengeLabel(): string
-    {
-        $actor = auth()->guard('superadmin')->user() ?? auth()->user();
-
-        return $actor ? app(StepUp::class)->challengeLabel($actor) : 'Confirm';
-    }
-
-    public function dangerUsesTotp(): bool
-    {
-        $actor = auth()->guard('superadmin')->user() ?? auth()->user();
-
-        return $actor ? app(StepUp::class)->usesTotp($actor) : false;
     }
 }

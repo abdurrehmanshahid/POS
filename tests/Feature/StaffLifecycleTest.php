@@ -56,7 +56,7 @@ class StaffLifecycleTest extends TestCase
 
     private function admin(): User
     {
-        return $this->enrolTwoFactor(User::where('username', 'adminansar')->firstOrFail());
+        return User::where('username', 'adminansar')->firstOrFail();
     }
 
     /** Create one through the screen, exactly as an administrator would. */

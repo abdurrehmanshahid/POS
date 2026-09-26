@@ -16,9 +16,6 @@ use Illuminate\Support\Str;
  *   - `SUPERADMIN_PASSWORD` in .env is used when present;
  *   - otherwise a strong random password is generated and printed ONCE to the
  *     console during seeding, and never stored anywhere in plaintext.
- *
- * Either way the account starts with no second factor confirmed, so the first
- * visit to /superadmin forces TOTP enrolment before any screen will render.
  */
 class SuperAdminSeeder extends Seeder
 {
@@ -48,7 +45,6 @@ class SuperAdminSeeder extends Seeder
         $this->command?->line('  URL:      /superadmin');
         $this->command?->line("  Username: {$username}");
         $this->command?->line('  Password: '.(env('SUPERADMIN_PASSWORD') ? '(from SUPERADMIN_PASSWORD in .env)' : $password));
-        $this->command?->line('  Two-factor enrolment is forced on first sign-in.');
         $this->command?->newLine();
     }
 }

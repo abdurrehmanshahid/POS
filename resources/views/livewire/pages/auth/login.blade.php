@@ -2,7 +2,6 @@
 
 use App\Models\User;
 use App\Services\Audit;
-use App\Services\TwoFactorChallenge;
 use App\Support\LoginThrottle;
 use App\Support\Nav;
 use Illuminate\Support\Facades\Auth;
@@ -14,10 +13,7 @@ use Livewire\Volt\Component;
 /**
  * Staff sign-in (spec §5.1).
  *
- * Password acceptance does NOT by itself create a session. If the account holds
- * a confirmed second factor the identity is parked as a pending challenge and
- * the session is only granted once a valid code arrives, see
- * {@see \App\Services\TwoFactorChallenge} for why that ordering matters.
+ * A correct password grants the session straight away; there is no second factor.
  */
 new #[Layout('components.layouts.guest')] class extends Component {
     /** Valid bcrypt digest that no supplied password can match, see login(). */
@@ -117,25 +113,10 @@ new #[Layout('components.layouts.guest')] class extends Component {
 
         $throttle->clear();
 
-        // Second factor confirmed AND switched on → withhold the session until a
-        // code arrives. The `enabled()` half matters: this used to test only
-        // whether a secret existed, so turning the factor off left everyone who
-        // had already enrolled still being challenged, with the Settings switch
-        // appearing to do nothing. Enrolment is what you HAVE; `enabled()` is
-        // whether the institute is asking for it.
-        if ($u->hasTwoFactorEnabled() && \App\Services\TwoFactor::enabled()) {
-            app(TwoFactorChallenge::class)->start($u, 'web', $this->remember);
-
-            return $this->redirect(route('two-factor.challenge'), navigate: false);
-        }
-
         return $this->completeSignIn($u);
     }
 
-    /**
-     * Grant the session. Reached either directly (no second factor required) or
-     * from the challenge screen once a code has been verified.
-     */
+    /** Grant the session. */
     private function completeSignIn(User $u)
     {
         Auth::login($u, $this->remember);
@@ -154,12 +135,6 @@ new #[Layout('components.layouts.guest')] class extends Component {
 
         if ($u->must_reset_password) {
             return $this->redirect(route('password.set'), navigate: true);
-        }
-
-        // A role that mandates TOTP but has none enrolled lands on the setup
-        // screen; EnsureTwoFactorEnrolled pins them there until it is done.
-        if ($u->mustEnrolTwoFactor()) {
-            return $this->redirect(route('two-factor.setup'), navigate: true);
         }
 
         session()->flash('toast', ['tone' => 'ok', 'title' => 'Signed in', 'msg' => 'Welcome back, '.$u->name]);

@@ -2,8 +2,6 @@
 
 namespace App\Models;
 
-use App\Models\Concerns\HasTwoFactorAuth;
-use App\Services\TwoFactor;
 use App\Support\Format;
 use Database\Factories\UserFactory;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
@@ -20,12 +18,12 @@ use Illuminate\Notifications\Notifiable;
  * Soft-deleted rather than deleted: a removed officer's name still has to
  * resolve on every admission they ever signed (`admissions.enrolled_by` is the
  * source of truth for who registered whom, and is never editable). Permanent
- * removal is the super admin's separate, TOTP-gated purge.
+ * removal is the super admin's separate, password-confirmed purge.
  */
 class User extends Authenticatable
 {
     /** @use HasFactory<UserFactory> */
-    use HasFactory, HasTwoFactorAuth, Notifiable, SoftDeletes;
+    use HasFactory, Notifiable, SoftDeletes;
 
     protected $fillable = [
         'name', 'username', 'email', 'phone', 'password',
@@ -39,14 +37,14 @@ class User extends Authenticatable
 
     protected function casts(): array
     {
-        return array_merge($this->twoFactorCasts(), [
+        return [
             'email_verified_at' => 'datetime',
             'password' => 'hashed',
             'is_active' => 'boolean',
             'must_reset_password' => 'boolean',
             'last_login_at' => 'datetime',
             'deactivated_at' => 'datetime',
-        ]);
+        ];
     }
 
     // ---- Relationships -----------------------------------------------------
@@ -74,20 +72,6 @@ class User extends Authenticatable
     public function hasPermission(string $key): bool
     {
         return (bool) $this->role?->hasPermission($key);
-    }
-
-    // ---- Two-factor --------------------------------------------------------
-
-    /**
-     * Staff inherit the obligation from their ROLE (`roles.requires_2fa`),
-     * seeded true for Administrator and false for Admission Officer. Keeping it
-     * on the role rather than the user means tightening security across a whole
-     * job function is one checkbox, not a loop over accounts, and it stays
-     * consistent with the system's rule that nothing is hardcoded to a role name.
-     */
-    public function requiresTwoFactor(): bool
-    {
-        return TwoFactor::enabled() && (bool) $this->role?->requires_2fa;
     }
 
     // ---- Display -----------------------------------------------------------

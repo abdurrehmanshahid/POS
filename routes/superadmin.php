@@ -12,16 +12,15 @@ use Livewire\Volt\Volt;
 |--------------------------------------------------------------------------
 |
 | A completely separate guard from the staff portal (see the `super_admins`
-| migration for why). Every authenticated route carries three guards, and the
+| migration for why). Every authenticated route carries two guards, and the
 | order matters:
 |
 |   auth:superadmin  → a session on THIS guard, not the staff one. A signed-in
 |                      Administrator has no more access here than a stranger.
 |   active:superadmin → deactivation ends a live session on the next request.
-|   2fa:superadmin    → pins an un-enrolled owner to the setup screen.
 |
-| Destructive actions layer a fourth check at the point of use (a fresh TOTP
-| code plus type-to-confirm), because holding a session is not the same as
+| Destructive actions layer a further check at the point of use (the password
+| again plus type-to-confirm), because holding a session is not the same as
 | being at the keyboard right now.
 |
 */
@@ -50,25 +49,16 @@ Route::prefix('superadmin')->name('superadmin.')->group(function () {
             return redirect()->route('superadmin.login');
         })->name('logout');
 
-        // Enrolment sits outside the 2fa gate, it is the one screen an
-        // un-enrolled owner is allowed to reach.
-        Volt::route('two-factor/setup', 'superadmin.two-factor-setup')->name('two-factor.setup');
+        Volt::route('dashboard', 'superadmin.dashboard')->name('dashboard');
+        Volt::route('performance', 'superadmin.performance')->name('performance');
+        Volt::route('staff', 'superadmin.staff')->name('staff');
+        Volt::route('students', 'superadmin.students')->name('students');
+        Volt::route('activity', 'superadmin.activity')->name('activity');
+        Volt::route('backups', 'superadmin.backups')->name('backups');
+        Volt::route('change-password', 'superadmin.change-password')->name('password.change');
 
-        Route::middleware('2fa:superadmin')->group(function () {
-            Volt::route('dashboard', 'superadmin.dashboard')->name('dashboard');
-            Volt::route('performance', 'superadmin.performance')->name('performance');
-            Volt::route('staff', 'superadmin.staff')->name('staff');
-            Volt::route('students', 'superadmin.students')->name('students');
-            Volt::route('activity', 'superadmin.activity')->name('activity');
-            Volt::route('backups', 'superadmin.backups')->name('backups');
-            // The owner's own credential. Inside the 2fa gate like everything
-            // else: a session that has not cleared the second factor must not be
-            // able to change the password that second factor protects.
-            Volt::route('change-password', 'superadmin.change-password')->name('password.change');
-
-            Route::get('backups/sql', [BackupController::class, 'sql'])->name('backups.sql');
-            Route::get('backups/csv/{table}', [BackupController::class, 'csv'])->name('backups.csv');
-        });
+        Route::get('backups/sql', [BackupController::class, 'sql'])->name('backups.sql');
+        Route::get('backups/csv/{table}', [BackupController::class, 'csv'])->name('backups.csv');
     });
 });
 

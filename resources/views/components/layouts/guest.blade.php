@@ -16,8 +16,6 @@
             'password.request' => 'Forgot password',
             'password.reset' => 'Reset password',
             'password.set' => 'Set your password',
-            'two-factor.challenge' => 'Two-factor code',
-            'two-factor.setup', 'superadmin.two-factor.setup' => 'Set up two-factor',
             'superadmin.login' => 'Sign in',
             default => 'Sign in',
         };

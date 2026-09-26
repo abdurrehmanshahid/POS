@@ -2,7 +2,6 @@
 
 use App\Models\SuperAdmin;
 use App\Services\Audit;
-use App\Services\TwoFactorChallenge;
 use App\Support\LoginThrottle;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Hash;
@@ -84,22 +83,13 @@ new #[Layout('components.layouts.guest')] class extends Component {
 
         $throttle->clear();
 
-        // Enrolled → withhold the session until a code is supplied.
-        if ($su->hasTwoFactorEnabled()) {
-            app(TwoFactorChallenge::class)->start($su, 'superadmin', false);
-
-            return $this->redirect(route('two-factor.challenge'), navigate: false);
-        }
-
-        // Not yet enrolled → a session that can reach the setup screen and
-        // nothing else (EnsureTwoFactorEnrolled pins it there).
         Auth::guard('superadmin')->login($su);
         session()->regenerate();
 
         $su->forceFill(['last_login_at' => now(), 'last_login_ip' => request()->ip()])->save();
         Audit::record('Super admin signed in', $su, ['subject' => $su, 'subject_label' => $su->name]);
 
-        return $this->redirect(route('superadmin.two-factor.setup'), navigate: true);
+        return $this->redirect(route('superadmin.dashboard'), navigate: true);
     }
 }; ?>
 
@@ -139,7 +129,7 @@ new #[Layout('components.layouts.guest')] class extends Component {
 
             <div style="display:flex;align-items:center;gap:8px;justify-content:center;font-size:var(--fs-2xs);color:var(--faint);margin-top:18px;line-height:1.5;text-align:center">
                 <x-icon name="lock" :size="13" style="flex:none" />
-                Two-factor is mandatory. Password resets are not available here.
+                Password resets are not available here.
             </div>
         </div>
 

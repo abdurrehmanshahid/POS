@@ -707,10 +707,8 @@ class ModulesAndPlansTest extends TestCase
         $this->assertStringContainsString('1st Installment', $html);
         $this->assertStringContainsString('certificate charges', $html);
 
-        // And the real route still serves it. `enrolTwoFactor` because the
-        // Administrator role requires a second factor, so an un-enrolled admin
-        // is redirected to set one up before any document route is reached.
-        $this->actingAs($this->enrolTwoFactor($this->admin()))
+        // And the real route still serves it.
+        $this->actingAs($this->admin())
             ->get(route('challans.pdf', $challan))
             ->assertOk()
             ->assertHeader('content-type', 'application/pdf');

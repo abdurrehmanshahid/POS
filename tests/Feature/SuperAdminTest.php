@@ -12,12 +12,10 @@ use App\Services\Audit;
 use App\Services\ChallanActions;
 use App\Services\Impersonation;
 use App\Services\RecordRemoval;
-use App\Services\TwoFactor;
 use Database\Seeders\DatabaseSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Hash;
 use Livewire\Livewire;
-use PragmaRX\Google2FA\Google2FA;
 use Tests\TestCase;
 
 /** The /superadmin guard, panel, destructive-action gating and impersonation. */
@@ -25,38 +23,26 @@ class SuperAdminTest extends TestCase
 {
     use RefreshDatabase;
 
-    private string $secret;
+    private const PASSWORD = 'Owner@Pass1';
 
     protected function setUp(): void
     {
         parent::setUp();
         $this->seed(DatabaseSeeder::class);
-        $this->secret = app(TwoFactor::class)->generateSecret();
     }
 
     private function su(): SuperAdmin
     {
-        return $this->enrolTwoFactor(SuperAdmin::firstOrFail(), $this->secret);
+        $su = SuperAdmin::firstOrFail();
+        $su->forceFill(['password' => self::PASSWORD])->save();
+
+        return $su;
     }
 
+    /** What the step-up prompt asks for: the super admin's own password. */
     private function code(): string
     {
-        return app(Google2FA::class)->getCurrentOtp($this->secret);
-    }
-
-    /**
-     * A valid code for a LATER timestep.
-     *
-     * Needed because each destructive action burns the timestep it consumed, so
-     * a test doing two of them cannot reuse one code, that is the replay guard
-     * doing its job. Real time does not advance during a test, but the ±1
-     * window means a code minted one step ahead is accepted now and is strictly
-     * newer than the burned one, which is exactly the situation of an operator
-     * waiting for their authenticator to roll over.
-     */
-    private function nextCode(int $steps = 1): string
-    {
-        return app(Google2FA::class)->oathTotp($this->secret, (int) floor(time() / 30) + $steps);
+        return self::PASSWORD;
     }
 
     // ---- Guard isolation ----------------------------------------------------
@@ -68,7 +54,7 @@ class SuperAdminTest extends TestCase
 
     public function test_an_institute_admin_cannot_reach_the_panel(): void
     {
-        $admin = $this->enrolTwoFactor(User::where('username', 'adminansar')->firstOrFail());
+        $admin = User::where('username', 'adminansar')->firstOrFail();
 
         // Signed in on the `web` guard with every one of the 16 permissions...
         $this->actingAs($admin)->get('/superadmin/dashboard')->assertRedirect();
@@ -82,31 +68,20 @@ class SuperAdminTest extends TestCase
         $this->assertDatabaseMissing('users', ['username' => $su->username]);
     }
 
-    public function test_super_admin_must_enrol_two_factor_before_any_screen(): void
-    {
-        $su = SuperAdmin::firstOrFail();   // not enrolled
-        $this->assertTrue($su->requiresTwoFactor());
-
-        $this->actingAs($su, 'superadmin')
-            ->get('/superadmin/dashboard')
-            ->assertRedirect(route('superadmin.two-factor.setup'));
-    }
-
-    public function test_password_alone_never_grants_a_panel_session(): void
+    public function test_the_password_alone_opens_the_panel(): void
     {
         $su = $this->su();
-        $su->forceFill(['password' => 'Owner@Pass1'])->save();
 
         Livewire::test('superadmin.login')
             ->set('user', $su->username)
-            ->set('password', 'Owner@Pass1')
+            ->set('password', self::PASSWORD)
             ->call('login')
-            ->assertRedirect(route('two-factor.challenge'));
+            ->assertRedirect(route('superadmin.dashboard'));
 
-        $this->assertGuest('superadmin');
+        $this->assertAuthenticatedAs($su, 'superadmin');
     }
 
-    public function test_panel_screens_render_for_an_enrolled_super_admin(): void
+    public function test_panel_screens_render_for_a_super_admin(): void
     {
         $su = $this->su();
 
@@ -119,7 +94,7 @@ class SuperAdminTest extends TestCase
 
     // ---- Destructive gating ---------------------------------------------------
 
-    public function test_removal_requires_both_the_typed_phrase_and_a_code(): void
+    public function test_removal_requires_both_the_typed_phrase_and_the_password(): void
     {
         $su = $this->su();
         $student = Student::where('student_code', 'BBT-R26-0001')->firstOrFail();
@@ -233,25 +208,6 @@ class SuperAdminTest extends TestCase
         $this->assertNotNull(User::find($officer->id));
     }
 
-    public function test_a_code_cannot_authorise_two_removals(): void
-    {
-        $su = $this->su();
-        $code = $this->code();
-        $a = Student::where('student_code', 'BBT-R26-0001')->firstOrFail();
-        $b = Student::where('student_code', 'BBT-R26-0010')->firstOrFail();
-
-        $c = Livewire::actingAs($su, 'superadmin')->test('superadmin.students');
-
-        $c->call('askRemove', $a->id)->set('dangerTyped', 'BBT-R26-0001')
-            ->set('dangerSecret', $code)->set('dangerReason', 'one')->call('confirmDanger');
-        $this->assertNull(Student::find($a->id));
-
-        // Same code again on a different record must be refused.
-        $c->call('askRemove', $b->id)->set('dangerTyped', 'BBT-R26-0010')
-            ->set('dangerSecret', $code)->set('dangerReason', 'two')->call('confirmDanger');
-        $this->assertNotNull(Student::find($b->id), 'A used code must not authorise a second removal.');
-    }
-
     // ---- Staff actions ---------------------------------------------------------
 
     public function test_password_reset_issues_a_temp_password_and_forces_a_change(): void
@@ -275,21 +231,6 @@ class SuperAdminTest extends TestCase
             'action' => 'Password reset by super admin',
             'subject_id' => $officer->id,
         ]);
-    }
-
-    public function test_two_factor_reset_clears_the_secret(): void
-    {
-        $su = $this->su();
-        $admin = $this->enrolTwoFactor(User::where('username', 'adminansar')->firstOrFail());
-        $this->assertTrue($admin->hasTwoFactorEnabled());
-
-        Livewire::actingAs($su, 'superadmin')
-            ->test('superadmin.staff')
-            ->call('askResetTwoFactor', $admin->id)
-            ->set('dangerSecret', $this->code())
-            ->call('confirmDanger');
-
-        $this->assertFalse($admin->fresh()->hasTwoFactorEnabled());
     }
 
     public function test_removing_a_staff_account_also_ends_their_access(): void
@@ -321,9 +262,8 @@ class SuperAdminTest extends TestCase
         $c->call('askRemove', $officer->id)->set('dangerTyped', 'fatimanoor')
             ->set('dangerSecret', $this->code())->set('dangerReason', 'x')->call('confirmDanger');
 
-        // A second destructive action needs a genuinely newer code.
         $c->call('askRestore', $officer->id)
-            ->set('dangerSecret', $this->nextCode())
+            ->set('dangerSecret', $this->code())
             ->call('confirmDanger');
 
         $restored = User::withTrashed()->find($officer->id);
@@ -447,7 +387,7 @@ class SuperAdminTest extends TestCase
 
     public function test_backups_are_unreachable_to_staff(): void
     {
-        $admin = $this->enrolTwoFactor(User::where('username', 'adminansar')->firstOrFail());
+        $admin = User::where('username', 'adminansar')->firstOrFail();
 
         $this->actingAs($admin)->get(route('superadmin.backups.sql'))->assertRedirect();
     }

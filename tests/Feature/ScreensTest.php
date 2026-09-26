@@ -32,14 +32,9 @@ class ScreensTest extends TestCase
         $this->seed(DatabaseSeeder::class);
     }
 
-    /**
-     * The Administrator role requires a second factor, so an admin that has not
-     * enrolled is pinned to the setup screen. Tests that want to reach a real
-     * screen enrol first; the gate itself is asserted in TwoFactorTest.
-     */
     private function admin(): User
     {
-        return $this->enrolTwoFactor(User::where('username', 'adminansar')->firstOrFail());
+        return User::where('username', 'adminansar')->firstOrFail();
     }
 
     private function officer(): User
