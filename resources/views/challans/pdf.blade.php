@@ -19,6 +19,11 @@
         $course = $adm?->course;
         $cohort = $adm?->cohort;
 
+        // Ordered here rather than in the loop: the voucher prints three
+        // copies of this table, and "Installment 2" appearing above
+        // "Advance Payment" on a torn-off bank copy is not recoverable.
+        $schedule = $challan->installments->sortBy('seq')->values();
+
         $advance = $challan->paidAmount();
         $balance = $challan->balance();
         $paid = $challan->isPaid();
@@ -67,13 +72,28 @@
         // course so a challan raised before grouped invoicing still prints.
         // Cancelled enrolments are excluded: a course the student dropped has
         // no business on the voucher they are handed to pay with.
-        $billedCourses = $challan->admissions
+        // The ADMISSIONS, not their courses. The voucher has to name the batch
+        // and the modules bought on each line, and both hang off the enrolment
+        // — plucking the course threw away the only thing that knows them, so
+        // a three-course invoice could only ever print the anchor's batch.
+        $billedLines = $challan->admissions
             ->where('status', '!=', 'cancelled')
-            ->pluck('course')
-            ->filter();
-        if ($billedCourses->isEmpty() && $course) {
-            $billedCourses = collect([$course]);
+            ->filter(fn ($line) => $line->course !== null)
+            ->values();
+        if ($billedLines->isEmpty() && $adm && $course) {
+            $billedLines = collect([$adm]);
         }
+
+        // One batch for the whole invoice reads better on the institute's form
+        // and is the overwhelmingly common case. Several, and each has to be
+        // said against the course it belongs to or the row is a guess.
+        $batches = $billedLines
+            ->filter(fn ($line) => $line->cohort !== null)
+            ->map(fn ($line) => $billedLines->count() > 1
+                ? $line->course->code.' '.$line->cohort->name
+                : $line->cohort->name)
+            ->unique()
+            ->values();
 
         $contactEmail = config('institute.contact_email');
         $contactPhone = config('institute.contact_phone');
@@ -184,6 +204,17 @@
                     @if ($challan->discount_amount > 0)
                         <tr><td class="k">Discount</td><td class="v">{{ rtrim(rtrim(number_format($discountPct, 2), '0'), '.') }}%<br><span style="font-weight:normal;color:#6b7192">{{ $challan->discount_reason }}</span></td></tr>
                     @endif
+                    {{-- The certificate charge, on its own line and AFTER the
+                         discount, because it is not discounted. A parent
+                         checking the arithmetic on this voucher has to be able
+                         to: tuition, less the discount, subtotal, plus the
+                         certificate, total. Absent entirely on the challans
+                         raised before the charge existed, which carry 0 and
+                         must keep totalling what they always did. --}}
+                    @if ($challan->certificate_amount > 0)
+                        <tr><td class="k">Subtotal</td><td class="v">{{ Format::money($challan->base_amount - $challan->discount_amount) }}</td></tr>
+                        <tr><td class="k">Certificate charges</td><td class="v">{{ Format::money($challan->certificate_amount) }}</td></tr>
+                    @endif
                     <tr class="total"><td class="k" style="color:#2A2668;font-weight:bold">Net Payable</td><td class="v" style="color:#2A2668">{{ Format::money($challan->net_amount) }}</td></tr>
                     {{-- Rendered as a list because the institute's invoice bills
                          several courses together on one document. This challan
@@ -198,20 +229,57 @@
                         @if ($challan->isCharge())
                             <div><span class="bullet">•</span> {{ $challan->subject() }}</div>
                         @else
-                            @foreach ($billedCourses as $line)
-                                <div><span class="bullet">•</span> {{ $line->title }}
-                                    <span style="font-weight:normal;color:#6b7192">({{ $line->code }})</span></div>
+                            @foreach ($billedLines as $line)
+                                @php $modules = $line->moduleLabel(); @endphp
+                                <div><span class="bullet">•</span> {{ $line->course->title }}
+                                    <span style="font-weight:normal;color:#6b7192">({{ $line->course->code }})</span>
+                                    {{-- What of the course this student actually
+                                         bought. Blank for a course priced whole,
+                                         where the title already says all of it. --}}
+                                    @if ($modules !== '')
+                                        <div style="font-weight:normal;color:#6b7192;padding-left:9px">{{ $modules }}</div>
+                                    @endif
+                                </div>
                             @endforeach
                         @endif
                     </td></tr>
                     @unless ($challan->isCharge())
-                        <tr><td class="k">Batch</td><td class="v">{{ $cohort?->name ?? '—' }}</td></tr>
+                        <tr><td class="k">Batch</td><td class="v">{{ $batches->isNotEmpty() ? $batches->implode(', ') : '—' }}</td></tr>
                     @endunless
                     <tr><td class="k">Advance Payment</td><td class="v">{{ Format::money($advance) }}</td></tr>
                     <tr class="{{ $balance > 0 ? 'over' : '' }}"><td class="k">Balance</td><td class="v">{{ Format::money($balance) }}</td></tr>
                     {{-- A voucher handed to a parent must not show a blank where a deadline
                          belongs; an imported legacy balance may genuinely have none. --}}
-                    <tr><td class="k">Due Date</td><td class="v">{{ $challan->due_date ? Format::date($challan->due_date) : 'Not scheduled' }}</td></tr>
+                    {{-- The schedule, when there is one. Without this a
+                         two-part plan printed a single total and a single
+                         date — the LAST one — so the voucher asked a parent
+                         for the whole fee on the day only the second half was
+                         actually due. The plan existed in the database and
+                         nowhere on the document the payer reads. --}}
+                    @if ($schedule->isNotEmpty())
+                        @foreach ($schedule as $part)
+                            {{-- Not "Advance Payment": that label is taken, a
+                                 few rows down, by the money actually received
+                                 so far. Two rows under one name on a document
+                                 a parent pays from is a demand they cannot
+                                 read — one says 45,000, the other 0. --}}
+                            <tr><td class="k">{{ (['1st', '2nd', '3rd'][$part->seq - 1] ?? $part->seq.'th').' Installment' }}</td><td class="v">
+                                {{ Format::money($part->amount) }}
+                                <span style="font-weight:normal;color:#6b7192">· by {{ Format::date($part->due_date) }}</span>
+                                {{-- Said on the line that carries it. The
+                                     charge is collected up front, and a payer
+                                     comparing the two installments needs to
+                                     know why the first is the larger one. --}}
+                                @if ($part->seq === 1 && $challan->certificate_amount > 0)
+                                    <div style="font-weight:normal;color:#6b7192">includes {{ Format::money($challan->certificate_amount) }} certificate charges</div>
+                                @endif
+                                @if ($part->status === 'paid')
+                                    <span style="font-weight:normal;color:#0f7b4f">· received</span>
+                                @endif
+                            </td></tr>
+                        @endforeach
+                    @endif
+                    <tr><td class="k">{{ $schedule->isNotEmpty() ? 'Settle in full by' : 'Due Date' }}</td><td class="v">{{ $challan->due_date ? Format::date($challan->due_date) : 'Not scheduled' }}</td></tr>
                     <tr><td class="k">Officer</td><td class="v">{{ $adm?->enroller?->name ?? $challan->raiser?->name }}</td></tr>
                     <tr><td class="k">{{ $challan->isCharge() ? 'Reference' : 'Admission #' }}</td><td class="v tnum">{{ $adm?->reg_no }}@if ($adm)<span style="font-weight:normal;color:#6b7192"> · </span>@endif<span style="font-weight:normal;color:#6b7192">{{ $student?->student_code }}</span></td></tr>
                 </table>

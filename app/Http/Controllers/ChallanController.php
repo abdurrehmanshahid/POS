@@ -82,7 +82,12 @@ class ChallanController extends Controller
             // `admissions.course` (plural) as well as the anchor's: the voucher
             // lists every course on the invoice, and without this it lazy-loads
             // one query per course while rendering the PDF.
-            'admission.enroller', 'admissions.course', 'discountApprover', 'installments', 'payments',
+            // `admissions.cohort` and the module rows for the same reason: the
+            // voucher names the batch and the modules bought on EVERY line it
+            // bills, not just the anchor's, and lazy-loading those while
+            // rendering a PDF is a query per course per copy.
+            'admission.enroller', 'admissions.course', 'admissions.cohort',
+            'admissions.modules.module', 'discountApprover', 'installments', 'payments',
         );
 
         $this->assertVisible($request, $challan);

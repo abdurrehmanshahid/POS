@@ -144,8 +144,11 @@ class RollResolver
                 : "ambiguous course: \"{$part}\" matches ".$matches->count().' courses');
         }
 
-        // The same course twice on one line cannot become two live enrolments —
-        // the database forbids it, and it is a typo rather than an intention.
+        // One line naming the same course twice is a typo rather than an
+        // intention: a genuine second enrolment is a second line, with its own
+        // money on it. (A student may hold two live enrolments on one course
+        // since 2026_09_17_000001 — this rejection is about the spreadsheet,
+        // not about that rule.)
         $codes = array_map(fn (Course $c) => $c->code, $row->courses);
         if (count($codes) !== count(array_unique($codes))) {
             $row->reject('the same course is named twice');

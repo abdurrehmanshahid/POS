@@ -122,9 +122,12 @@ class FindDuplicateRecords extends Command
     /**
      * Same student on the same course, seconds apart.
      *
-     * The unique live-enrolment index (BUG-17) already stops this while both
-     * are live, so anything here means one of them was cancelled afterwards —
-     * worth a look, but far less likely than the other two.
+     * The unique live-enrolment index (BUG-17) used to stop this outright
+     * while both were live. It was lifted in 2026_09_17_000001 so a student can
+     * sit a course again alongside a running enrolment, which makes this check
+     * the only thing watching the pair — a genuine repeat is raised minutes or
+     * months apart, so two of them seconds apart is still the double-submit it
+     * always was.
      */
     private function admissions(int $window): int
     {

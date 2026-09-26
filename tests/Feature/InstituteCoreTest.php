@@ -14,7 +14,6 @@ use App\Services\RegistrationService;
 use App\Services\Sequences;
 use Database\Seeders\DatabaseSeeder;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
-use Illuminate\Database\QueryException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
@@ -155,11 +154,18 @@ class InstituteCoreTest extends TestCase
         $this->assertCount(1, $result['challans'], 'Billed on a single invoice.');
         $this->assertSame('BBT-R26-0011', $result['student']->student_code);
 
-        // WD-101 20000 + AI-201 20000 = 40000, 10% -> disc 4000, net 36000.
+        // WD-101 20000 + AI-201 20000 = 40000, 10% -> disc 4000, subtotal
+        // 36000, plus 700 certificate charges per course = 37400.
+        //
+        // The charge sits OUTSIDE base_amount on purpose: that column is the
+        // denominator RevenueShare apportions per-course revenue over, and
+        // folding a non-tuition charge into it would credit the courses with
+        // money they did not earn. See 2026_09_17_000003.
         $invoice = $result['challans'][0];
         $this->assertSame(40000, $invoice->base_amount);
         $this->assertSame(4000, $invoice->discount_amount);
-        $this->assertSame(36000, $invoice->net_amount);
+        $this->assertSame(1400, $invoice->certificate_amount);
+        $this->assertSame(37400, $invoice->net_amount);
         $this->assertSame($officer->id, $invoice->discount_approved_by);
         $this->assertTrue($invoice->auditLogs()->where('action', 'Discount applied')->exists());
         $this->assertTrue($invoice->auditLogs()->where('action', 'Challan issued')->exists());
@@ -614,9 +620,9 @@ class InstituteCoreTest extends TestCase
         $this->assertNull($result['admissions'][0]->challan()->first());
     }
 
-    // ---- One live enrolment per student per course ---------------------------
+    // ---- Repeat enrolments ---------------------------------------------------
 
-    public function test_a_student_cannot_be_enrolled_on_the_same_course_twice(): void
+    public function test_a_student_may_be_enrolled_on_the_same_course_again(): void
     {
         $course = Course::where('code', 'SHOP-101')->firstOrFail();
         $student = Student::firstOrFail();
@@ -629,18 +635,18 @@ class InstituteCoreTest extends TestCase
 
         $this->assertSame(1, $live());
 
-        try {
-            $service->register($this->admin(), ['student_id' => $student->id, 'course_ids' => [$course->id]]);
-            $this->fail('A second live enrolment on the same course must be refused.');
-        } catch (InvalidArgumentException $e) {
-            $this->assertStringContainsString('already enrolled', $e->getMessage());
-        }
+        // A repeat sitting alongside a running one. Each is its own enrolment
+        // with its own challan, which is what the institute bills for.
+        $second = $service->register($this->admin(), [
+            'student_id' => $student->id, 'course_ids' => [$course->id],
+        ]);
 
-        // The point of the guard: one seat, one challan, one fee.
-        $this->assertSame(1, $live());
+        $this->assertCount(1, $second['admissions']);
+        $this->assertCount(1, $second['challans']);
+        $this->assertSame(2, $live());
     }
 
-    public function test_the_database_refuses_a_duplicate_live_enrolment(): void
+    public function test_the_database_permits_a_second_live_enrolment(): void
     {
         $course = Course::where('code', 'SHOP-101')->firstOrFail();
         $student = Student::firstOrFail();
@@ -649,14 +655,16 @@ class InstituteCoreTest extends TestCase
             'student_id' => $student->id, 'course_ids' => [$course->id],
         ]);
 
-        // The service guard is for the message; the index is what holds under
-        // two officers submitting the same registration at the same moment.
-        $this->expectException(QueryException::class);
-
-        Admission::create([
+        // The unique index that used to hold this pair down is gone, so a
+        // direct write is no longer rejected by the driver either.
+        $duplicate = Admission::create([
             'reg_no' => 'BBT-ADM-9999', 'student_id' => $student->id, 'course_id' => $course->id,
             'enrolled_by' => $this->admin()->id, 'status' => 'validated',
         ]);
+
+        $this->assertTrue($duplicate->exists);
+        $this->assertSame(2, Admission::where('student_id', $student->id)
+            ->where('course_id', $course->id)->where('status', '!=', 'cancelled')->count());
     }
 
     public function test_a_cancelled_enrolment_frees_the_student_to_take_the_course_again(): void
@@ -681,22 +689,26 @@ class InstituteCoreTest extends TestCase
         $this->assertSame(2, Admission::where('student_id', $student->id)->where('course_id', $course->id)->count());
     }
 
-    public function test_the_wizard_marks_courses_the_student_already_holds(): void
+    public function test_the_wizard_marks_courses_the_student_already_holds_without_blocking_them(): void
     {
         $student = Student::firstOrFail();
         $enrolled = $student->admissions()->where('status', '!=', 'cancelled')->first();
 
         $this->assertNotNull($enrolled, 'The seed student must already hold an enrolment.');
 
-        Livewire::actingAs($this->admin())
+        $component = Livewire::actingAs($this->admin())
             ->test('pages.registrations')
             ->call('openWizard')
             ->set('mode', 'existing')
             ->set('pickedStudentId', $student->id)
             ->assertSet('courseIds', [])
             ->call('toggleCourse', $enrolled->course_id)
-            // Refused, so nothing was selected.
-            ->assertSet('courseIds', []);
+            // Warned about, but selected: a repeat enrolment is allowed.
+            ->assertSet('courseIds', [$enrolled->course_id])
+            ->assertDispatched('bbt-toast');
+
+        // Still reported to the view, which is what greys the card's label.
+        $this->assertContains($enrolled->course_id, $component->instance()->enrolledCourseIds());
     }
 
     public function test_an_officer_cannot_enrol_a_student_outside_their_scope(): void

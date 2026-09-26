@@ -46,7 +46,33 @@ final class RevenueShare
         //
         // That is the whole reason apportionment was single-sourced here in the
         // first place. Five call sites, one place to be right.
-        return self::share(NetReceipts::ofPayment());
+        return self::share(self::tuitionPortionOf(NetReceipts::ofPayment()));
+    }
+
+    /**
+     * The part of a receipt that is tuition, i.e. not the certificate charge.
+     *
+     * A challan bills tuition AND a fixed per-course certificate charge, and
+     * only the first is revenue a COURSE earned. Apportioning the whole
+     * receipt credited the courses with the charge as well: two 20,000 courses
+     * on one invoice with 1,400 of certificate charges reported 20,700 each,
+     * so the Reports screen said a course had earned money the institute
+     * collected on behalf of its printer.
+     *
+     * Split in proportion rather than "certificate first", because this runs
+     * per payment ROW in SQL and has no view of what earlier collections
+     * already covered. Proportional is the only rule that is stable under
+     * partial payment, reversal and re-collection, and the shares still sum:
+     * course revenue plus certificate revenue is exactly what was banked.
+     *
+     * A no-op on every challan raised before the charge existed — their
+     * `certificate_amount` is 0, so the ratio is 1 and the figure is
+     * unchanged to the rupee.
+     */
+    private static function tuitionPortionOf(string $amount): string
+    {
+        return '('.$amount.') * (challans.net_amount - challans.certificate_amount) * 1.0'
+            .' / NULLIF(challans.net_amount, 0)';
     }
 
     /** Summed across the rows of a grouped query. */
@@ -63,7 +89,9 @@ final class RevenueShare
      */
     public static function sumOfBilled(): string
     {
-        return 'SUM('.self::share('challans.net_amount').')';
+        // Tuition only, for the same reason {@see tuitionPortionOf()} gives:
+        // the certificate charge is not something a course billed.
+        return 'SUM('.self::share('(challans.net_amount - challans.certificate_amount)').')';
     }
 
     /**

@@ -3,6 +3,7 @@
 use App\Models\Admission;
 use App\Models\Challan;
 use App\Models\Course;
+use App\Models\CourseModule;
 use App\Models\Teacher;
 use App\Support\Format;
 use App\Support\RevenueShare;
@@ -45,6 +46,21 @@ new class extends Component {
     public $fee = null;
     public $capacity = null;
     public string $fStatus = 'active';
+
+    /**
+     * The course's modules as the form holds them: a list of
+     * ['id' => ?int, 'title' => string, 'fee' => mixed].
+     *
+     * `id` is null for a row the officer has just added and present for one
+     * already in the catalogue, which is what lets save() tell "rename this
+     * module" apart from "retire that one and sell a new one" — a distinction
+     * that matters because the first must not disturb the enrolments already
+     * pointing at it.
+     *
+     * Empty means the course is priced whole by `fee`, which is every course
+     * in the catalogue today.
+     */
+    public array $modules = [];
 
     // ---- Detail drawer -----------------------------------------------------
 
@@ -111,6 +127,12 @@ new class extends Component {
         $this->fee = $course->fee;
         $this->capacity = $course->capacity;
         $this->fStatus = $course->is_active ? 'active' : 'inactive';
+        // Retired modules are deliberately not loaded. They exist only to keep
+        // old vouchers readable; putting them back in front of the officer
+        // would invite them to be re-activated by accident.
+        $this->modules = $course->modules()->sellable()->get()
+            ->map(fn (CourseModule $m) => ['id' => $m->id, 'title' => $m->title, 'fee' => $m->fee])
+            ->values()->all();
         $this->resetErrorBag();
         $this->detailOpen = false;
         $this->formOpen = true;
@@ -156,6 +178,20 @@ new class extends Component {
             'trainerName.max' => 'Instructor name is too long (120 characters maximum).',
         ]);
 
+        // Modules, if any. Each needs a name and a real price: a module at
+        // zero is not a free module, it is an unfinished form, and saving it
+        // would put a line on a fee voucher that explains none of the total.
+        $validator->after(function ($v) {
+            foreach ($this->modules as $i => $m) {
+                if (trim((string) ($m['title'] ?? '')) === '') {
+                    $v->errors()->add('modules.'.$i.'.title', 'Module '.($i + 1).' needs a name.');
+                }
+                if ((int) ($m['fee'] ?? 0) < 1) {
+                    $v->errors()->add('modules.'.$i.'.fee', 'Module '.($i + 1).' needs a fee above 0.');
+                }
+            }
+        });
+
         // Case-insensitive uniqueness on code (exclude self on edit).
         $validator->after(function ($v) {
             $dupe = Course::whereRaw('LOWER(code)=?', [strtolower($this->code)])
@@ -188,9 +224,63 @@ new class extends Component {
             'is_active' => $this->fStatus === 'active',
         ])->save();
 
+        $this->syncModules($course);
+
         $this->dispatch('bbt-toast', tone: 'ok', title: 'Course saved', msg: $course->code);
         $this->formOpen = false;
         $this->resetForm();
+    }
+
+    /**
+     * Write the form's module rows onto the course.
+     *
+     * Three cases, and the third is the one worth spelling out:
+     *
+     *   kept    matched by id, updated in place. An enrolment that bought
+     *           "Module 2" keeps pointing at the same row through a rename or
+     *           a re-price, so its voucher still names what it bought.
+     *   added   a row with no id. Created at the next free position.
+     *   gone    in the catalogue but no longer on the form. NEVER hard-deleted
+     *           if it has been sold: `admission_modules` restricts on delete,
+     *           so the database would refuse anyway, and the right answer is
+     *           not to force it through but to stop offering the module while
+     *           leaving every voucher that lists it intact.
+     */
+    protected function syncModules(Course $course): void
+    {
+        $keptIds = collect($this->modules)->pluck('id')->filter()->map(fn ($id) => (int) $id)->all();
+
+        foreach ($course->modules()->sellable()->get() as $existing) {
+            if (in_array($existing->id, $keptIds, true)) {
+                continue;
+            }
+
+            if ($existing->hasBeenSold()) {
+                $existing->update(['is_active' => false]);
+            } else {
+                $existing->delete();
+            }
+        }
+
+        foreach (array_values($this->modules) as $i => $row) {
+            $attributes = [
+                // Position is the form's order, so moving a module up the
+                // list is the same action as renumbering it. Safe to assign
+                // straight through because (course_id, seq) is a plain index
+                // rather than a unique one — see 2026_09_17_000002 for why it
+                // has to be, and why no two-pass shuffle is needed here.
+                'seq' => $i + 1,
+                'title' => trim((string) $row['title']),
+                'fee' => (int) $row['fee'],
+                'is_active' => true,
+            ];
+
+            if ($row['id']) {
+                CourseModule::where('id', $row['id'])->update($attributes);
+            } else {
+                $course->modules()->create($attributes);
+            }
+        }
     }
 
     /**
@@ -241,12 +331,42 @@ new class extends Component {
         $this->fee = null;
         $this->capacity = null;
         $this->fStatus = 'active';
+        $this->modules = [];
         $this->resetErrorBag();
+    }
+
+    // ---- Modules -----------------------------------------------------------
+
+    public function addModule(): void
+    {
+        if (! auth()->user()->can('courses.manage')) { return; }
+        $this->modules[] = ['id' => null, 'title' => 'Module '.(count($this->modules) + 1), 'fee' => null];
+    }
+
+    /**
+     * Take a module off the form.
+     *
+     * What actually happens to it is settled in save(), not here: one that has
+     * never been sold is deleted outright, and one with enrolments behind it
+     * is retired instead. Deciding that at this point would mean writing to
+     * the catalogue before the officer has pressed Save.
+     */
+    public function removeModule(int $i): void
+    {
+        if (! auth()->user()->can('courses.manage')) { return; }
+        unset($this->modules[$i]);
+        $this->modules = array_values($this->modules);
+    }
+
+    /** What the full course will cost once these modules are saved. */
+    public function moduleTotal(): int
+    {
+        return (int) collect($this->modules)->sum(fn ($m) => (int) ($m['fee'] ?? 0));
     }
 
     public function with(): array
     {
-        $courses = Course::with(['trainer', 'admissions'])->orderBy('code')->get();
+        $courses = Course::with(['trainer', 'admissions', 'modules'])->orderBy('code')->get();
         $selected = $this->selectedId ? $courses->firstWhere('id', $this->selectedId) : null;
 
         $enrolled = collect();
@@ -534,6 +654,72 @@ new class extends Component {
                                     <input type="number" min="1" class="input @error('capacity') is-error @enderror" wire:model="capacity" placeholder="Unlimited">
                                     @error('capacity') <span class="field-error">{{ $message }}</span> @enderror
                                 </div>
+                            </div>
+
+                            {{-- Modules. Optional, and most courses have
+                                 none: a course with an empty list is sold
+                                 whole at the Fee above, exactly as every
+                                 course was before modules existed. --}}
+                            <div style="margin-bottom:16px;padding:14px;border:1.5px solid var(--border2);border-radius:12px;background:var(--surface2)">
+                                <div style="display:flex;justify-content:space-between;align-items:center">
+                                    <label class="label" style="margin:0">Modules <span class="label-opt">Optional</span></label>
+                                    <button type="button" class="btn btn-sm btn-ghost" wire:click="addModule">
+                                        <x-icon name="plus" :size="14" /> Add module
+                                    </button>
+                                </div>
+
+                                @if (! $modules)
+                                    <p style="font-size:var(--fs-2xs);color:var(--muted);margin:8px 0 0">
+                                        This course is sold whole, at the fee above. Add modules to let a
+                                        student buy part of it &mdash; the full course then costs whatever
+                                        the modules add up to.
+                                    </p>
+                                @else
+                                    <div style="display:flex;flex-direction:column;gap:8px;margin-top:10px">
+                                        @foreach ($modules as $i => $m)
+                                            <div style="display:flex;gap:8px;align-items:flex-start">
+                                                <span class="tnum" style="flex:none;width:22px;padding-top:9px;font-size:var(--fs-2xs);font-weight:700;color:var(--faint)">{{ $i + 1 }}.</span>
+                                                <div style="flex:1">
+                                                    <input class="input @error('modules.'.$i.'.title') is-error @enderror"
+                                                           wire:model="modules.{{ $i }}.title" placeholder="Module name">
+                                                    @error('modules.'.$i.'.title') <span class="field-error">{{ $message }}</span> @enderror
+                                                </div>
+                                                <div style="flex:none;width:130px">
+                                                    <input type="number" min="1" class="input tnum @error('modules.'.$i.'.fee') is-error @enderror"
+                                                           wire:model.live.debounce.400ms="modules.{{ $i }}.fee" placeholder="Fee">
+                                                    @error('modules.'.$i.'.fee') <span class="field-error">{{ $message }}</span> @enderror
+                                                </div>
+                                                <button type="button" class="btn btn-sm btn-ghost" style="flex:none;margin-top:1px"
+                                                        wire:click="removeModule({{ $i }})" title="Remove this module">
+                                                    <x-icon name="x" :size="14" />
+                                                </button>
+                                            </div>
+                                        @endforeach
+                                    </div>
+
+                                    <div style="display:flex;justify-content:space-between;margin-top:12px;padding-top:10px;border-top:1px solid var(--border2)">
+                                        <span style="font-size:var(--fs-xs);font-weight:700;color:var(--ink)">Full course</span>
+                                        <span class="tnum" style="font-size:var(--fs-sm);font-weight:800;color:var(--navy)">{{ Format::money($this->moduleTotal()) }}</span>
+                                    </div>
+                                    {{-- Said out loud because the Fee box above
+                                         is still on screen and still filled in.
+                                         An officer who changes it and sees no
+                                         effect on the wizard would reasonably
+                                         conclude the save had failed. --}}
+                                    <p style="font-size:var(--fs-2xs);color:var(--muted);margin:8px 0 0">
+                                        While this course has modules, registrations are priced from them and the
+                                        Fee field above is not used.
+                                    </p>
+                                    {{-- Removing a module the institute has
+                                         already sold cannot erase it: the
+                                         vouchers that list it have to keep
+                                         adding up. --}}
+                                    <p style="font-size:var(--fs-2xs);color:var(--muted);margin:4px 0 0">
+                                        Removing a module that students have already bought retires it instead of
+                                        deleting it. It stops being offered; existing enrolments and their vouchers
+                                        are untouched.
+                                    </p>
+                                @endif
                             </div>
 
                             <div style="margin-bottom:4px">

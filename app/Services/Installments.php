@@ -30,8 +30,7 @@ use InvalidArgumentException;
  * The two are never allowed to disagree. Installment status is DERIVED from the
  * payments ledger by `reconcile()` rather than maintained alongside it, so no
  * sequence of collections, corrections or imports can leave the schedule
- * claiming something the money does not support. This is the same reasoning
- * that made `active_slot` a generated column rather than a maintained one.
+ * claiming something the money does not support.
  */
 class Installments
 {
@@ -192,16 +191,37 @@ class Installments
      * later is the round number. `net − first` rather than a second round()
      * guarantees the two always sum to the fee exactly.
      *
+     * The CERTIFICATE CHARGE is added to the first installment whole, and the
+     * tuition is what gets halved. It is a cost the institute incurs on
+     * enrolment rather than over the course, so splitting it across two dates
+     * would mean chasing 350 rupees in October for something already paid for
+     * in July. {@see minimumAdvance()} is the same rule stated as a floor, so
+     * an officer editing the amounts cannot push the charge into the balance.
+     *
      * @return list<array{amount:int,due_date:string}>
      */
     public function defaultPlan(Challan $challan, ?string $firstDue = null, ?string $secondDue = null): array
     {
         $net = (int) $challan->net_amount;
-        $first = (int) ceil($net / 2);
+        $certificate = (int) $challan->certificate_amount;
+        $first = $certificate + (int) ceil(($net - $certificate) / 2);
 
         return [
             ['amount' => $first, 'due_date' => $firstDue ?? Clock::today()->copy()->addDays(7)->toDateString()],
             ['amount' => $net - $first, 'due_date' => $secondDue ?? Clock::today()->copy()->addDays(37)->toDateString()],
         ];
+    }
+
+    /**
+     * The least the first installment may be.
+     *
+     * The certificate charge, or one rupee on an invoice that carries none.
+     * Stated here so the registration wizard and the challan drawer enforce
+     * the same floor rather than each inventing one, and so the rule lives
+     * beside the default plan that already honours it.
+     */
+    public function minimumAdvance(Challan $challan): int
+    {
+        return max(1, (int) $challan->certificate_amount);
     }
 }
