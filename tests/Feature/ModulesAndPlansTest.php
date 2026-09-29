@@ -572,7 +572,9 @@ class ModulesAndPlansTest extends TestCase
             ->set('mode', 'existing')
             ->set('pickedStudentId', $this->student()->id)
             ->set('step', 2);
-        foreach ($courses as $id) { $component->call('toggleCourse', $id); }
+        foreach ($courses as $id) {
+            $component->call('toggleCourse', $id);
+        }
 
         $component->set('withCertificate', true)->set('certificateAmount', '1250')
             ->call('submit')
