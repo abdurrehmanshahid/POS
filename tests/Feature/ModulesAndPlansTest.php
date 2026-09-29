@@ -434,8 +434,9 @@ class ModulesAndPlansTest extends TestCase
         $component->call('toggleModule', $course->id, $mods[1]->id);
         $this->assertSame(90000, $component->instance()->baseFee());
 
+        $component->set('withCertificate', true)->set('certificateAmount', '700');
         $component->set('payPlan', 'split');
-        // 700 certificate charges collected whole with the advance, plus half
+        // The 700 certificate fee collected whole with the advance, plus half
         // the 90,000 tuition.
         $this->assertSame(45700, $component->get('planAdvance'));
         $this->assertSame(90700, $component->instance()->netFee());
@@ -473,7 +474,15 @@ class ModulesAndPlansTest extends TestCase
         $this->assertSame($net - $later * 2, $component->get('planAdvance'));
         $this->assertGreaterThan($certificate + $later - 1, $component->get('planAdvance'));
 
+        $admissionsBefore = Admission::count();
+        $challansBefore = Challan::count();
+
         $component->call('submit')->assertSet('wizardOpen', false);
+
+        // One student on a three-part plan is still ONE admission on ONE
+        // challan. The parts are rows of that challan, never enrolments.
+        $this->assertSame($admissionsBefore + 1, Admission::count());
+        $this->assertSame($challansBefore + 1, Challan::count());
 
         $parts = Admission::latest('id')->first()->challan->installments->sortBy('seq')->values();
         $this->assertCount(3, $parts);
@@ -535,6 +544,63 @@ class ModulesAndPlansTest extends TestCase
     }
 
     // ---- Certificate charge ------------------------------------------------
+
+    public function test_the_wizard_bills_no_certificate_unless_it_is_ticked(): void
+    {
+        $course = Course::where('code', 'SHOP-101')->firstOrFail();
+
+        Livewire::actingAs($this->admin())->test('pages.registrations')
+            ->call('openWizard')
+            ->set('mode', 'existing')
+            ->set('pickedStudentId', $this->student()->id)
+            ->set('step', 2)
+            ->call('toggleCourse', $course->id)
+            ->call('submit')
+            ->assertSet('wizardOpen', false);
+
+        $challan = Admission::latest('id')->first()->challan;
+        $this->assertSame(0, (int) $challan->certificate_amount);
+        $this->assertSame((int) $challan->base_amount, (int) $challan->net_amount);
+    }
+
+    public function test_the_wizard_bills_the_certificate_amount_typed_once_per_challan(): void
+    {
+        $courses = Course::whereIn('code', ['WD-101', 'AI-201'])->pluck('id')->all();
+
+        $component = Livewire::actingAs($this->admin())->test('pages.registrations')
+            ->call('openWizard')
+            ->set('mode', 'existing')
+            ->set('pickedStudentId', $this->student()->id)
+            ->set('step', 2);
+        foreach ($courses as $id) {
+            $component->call('toggleCourse', $id);
+        }
+
+        $component->set('withCertificate', true)->set('certificateAmount', '1250')
+            ->call('submit')
+            ->assertSet('wizardOpen', false);
+
+        $challan = Admission::latest('id')->first()->challan;
+        // What was typed, not 700 per course.
+        $this->assertSame(1250, (int) $challan->certificate_amount);
+        $this->assertSame((int) $challan->base_amount + 1250, (int) $challan->net_amount);
+    }
+
+    public function test_a_ticked_certificate_with_no_amount_stops_the_wizard(): void
+    {
+        $course = Course::where('code', 'SHOP-101')->firstOrFail();
+
+        Livewire::actingAs($this->admin())->test('pages.registrations')
+            ->call('openWizard')
+            ->set('mode', 'existing')
+            ->set('pickedStudentId', $this->student()->id)
+            ->set('step', 2)
+            ->call('toggleCourse', $course->id)
+            ->set('withCertificate', true)
+            ->call('next')
+            ->assertSet('step', 2)
+            ->assertSet('wizErrors.certificate', 'Enter the certificate amount in whole rupees, or untick "Add certificate fee".');
+    }
 
     public function test_the_certificate_is_charged_once_per_course_and_is_not_discounted(): void
     {

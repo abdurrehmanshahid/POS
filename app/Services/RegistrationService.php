@@ -38,6 +38,7 @@ class RegistrationService
      *   cohorts?:array<int,int|null>,
      *   discount_pct?:int,
      *   discount_reason?:string|null,
+     *   certificate_amount?:int,
      *   generate_challans?:bool,
      *   plan?:string,
      *   installments?:list<array{amount:int,due_date:string}>
@@ -64,6 +65,16 @@ class RegistrationService
         }
         if ($pct > 0 && $reason === null) {
             throw new InvalidArgumentException('A discount requires a reason.');
+        }
+
+        // Bounded for the same reason as the discount: it arrives over the
+        // wire, and a negative one would bill less than the tuition.
+        $certificateAmount = array_key_exists('certificate_amount', $data)
+            ? (int) $data['certificate_amount']
+            : null;
+
+        if ($certificateAmount !== null && $certificateAmount < 0) {
+            throw new InvalidArgumentException('The certificate amount cannot be negative.');
         }
 
         // The method the institute expects, printed on the voucher. Blank is a
@@ -107,7 +118,7 @@ class RegistrationService
 
         return DB::transaction(function () use (
             $actor, $data, $courseIds, $pct, $reason, $method, $issueChallans,
-            $moduleChoice, $cohortChoice, $wantsSplit
+            $moduleChoice, $cohortChoice, $wantsSplit, $certificateAmount
         ) {
             // Resolve and validate the courses BEFORE creating the student, so a
             // registration that cannot proceed does not leave a person behind.
@@ -200,10 +211,13 @@ class RegistrationService
 
                 $base = (int) $prices->sum();
 
-                // One per course enrolled on, because one certificate is
-                // issued per course. Snapshotted onto the challan below rather
-                // than looked up at print time — see 2026_09_17_000003.
-                $certificate = (int) config('institute.certificate_fee') * $courses->count();
+                // What the officer typed on the wizard, which sends 0 when
+                // "Add certificate fee" is unticked. Callers that do not say
+                // (the tests, older scripts) keep the configured charge per
+                // course. Snapshotted onto the challan below rather than
+                // looked up at print time — see 2026_09_17_000003.
+                $certificate = $certificateAmount
+                    ?? (int) config('institute.certificate_fee') * $courses->count();
                 $discount = $pct > 0 ? (int) round($base * $pct / 100) : 0;
 
                 $challan = Challan::create([
