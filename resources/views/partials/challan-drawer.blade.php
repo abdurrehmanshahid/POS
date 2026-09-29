@@ -20,6 +20,7 @@
     $pill = fn ($s) => match ($s) {
         'paid' => ['paid', 'Paid'],
         'overdue' => ['overdue', 'Overdue'],
+        'installment' => ['installment', 'Installment'],
         default => ['unpaid', 'Unpaid'],
     };
 @endphp
@@ -175,7 +176,8 @@
                         @if ($canPlan && ! $selected->isPaid())
                             <div style="display:flex;gap:6px">
                                 <button class="btn btn-sm btn-ghost" wire:click="askPlan({{ $selected->id }})">Edit</button>
-                                <button class="btn btn-sm btn-ghost" wire:click="clearPlan({{ $selected->id }})">Remove</button>
+                                <button class="btn btn-sm btn-ghost" wire:click="clearPlan({{ $selected->id }})"
+                                        wire:confirm="Are you sure you want to delete this installment plan? The challan goes back to a single payment.">Remove</button>
                             </div>
                         @endif
                     </div>

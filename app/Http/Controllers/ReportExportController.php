@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Services\ReportBook;
 use App\Support\Csv;
 use App\Support\Download;
+use App\Support\InstituteWideViewer;
 use App\Support\Period;
 use Illuminate\Http\Request;
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
@@ -53,7 +54,12 @@ class ReportExportController extends Controller
 
     public function __invoke(Request $request, ReportBook $book): StreamedResponse
     {
-        $user = $request->user();
+        // The super admin's copy of this route sits behind `auth:superadmin`,
+        // which is its gate. The super admin is not a staff User and is not
+        // permission-scoped, so it exports the whole institute.
+        $user = $request->routeIs('superadmin.*')
+            ? new InstituteWideViewer
+            : $request->user();
 
         // Server-side gate: the same permission that hides the money blocks in
         // the UI must also refuse the file.

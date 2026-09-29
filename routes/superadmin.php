@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Controllers\ReportExportController;
 use App\Http\Controllers\SuperAdmin\BackupController;
 use App\Services\Impersonation;
 use Illuminate\Support\Facades\Auth;
@@ -51,6 +52,8 @@ Route::prefix('superadmin')->name('superadmin.')->group(function () {
 
         Volt::route('dashboard', 'superadmin.dashboard')->name('dashboard');
         Volt::route('performance', 'superadmin.performance')->name('performance');
+        Volt::route('reports', 'superadmin.reports')->name('reports');
+        Route::get('reports/export', ReportExportController::class)->name('reports.export');
         Volt::route('staff', 'superadmin.staff')->name('staff');
         Volt::route('students', 'superadmin.students')->name('students');
         Volt::route('activity', 'superadmin.activity')->name('activity');
