@@ -97,6 +97,15 @@ new class extends Component {
     public string $discountReason = '';
 
     /**
+     * The certificate fee, opt-in and typed by the officer.
+     *
+     * A string rather than an int because it is bound to a number box, and a
+     * cleared box arrives as '' which an int property cannot hold.
+     */
+    public bool $withCertificate = false;
+    public string $certificateAmount = '';
+
+    /**
      * How the fee is meant to be paid — printed on the voucher.
      *
      * Empty is a real answer, not an unset one: an officer who has not agreed a
@@ -188,7 +197,7 @@ new class extends Component {
     {
         $this->reset(['step', 'mode', 'studentSearch', 'pickedStudentId', 'newType', 'newName',
             'newGuardian', 'newPhone', 'newCnic', 'courseIds', 'discountPct', 'discountReason', 'paymentMethod',
-            'moduleIds', 'batchIds', 'payPlan', 'planCount', 'planAdvance', 'planSecondAmount',
+            'withCertificate', 'certificateAmount', 'moduleIds', 'batchIds', 'payPlan', 'planCount', 'planAdvance', 'planSecondAmount',
             'planFirstDue', 'planSecondDue', 'planThirdDue',
             'wizErrors', 'wizTouched']);
         $this->step = 1;
@@ -303,6 +312,8 @@ new class extends Component {
 
     public function updatedPayPlan(): void { $this->syncPlanToFee(); }
     public function updatedDiscountPct(): void { $this->syncPlanToFee(); }
+    public function updatedWithCertificate(): void { unset($this->wizErrors['certificate']); $this->syncPlanToFee(); }
+    public function updatedCertificateAmount(): void { unset($this->wizErrors['certificate']); $this->syncPlanToFee(); }
     public function updatedPlanAdvance(): void { $this->syncPlanToFee(); }
     public function updatedPlanSecondAmount(): void { $this->syncPlanToFee(); }
 
@@ -410,12 +421,17 @@ new class extends Component {
     /**
      * The certificate charge this registration will carry.
      *
-     * One per course, matching RegistrationService. Outside the discount, so
+     * Nothing unless the officer ticked "Add certificate fee", and then the
+     * amount they typed, once for the whole challan. Outside the discount, so
      * it is added after it in netFee() rather than folded into the base.
      */
     public function certificateFee(): int
     {
-        return (int) config('institute.certificate_fee') * count($this->courseIds);
+        if (! $this->withCertificate || ! ctype_digit(trim($this->certificateAmount))) {
+            return 0;
+        }
+
+        return (int) trim($this->certificateAmount);
     }
 
     /** The fee before discount: each course priced by the modules taken. */
@@ -724,6 +740,9 @@ new class extends Component {
             if (! $this->courseIds) { $this->wizErrors['courses'] = 'Select at least one course.'; $this->dispatch('bbt-toast', tone: 'err', title: 'Select at least one course'); return; }
             if ($this->discountPct < 0 || $this->discountPct > 100) { $this->wizErrors['discount'] = 'Discount must be between 0 and 100%.'; return; }
             if ($this->discountPct > 0 && ! trim($this->discountReason)) { $this->wizErrors['discount'] = 'A discount requires a reason (recorded in the audit trail).'; return; }
+            // Ticked but left empty (or typed as 0, or with decimals) would
+            // otherwise quietly bill no certificate at all.
+            if ($this->withCertificate && $this->certificateFee() <= 0) { $this->wizErrors['certificate'] = 'Enter the certificate amount in whole rupees, or untick "Add certificate fee".'; return; }
             // Checked here as well as in the service, because the value arrives
             // from the client: the buttons offer only the configured list, and
             // a crafted request could put anything in this column and print it
@@ -771,6 +790,9 @@ new class extends Component {
             'installments' => $this->payPlan === 'split' ? $this->planParts() : null,
             'discount_pct' => $this->discountPct,
             'discount_reason' => $this->discountReason,
+            // Always stated, so an unticked box reaches the service as 0
+            // rather than falling back to its per-course default.
+            'certificate_amount' => $this->certificateFee(),
             'payment_method' => $this->paymentMethod,
             // Actually honoured now. The review step has always shown this
             // checkbox; until it was passed through, unticking it still raised

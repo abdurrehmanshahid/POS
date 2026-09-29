@@ -333,22 +333,38 @@
             <div class="card" style="padding:16px 18px;background:var(--surface2)">
                 <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
                     <label class="label" style="margin:0">Discount</label>
-                    <span class="tnum" style="font-size:var(--fs-sm);font-weight:700;color:var(--orange)">{{ $discountPct }}%</span>
+                    {{-- Typed as well as dragged: landing on 23% by mouse is
+                         fiddly. Clamped and rounded here, because an empty or
+                         out-of-range box must not reach the int property. --}}
+                    <span class="tnum" style="display:inline-flex;align-items:center;gap:4px;font-size:var(--fs-sm);font-weight:700;color:var(--orange)">
+                        <input type="number" min="0" max="100" step="1" inputmode="numeric" value="{{ $discountPct }}"
+                               aria-label="Discount percentage"
+                               x-on:change="let v = Math.round(Number($el.value)); if (! Number.isFinite(v)) v = 0; v = Math.min(100, Math.max(0, v)); $el.value = v; $wire.set('discountPct', v)"
+                               class="input tnum" style="width:64px;padding:4px 6px;text-align:right;font-weight:700;color:var(--orange)">%
+                    </span>
                 </div>
-                <input type="range" min="0" max="100" step="5" wire:model.live="discountPct" style="width:100%;accent-color:var(--orange)">
+                <input type="range" min="0" max="100" step="1" wire:model.live="discountPct" aria-label="Discount percentage" style="width:100%;accent-color:var(--orange)">
                 {{-- Stated on its own line, not folded into the base. It sits
                      outside the discount, so a student on a scholarship still
                      sees the full charge and the total still adds up on the
                      screen the officer is reading it from. --}}
-                @if ($certificateFee > 0)
-                    <div style="display:flex;justify-content:space-between;align-items:center;margin-top:14px;padding:9px 12px;background:var(--surface3);border-radius:9px">
-                        <span style="font-size:var(--fs-xs);color:var(--ink2)">
-                            Certificate charges
-                            <span style="color:var(--faint)">&middot; {{ Format::money(config('institute.certificate_fee')) }} &times; {{ count($courseIds) }} course{{ count($courseIds) === 1 ? '' : 's' }}</span>
-                        </span>
-                        <span class="tnum" style="font-size:var(--fs-sm);font-weight:700;color:var(--ink)">{{ Format::money($certificateFee) }}</span>
-                    </div>
-                @endif
+                {{-- Opt-in, and the officer types the amount. It used to be a
+                     fixed charge per course added to every registration. --}}
+                <div style="margin-top:14px;padding:9px 12px;background:var(--surface3);border-radius:9px">
+                    <label style="display:flex;align-items:center;gap:8px;font-size:var(--fs-xs);color:var(--ink2);cursor:pointer">
+                        <input type="checkbox" wire:model.live="withCertificate" style="accent-color:var(--orange)">
+                        Add certificate fee
+                    </label>
+                    @if ($withCertificate)
+                        <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;margin-top:8px">
+                            <span style="font-size:var(--fs-xs);color:var(--faint)">Certificate amount (Rs, not discounted)</span>
+                            <input type="number" min="1" step="1" inputmode="numeric" wire:model.live.debounce.400ms="certificateAmount"
+                                   aria-label="Certificate amount" placeholder="e.g. 700"
+                                   class="input tnum {{ ($wizErrors['certificate'] ?? false) ? 'is-error' : '' }}" style="width:120px;padding:4px 8px;text-align:right;font-weight:700">
+                        </div>
+                        @if ($wizErrors['certificate'] ?? false)<span class="field-error">{{ $wizErrors['certificate'] }}</span>@endif
+                    @endif
+                </div>
                 <div class="grid-3" style="margin-top:14px;gap:12px">
                     <div><div style="font-size:var(--fs-2xs);color:var(--faint);text-transform:uppercase;letter-spacing:.04em">Base</div><div class="tnum" style="font-size:var(--fs-md);font-weight:800;color:var(--ink)">{{ Format::money($base) }}</div></div>
                     <div><div style="font-size:var(--fs-2xs);color:var(--faint);text-transform:uppercase;letter-spacing:.04em">Discount</div><div class="tnum" style="font-size:var(--fs-md);font-weight:800;color:var(--over)">− {{ Format::money($disc) }}</div></div>
@@ -499,7 +515,7 @@
                     @if ($certificateFee > 0)
                         {{-- After the discount, because it is not discounted. --}}
                         <div style="display:flex;justify-content:space-between;padding:8px 0;font-size:var(--fs-sm);border-top:1px solid var(--surface3)"><span style="color:var(--muted)">Subtotal</span><span class="tnum" style="font-weight:600">{{ Format::money($base - $disc) }}</span></div>
-                        <div style="display:flex;justify-content:space-between;padding:8px 0;font-size:var(--fs-sm)"><span style="color:var(--muted)">Certificate charges <span class="tnum" style="color:var(--faint)">({{ Format::money(config('institute.certificate_fee')) }} × {{ $selectedCourses->count() }})</span></span><span class="tnum" style="font-weight:600">{{ Format::money($certificateFee) }}</span></div>
+                        <div style="display:flex;justify-content:space-between;padding:8px 0;font-size:var(--fs-sm)"><span style="color:var(--muted)">Certificate fee</span><span class="tnum" style="font-weight:600">{{ Format::money($certificateFee) }}</span></div>
                     @endif
                     <div style="display:flex;justify-content:space-between;padding:10px 0 4px;font-size:var(--fs-md);border-top:2px solid var(--border)"><span style="font-weight:800;color:var(--ink)">Total net payable (derived)</span><span class="tnum" style="font-weight:800;color:var(--navy)">{{ Format::money($net) }}</span></div>
                     @if ($planPreview)
