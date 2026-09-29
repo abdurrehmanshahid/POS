@@ -966,7 +966,7 @@ new class extends Component {
                         @php
                             $cancelled = $a->status === 'cancelled';
                             $state = $cancelled ? 'cancelled' : ($a->challan?->paymentState() ?? 'unpaid');
-                            $pillTone = $cancelled ? 'cancelled' : ($state === 'paid' ? 'paid' : ($state === 'overdue' ? 'overdue' : 'unpaid'));
+                            $pillTone = $cancelled ? 'cancelled' : ($state === 'paid' ? 'paid' : ($state === 'overdue' ? 'overdue' : ($state === 'installment' ? 'installment' : 'unpaid')));
                             $pillLabel = $cancelled ? 'Cancelled' : ucfirst($state);
                         @endphp
                         <tr class="clickable {{ $cancelled ? 'row-cancelled' : '' }}" @if ($a->challan) wire:click="select({{ $a->challan->id }})" @endif wire:key="reg-{{ $a->id }}">

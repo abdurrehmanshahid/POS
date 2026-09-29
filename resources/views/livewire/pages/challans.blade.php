@@ -101,6 +101,7 @@ new class extends Component {
             'paid' => $all->where('status', 'paid')->count(),
             'unpaid' => $all->filter(fn (Challan $c) => $c->paymentState() === 'unpaid')->count(),
             'overdue' => $all->filter(fn (Challan $c) => $c->paymentState() === 'overdue')->count(),
+            'installment' => $all->filter(fn (Challan $c) => $c->paymentState() === 'installment')->count(),
         ];
 
         $rows = $all
@@ -166,6 +167,7 @@ new class extends Component {
     $pill = fn ($s) => match ($s) {
         'paid' => ['paid', 'Paid'],
         'overdue' => ['overdue', 'Overdue'],
+        'installment' => ['installment', 'Installment'],
         default => ['unpaid', 'Unpaid'],
     };
 @endphp
@@ -188,7 +190,7 @@ new class extends Component {
     {{-- Status was previously reachable only by typing it into the search box,
          which is not an affordance so much as a secret. --}}
     <div style="display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap">
-        @foreach (['all' => 'All', 'unpaid' => 'Unpaid', 'overdue' => 'Overdue', 'paid' => 'Paid'] as $key => $label)
+        @foreach (['all' => 'All', 'unpaid' => 'Unpaid', 'installment' => 'Installment', 'overdue' => 'Overdue', 'paid' => 'Paid'] as $key => $label)
             <button wire:click="$set('state', '{{ $key }}')"
                     class="btn btn-sm {{ $state === $key ? 'btn-primary' : 'btn-ghost' }}">
                 {{ $label }}

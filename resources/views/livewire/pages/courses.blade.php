@@ -690,7 +690,8 @@ new class extends Component {
                                                     @error('modules.'.$i.'.fee') <span class="field-error">{{ $message }}</span> @enderror
                                                 </div>
                                                 <button type="button" class="btn btn-sm btn-ghost" style="flex:none;margin-top:1px"
-                                                        wire:click="removeModule({{ $i }})" title="Remove this module">
+                                                        wire:click="removeModule({{ $i }})" title="Remove this module"
+                                                        wire:confirm="Are you sure you want to delete this module? It is removed when you save the course.">
                                                     <x-icon name="x" :size="14" />
                                                 </button>
                                             </div>

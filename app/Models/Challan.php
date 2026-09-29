@@ -308,13 +308,27 @@ class Challan extends Model
         return $this->installments()->where('status', 'unpaid')->orderBy('seq')->first();
     }
 
-    /** paid | overdue | unpaid, drives the status pill (spec §7.8). */
+    /**
+     * paid | overdue | installment | unpaid, drives the status pill (spec §7.8).
+     *
+     * `installment` is a plan with at least one part paid and nothing overdue:
+     * the student is paying as agreed, which "Unpaid" misstated. Overdue still
+     * wins, because a missed part is what the office has to chase.
+     */
     public function paymentState(): string
     {
         if ($this->isPaid()) {
             return 'paid';
         }
 
-        return $this->isOverdue() ? 'overdue' : 'unpaid';
+        if ($this->isOverdue()) {
+            return 'overdue';
+        }
+
+        if ($this->plan === 'split' && $this->installments->contains('status', 'paid')) {
+            return 'installment';
+        }
+
+        return 'unpaid';
     }
 }

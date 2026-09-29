@@ -10,6 +10,7 @@ use App\Support\Clock;
 use Database\Seeders\DatabaseSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use InvalidArgumentException;
+use Livewire\Livewire;
 use Tests\TestCase;
 
 /**
@@ -193,7 +194,46 @@ class InstallmentTest extends TestCase
             $challan->isOverdue(),
             'Installment one is settled and installment two is not yet due.'
         );
-        $this->assertSame('unpaid', $challan->paymentState());
+        // Paying as agreed, which "Unpaid" misstated.
+        $this->assertSame('installment', $challan->paymentState());
+    }
+
+    public function test_a_plan_with_nothing_paid_yet_is_still_unpaid(): void
+    {
+        $challan = $this->svc()->schedule($this->challan(), [
+            ['amount' => 10000, 'due_date' => $this->days(7)],
+            ['amount' => 15000, 'due_date' => $this->days(37)],
+        ]);
+
+        $this->assertSame('unpaid', $challan->refresh()->paymentState());
+    }
+
+    public function test_a_later_installment_missed_is_overdue_even_after_the_first_was_paid(): void
+    {
+        $challan = $this->svc()->schedule($this->challan(), [
+            ['amount' => 5000, 'due_date' => $this->days(-40)],
+            ['amount' => 10000, 'due_date' => $this->days(-3)],   // missed
+            ['amount' => 10000, 'due_date' => $this->days(30)],
+        ]);
+
+        app(ChallanActions::class)->recordPayment($challan, $this->admin(), 5000, 'Cash');
+
+        // Overdue outranks "installment": a missed part is what gets chased.
+        $this->assertSame('overdue', $challan->refresh()->paymentState());
+    }
+
+    public function test_the_challans_screen_labels_and_filters_the_installment_state(): void
+    {
+        $challan = $this->svc()->schedule($this->challan(), [
+            ['amount' => 10000, 'due_date' => $this->days(7)],
+            ['amount' => 15000, 'due_date' => $this->days(37)],
+        ]);
+        app(ChallanActions::class)->recordPayment($challan, $this->admin(), 10000, 'Cash');
+
+        Livewire::actingAs($this->admin())->test('pages.challans')
+            ->set('state', 'installment')
+            ->assertSee($challan->challan_no)
+            ->assertSee('Installment');
     }
 
     // ---- Derivation properties ---------------------------------------------
