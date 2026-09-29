@@ -12,10 +12,15 @@ use App\Services\Audit;
 use App\Services\ChallanActions;
 use App\Services\Impersonation;
 use App\Services\RecordRemoval;
+use App\Services\Reporting;
+use App\Support\Format;
+use App\Support\InstituteWideViewer;
+use App\Support\Period;
 use Database\Seeders\DatabaseSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Hash;
 use Livewire\Livewire;
+use LogicException;
 use Tests\TestCase;
 
 /** The /superadmin guard, panel, destructive-action gating and impersonation. */
@@ -85,11 +90,60 @@ class SuperAdminTest extends TestCase
     {
         $su = $this->su();
 
-        foreach (['dashboard', 'performance', 'staff', 'students', 'activity', 'backups'] as $screen) {
+        foreach (['dashboard', 'performance', 'reports', 'staff', 'students', 'activity', 'backups'] as $screen) {
             $this->actingAs($su, 'superadmin')
                 ->get("/superadmin/{$screen}")
                 ->assertOk();
         }
+    }
+
+    // ---- Reports ---------------------------------------------------------------
+
+    public function test_the_reports_tab_shows_the_institute_wide_figures_an_admin_sees(): void
+    {
+        $admin = User::where('username', 'adminansar')->firstOrFail();
+        $period = Period::resolve('year');
+        $reporting = app(Reporting::class);
+
+        $asAdmin = $reporting->screen($admin, $period);
+        $asOwner = $reporting->screen(new InstituteWideViewer, $period);
+
+        $this->assertSame($asAdmin['summary'], $asOwner['summary']);
+        $this->assertSame($asAdmin['dues']['total'], $asOwner['dues']['total']);
+        $this->assertSame($asAdmin['officers']->count(), $asOwner['officers']->count());
+
+        Livewire::actingAs($this->su(), 'superadmin')
+            ->test('superadmin.reports')
+            ->call('setPeriod', 'year')
+            ->assertSee('Outstanding dues')
+            ->assertSee(Format::money($asAdmin['dues']['total']));
+    }
+
+    public function test_the_super_admin_can_export_the_report(): void
+    {
+        $this->actingAs($this->su(), 'superadmin')
+            ->get(route('superadmin.reports.export', ['format' => 'csv']))
+            ->assertOk()
+            ->assertHeader('content-type', 'text/csv; charset=UTF-8');
+    }
+
+    public function test_a_staff_admin_cannot_use_the_super_admin_export(): void
+    {
+        $admin = User::where('username', 'adminansar')->firstOrFail();
+
+        // The route stands in the whole institute for its caller, so the
+        // `auth:superadmin` guard in front of it is the only thing that
+        // decides who may call it.
+        $this->actingAs($admin)
+            ->get(route('superadmin.reports.export', ['format' => 'csv']))
+            ->assertRedirect();
+    }
+
+    public function test_the_institute_wide_viewer_cannot_be_saved(): void
+    {
+        $this->expectException(LogicException::class);
+
+        (new InstituteWideViewer)->save();
     }
 
     // ---- Destructive gating ---------------------------------------------------

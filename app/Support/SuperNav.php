@@ -19,6 +19,7 @@ final class SuperNav
             'Overview' => [
                 ['route' => 'superadmin.dashboard', 'label' => 'Dashboard', 'icon' => 'dashboard'],
                 ['route' => 'superadmin.performance', 'label' => 'Performance', 'icon' => 'trending-up'],
+                ['route' => 'superadmin.reports', 'label' => 'Reports', 'icon' => 'reports'],
             ],
             'Records' => [
                 ['route' => 'superadmin.staff', 'label' => 'Staff', 'icon' => 'staff'],
@@ -37,6 +38,7 @@ final class SuperNav
         return match ($route) {
             'superadmin.dashboard' => ['Platform overview', 'Institute-wide figures and system health'],
             'superadmin.performance' => ['Performance', 'Who is enrolling, and who is collecting'],
+            'superadmin.reports' => ['Reports', 'Collections, revenue and dues, institute-wide'],
             'superadmin.staff' => ['Staff', 'Accounts, passwords and removal'],
             'superadmin.students' => ['Students', 'Every record, including removed ones'],
             'superadmin.activity' => ['Activity log', 'Every consequential action, append-only'],

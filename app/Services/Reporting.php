@@ -57,6 +57,37 @@ class Reporting
             ->whereBetween('created_at', [$period->from, $period->to]);
     }
 
+    /**
+     * Everything the Reports screen draws, for the staff page and the super
+     * admin's tab alike, so the two cannot come to show different figures.
+     *
+     * Money blocks are gated by revenue.view, separately from scoping (spec
+     * §6): officers see their own students but never money totals.
+     *
+     * @return array<string, mixed>
+     */
+    public function screen(User $user, Period $period): array
+    {
+        $canSeeMoney = $user->can('revenue.view');
+        $canSeeOfficers = $canSeeMoney && $user->can('scope.all');
+
+        $series = $canSeeMoney ? $this->collectionSeries($user, $period) : collect();
+        $courses = $canSeeMoney ? $this->revenueByCourse($user, $period) : collect();
+
+        return [
+            'canSeeMoney' => $canSeeMoney,
+            'summary' => $canSeeMoney ? $this->summary($user, $period) : null,
+            'series' => $series,
+            'seriesPeak' => max(1, $series->max('total') ?: 1),
+            'methods' => $canSeeMoney ? $this->byPaymentMethod($user, $period) : collect(),
+            'courses' => $courses,
+            'coursePeak' => max(1, $courses->max('total') ?: 1),
+            'dues' => $this->duesAgeing($user),
+            'officers' => $canSeeOfficers ? $this->officerPerformance($period) : collect(),
+            'today' => Clock::today(),
+        ];
+    }
+
     // ---- Headline figures ---------------------------------------------------
 
     /**
