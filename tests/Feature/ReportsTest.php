@@ -516,6 +516,76 @@ class ReportsTest extends TestCase
         $this->assertStringNotContainsString(number_format($collected), $body);
     }
 
+    // ---- Student fee report ---------------------------------------------------
+
+    /**
+     * Every column the fee report prints, checked against one registration
+     * whose arithmetic can be done by hand: a 20,000 course at 10% off, plus
+     * the 700 certificate charge, with 6,000 handed over.
+     */
+    public function test_the_student_fee_report_states_each_registration(): void
+    {
+        $admin = $this->admin();
+
+        $invoice = app(RegistrationService::class)->register($admin, [
+            'new_student' => [
+                'type' => 'R', 'name' => 'Fee Report', 'guardian_name' => 'Report Senior',
+                'phone' => '+92 300 7771111', 'cnic' => '35201-7771111-9',
+            ],
+            'course_ids' => Course::where('code', 'WD-101')->pluck('id')->all(),
+            'discount_pct' => 10,
+            'discount_reason' => 'Merit',
+            'certificate_amount' => 700,
+        ])['challans'][0];
+
+        app(ChallanActions::class)->recordPayment($invoice, $admin, 6000, 'Cash');
+
+        $row = app(Reporting::class)->studentFees($admin, Period::resolve('today'))
+            ->firstWhere('name', 'Fee Report');
+
+        $this->assertNotNull($row, 'The registration is missing from the fee report.');
+        $this->assertSame('Report Senior', $row->father);
+        $this->assertSame('35201-7771111-9', $row->cnic);
+        $this->assertSame('+92 300 7771111', $row->phone);
+        $this->assertSame(Course::where('code', 'WD-101')->value('title'), $row->course);
+        $this->assertSame(20700, $row->total);
+        $this->assertSame(18700, $row->net);
+        $this->assertSame(10.0, $row->discount_pct);
+        $this->assertSame(6000, $row->received);
+        $this->assertSame(12700, $row->pending);
+        $this->assertSame(32.1, $row->received_pct);
+        $this->assertSame('Advance', $row->status);
+    }
+
+    /** The fee report heads the workbook, totals row and all. */
+    public function test_the_workbook_opens_on_the_student_fee_report(): void
+    {
+        $book = tempnam(sys_get_temp_dir(), 'bbt-xlsx-fees-').'.xlsx';
+        file_put_contents($book, $this->actingAs($this->admin())
+            ->get(route('reports.export', ['period' => 'year', 'format' => 'xlsx']))->streamedContent());
+
+        $sheet = IOFactory::load($book)->getSheet(0);
+        @unlink($book);
+
+        $this->assertSame('Student fee report', $sheet->getTitle());
+
+        $header = $sheet->rangeToArray('A6:M6')[0];
+        $this->assertSame(['Student ID', 'Student name', 'Father name', 'CNIC', 'Contact no', 'Course'], array_slice($header, 0, 6));
+        $this->assertSame('TOTAL', $sheet->getCell('A'.$sheet->getHighestRow())->getValue());
+    }
+
+    public function test_the_pdf_export_is_a_printable_student_fee_report(): void
+    {
+        $response = $this->actingAs($this->admin())
+            ->get(route('reports.export', ['period' => 'year', 'format' => 'pdf']));
+
+        $response->assertOk();
+        $response->assertHeader('content-type', 'application/pdf');
+        $this->assertStringStartsWith('%PDF', $response->getContent());
+        $this->assertStringContainsString('attachment', $response->headers->get('content-disposition'));
+        $this->assertStringContainsString('Student Fee Report', $response->headers->get('content-disposition'));
+    }
+
     /** One .csv per section, numbered so a zip listing keeps the reading order. */
     public function test_the_zip_export_holds_one_csv_per_section(): void
     {
@@ -537,15 +607,16 @@ class ReportsTest extends TestCase
         }
 
         $this->assertSame([
-            '01 Summary.csv',
-            '02 Daily collections.csv',
-            '03 Revenue by course.csv',
-            '04 Outstanding dues.csv',
-            '05 Officer performance.csv',
+            '01 Student fee report.csv',
+            '02 Summary.csv',
+            '03 Daily collections.csv',
+            '04 Revenue by course.csv',
+            '05 Outstanding dues.csv',
+            '06 Officer performance.csv',
         ], $entries);
 
         // Each entry is a real CSV with its own BOM, not an empty placeholder.
-        $summary = $zip->getFromName('01 Summary.csv');
+        $summary = $zip->getFromName('02 Summary.csv');
         $this->assertStringStartsWith("\xEF\xBB\xBF", $summary);
         $this->assertStringContainsString("Metric,Value\r\n", $summary);
 
@@ -570,7 +641,7 @@ class ReportsTest extends TestCase
             ->get(route('reports.export', ['period' => 'year', 'format' => 'zip']))->streamedContent());
         $zip = new \ZipArchive;
         $zip->open($path);
-        $this->assertStringContainsString('Collected in period,'.$collected, $zip->getFromName('01 Summary.csv'));
+        $this->assertStringContainsString('Collected in period,'.$collected, $zip->getFromName('02 Summary.csv'));
         $zip->close();
         @unlink($path);
 

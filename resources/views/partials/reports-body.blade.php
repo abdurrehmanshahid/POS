@@ -27,7 +27,7 @@
 
         <span class="tnum" style="font-size:var(--fs-xs);color:var(--muted);white-space:nowrap">{{ $period->rangeLabel() }}</span>
 
-        {{-- Three formats, one report. Links rather than wire:click, because a
+        {{-- Four formats, one report. Links rather than wire:click, because a
              browser only saves a file from a real navigation. The period the
              screen is showing rides along in the query string, so the file and
              the figures above it always cover the same window. --}}
@@ -36,12 +36,14 @@
         @endphp
         <div class="segmented">
             <span class="segmented-label"><x-icon name="download" :size="14" /> Export</span>
+            <a href="{{ route($exportRoute, $exportParams + ['format' => 'pdf']) }}"
+               title="Student fee report, printable PDF">PDF</a>
             <a href="{{ route($exportRoute, $exportParams + ['format' => 'csv']) }}"
                title="One CSV file, all sections stacked">CSV</a>
             <a href="{{ route($exportRoute, $exportParams + ['format' => 'zip']) }}"
                title="A zip holding one CSV per section">CSV (zip)</a>
             <a href="{{ route($exportRoute, $exportParams + ['format' => 'xlsx']) }}"
-               title="Excel workbook, one sheet per section">Excel</a>
+               title="Excel workbook: student fee report first, then one sheet per section">Excel</a>
         </div>
     </div>
 

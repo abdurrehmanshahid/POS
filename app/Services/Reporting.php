@@ -470,6 +470,97 @@ class Reporting
     }
 
     /**
+     * Every registration invoiced in the window, one row per invoice, with what
+     * it cost, what was taken off, what has come in and what is still owed.
+     *
+     * Per INVOICE rather than per student, because the discount is negotiated
+     * on the invoice: a student registered twice at two different discounts has
+     * two honest percentages and no single one. Charges (a desk, a recovery
+     * batch) are left out — they bill no course and carry no discount.
+     *
+     * `total` is the gross bill (tuition plus the certificate charge), so
+     * total − discount = net to the rupee. The discount percentage is of
+     * TUITION, as the officer set it and as the voucher prints it, because the
+     * certificate charge is never discounted.
+     *
+     * Received is net of reversals and pending never negative, both straight
+     * from the challan, so this report and the voucher cannot disagree.
+     *
+     * @return Collection<int, object>
+     */
+    public function studentFees(User $user, Period $period): Collection
+    {
+        return $this->issued($user, $period)
+            ->whereNotNull('admission_id')
+            ->with([
+                'student',
+                'admissions' => fn ($a) => $a->where('status', '!=', 'cancelled')->with('course'),
+                'payments.reversals',
+                'installments',
+            ])
+            ->get()
+            ->map(function ($challan) {
+                $tuition = (int) $challan->base_amount;
+                $discount = (int) $challan->discount_amount;
+                $net = (int) $challan->net_amount;
+                $paid = min($challan->paidAmount(), $net);
+
+                return (object) [
+                    'code' => $challan->student?->student_code,
+                    'name' => $challan->student?->name,
+                    'father' => $challan->student?->guardian_name,
+                    'cnic' => $challan->student?->cnic,
+                    'phone' => $challan->student?->phone,
+                    'course' => $challan->admissions->map(fn ($a) => $a->course?->title)->filter()->implode(', '),
+                    'tuition' => $tuition,
+                    'total' => $tuition + (int) $challan->certificate_amount,
+                    'discount' => $discount,
+                    'discount_pct' => $tuition > 0 ? round($discount / $tuition * 100, 1) : 0.0,
+                    'net' => $net,
+                    'received' => $paid,
+                    'pending' => $challan->balance(),
+                    'received_pct' => $net > 0 ? round($paid / $net * 100, 1) : 100.0,
+                    'status' => match ($challan->paymentState()) {
+                        'paid' => 'Paid',
+                        'overdue' => 'Overdue',
+                        'installment' => 'Installment',
+                        default => $paid > 0 ? 'Advance' : 'Unpaid',
+                    },
+                    'issued' => $challan->created_at,
+                ];
+            })
+            ->sortBy([['code', 'asc'], ['issued', 'asc']])
+            ->values();
+    }
+
+    /**
+     * The footer line of the student fee report, summed from its rows so the
+     * total can never disagree with the lines above it.
+     *
+     * @param  Collection<int, object>  $rows
+     */
+    public function studentFeeTotals(Collection $rows): object
+    {
+        $total = (int) $rows->sum('total');
+        $discount = (int) $rows->sum('discount');
+        $net = (int) $rows->sum('net');
+        $received = (int) $rows->sum('received');
+        $tuition = (int) $rows->sum('tuition');
+
+        return (object) [
+            'count' => $rows->count(),
+            'students' => $rows->pluck('code')->filter()->unique()->count(),
+            'total' => $total,
+            'discount' => $discount,
+            'net' => $net,
+            'discount_pct' => $tuition > 0 ? round($discount / $tuition * 100, 1) : 0.0,
+            'received' => $received,
+            'pending' => (int) $rows->sum('pending'),
+            'received_pct' => $net > 0 ? round($received / $net * 100, 1) : 0.0,
+        ];
+    }
+
+    /**
      * Total collected against each officer's enrolments in the window.
      *
      * The window filters the ADMISSIONS, not the payments, matching what the
