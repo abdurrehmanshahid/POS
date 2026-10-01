@@ -222,7 +222,7 @@ td.tnum, th.tnum { white-space: nowrap; }
 .panel-title { font-size:var(--fs-md); font-weight:700; color:var(--ink); margin:0; }
 
 /* ---- Pills ------------------------------------------------------------ */
-.pill { display:inline-flex; align-items:center; gap:6px; padding:3px 10px; border-radius:999px; font-size:var(--fs-2xs); font-weight:700; border:1px solid transparent; }
+.pill { display:inline-flex; align-items:center; gap:6px; padding:3px 10px; border-radius:999px; font-size:var(--fs-2xs); font-weight:700; border:1px solid transparent; white-space:nowrap; }
 .pill .dot { width:7px; height:7px; border-radius:50%; }
 .pill-paid { background:var(--paid-bg); color:var(--paid); border-color:var(--paid-br); }
 .pill-paid .dot { background:var(--paid); }
@@ -304,6 +304,21 @@ td.tnum, th.tnum { white-space: nowrap; }
 .clamp-2 { display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
 .table tbody tr.clickable { cursor:pointer; }
 .table tbody tr.clickable:hover { background:var(--surface2); }
+
+/* A table wider than its panel scrolls sideways — at EVERY width. This rule
+   used to live only in the ≤820px block, so between there and a wide monitor
+   the panel's `overflow:hidden` simply cut the table off: on a laptop at 125%
+   zoom the students list lost its Edit buttons and the challans list its
+   Status column, with no scrollbar to say anything was missing. Declared after
+   `.panel` so `.panel.scroll-x` (the challans list) scrolls rather than clips. */
+.scroll-x { overflow-x:auto; -webkit-overflow-scrolling:touch; }
+
+/* Laptops, and desktops at 125% zoom: the same table with less air in it, so
+   it fits without scrolling far more often than not. */
+@media (max-width:1280px) {
+  .table th, .table td { padding-left:12px; padding-right:12px; }
+  .table td[data-label="Student"] { min-width:180px; }
+}
 .row-cancelled { opacity:.5; }
 .empty-state { padding:34px 22px; text-align:center; font-size:var(--fs-sm); color:var(--faint); }
 
@@ -405,7 +420,6 @@ td.tnum, th.tnum { white-space: nowrap; }
      deliberately not forced to one column here: a 760px tablet still fits two. */
   .split { grid-template-columns:1fr; }
   .main .panel .table { min-width:560px; }
-  .scroll-x { overflow-x:auto; -webkit-overflow-scrolling:touch; }
 }
 
 /* Phones. The drawer becomes a full-width sheet, because 540px of drawer on a

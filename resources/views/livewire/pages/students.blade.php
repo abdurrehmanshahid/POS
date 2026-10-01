@@ -264,7 +264,7 @@ new class extends Component {
                         <th>Enrolled by</th>
                         <th>Courses</th>
                         <th>Fees</th>
-                        @if ($canEdit)<th class="right">Actions</th>@endif
+                        @if ($canEdit)<th class="right actions-col">Actions</th>@endif
                     </tr>
                 </thead>
                 <tbody>
@@ -326,7 +326,7 @@ new class extends Component {
                                 @endif
                             </td>
                             @if ($canEdit)
-                                <td class="right" data-label="Actions">
+                                <td class="right actions-col" data-label="Actions">
                                     {{-- wire:click.stop so editing does not also open the drawer --}}
                                     <button class="btn btn-ghost btn-sm" wire:click.stop="editStudent({{ $s->id }})">
                                         <x-icon name="edit" :size="14" /> Edit

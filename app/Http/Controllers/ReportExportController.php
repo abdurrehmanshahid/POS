@@ -2,16 +2,22 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\Setting;
 use App\Services\ReportBook;
+use App\Services\Reporting;
 use App\Support\Csv;
+use App\Support\DocumentResponse;
 use App\Support\Download;
 use App\Support\InstituteWideViewer;
 use App\Support\Period;
 use Illuminate\Http\Request;
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
 use PhpOffice\PhpSpreadsheet\Style\Alignment;
+use PhpOffice\PhpSpreadsheet\Style\Border;
 use PhpOffice\PhpSpreadsheet\Style\Fill;
+use PhpOffice\PhpSpreadsheet\Worksheet\PageSetup;
 use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
+use Symfony\Component\HttpFoundation\Response;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 use ZipArchive;
 
@@ -21,8 +27,10 @@ use ZipArchive;
  * The prototype's Export button raised a toast and downloaded nothing, which is
  * worse than having no button: it tells the user their report is on its way.
  *
- * Three formats, because the report is five sections and CSV is one table:
+ * Four formats, because the report is several sections and CSV is one table:
  *
+ *   pdf   the student fee report alone, typeset on a letterhead for printing,
+ *         filing and sending. The one a person reads rather than a program.
  *   xlsx  one workbook, five sheets, money formatted and column widths set.
  *         The richest of the three and still the default, because it is what
  *         the reports screen has shipped and what people already have saved.
@@ -50,9 +58,12 @@ class ReportExportController extends Controller
      * than 400s, matching `Period::resolve`, which quietly returns 'month' for
      * nonsense: a mistyped query string should still hand back a report.
      */
-    private const FORMATS = ['xlsx', 'csv', 'zip'];
+    private const FORMATS = ['xlsx', 'csv', 'zip', 'pdf'];
 
-    public function __invoke(Request $request, ReportBook $book): StreamedResponse
+    /** The institute's navy, as the voucher prints it. */
+    private const NAVY = '2A2668';
+
+    public function __invoke(Request $request, ReportBook $book, Reporting $reporting): Response
     {
         // The super admin's copy of this route sits behind `auth:superadmin`,
         // which is its gate. The super admin is not a staff User and is not
@@ -76,12 +87,17 @@ class ReportExportController extends Controller
             $format = self::FORMATS[0];
         }
 
+        $stem = 'BBT Report '.$period->from->format('Y-m-d').' to '.$period->to->format('Y-m-d');
+
+        if ($format === 'pdf') {
+            return $this->pdf($user, $period, $reporting, 'BBT Student Fee Report '
+                .$period->from->format('Y-m-d').' to '.$period->to->format('Y-m-d').'.pdf');
+        }
+
         // Built BEFORE the response so a query that throws produces a 500 the
         // error handler can render, rather than an exception raised halfway
         // through a stream the browser has already begun saving as a file.
         $sections = $book->build($user, $period);
-
-        $stem = 'BBT Report '.$period->from->format('Y-m-d').' to '.$period->to->format('Y-m-d');
 
         return match ($format) {
             'csv' => $this->csv($sections, $stem.'.csv'),
@@ -91,6 +107,32 @@ class ReportExportController extends Controller
     }
 
     // ---- Writers -------------------------------------------------------------
+
+    /**
+     * The student fee report as a printable document.
+     *
+     * An account without `revenue.view` still gets a document — the letterhead
+     * and a sentence saying why there are no figures — for the same reason the
+     * Summary sheet does: a blank file reads as a broken one.
+     */
+    private function pdf($user, Period $period, Reporting $reporting, string $filename): Response
+    {
+        $canSeeMoney = $user->can('revenue.view');
+        $rows = $canSeeMoney ? $reporting->studentFees($user, $period) : collect();
+
+        return Download::named(
+            DocumentResponse::pdf('reports.student-fees', [
+                'settings' => Setting::current(),
+                'period' => $period,
+                'rows' => $rows,
+                'totals' => $reporting->studentFeeTotals($rows),
+                'canSeeMoney' => $canSeeMoney,
+                'scope' => $user->can('scope.all') ? 'All registrations' : 'Own registrations only',
+                'preparedBy' => $user->name ?: 'Super admin',
+            ], 'a4'),
+            $filename,
+        );
+    }
 
     /**
      * @param  list<array<string, mixed>>  $sections
@@ -257,8 +299,16 @@ class ReportExportController extends Controller
         }
 
         if ($section['preamble'] !== []) {
-            $sheet->getStyle('A1')->getFont()->setBold(true)->setSize(14);
+            $sheet->getStyle('A1')->getFont()->setBold(true)->setSize(16)->getColor()->setRGB(self::NAVY);
+            $sheet->getStyle('A2:A'.count($section['preamble']))->getFont()->getColor()->setRGB('555B7A');
         }
+
+        // Printable as it stands: landscape, one page wide, header repeated.
+        $sheet->getPageSetup()
+            ->setOrientation(PageSetup::ORIENTATION_LANDSCAPE)
+            ->setPaperSize(PageSetup::PAPERSIZE_A4)
+            ->setFitToWidth(1)
+            ->setFitToHeight(0);
 
         // A blank row between the preamble and the first table; a sheet with no
         // preamble starts its table at row 1 rather than leaving row 1 empty.
@@ -275,6 +325,13 @@ class ReportExportController extends Controller
                 $sheet->setCellValue('A'.$row, $table['heading']);
                 $sheet->getStyle('A'.$row)->getFont()->setBold(true);
                 $row++;
+            }
+
+            // The first table's header stays on screen and on every printed
+            // page, so a 400-row sheet is still readable at row 400.
+            if ($i === 0 && count($table['rows']) > 1) {
+                $sheet->freezePane('A'.($row + 1));
+                $sheet->getPageSetup()->setRowsToRepeatAtTopByStartAndEnd($row, $row);
             }
 
             $this->writeTable($sheet, $table, $row);
@@ -305,14 +362,33 @@ class ReportExportController extends Controller
         $lastCol = chr(64 + count($rows[0]));
         $headerRange = 'A'.$startRow.':'.$lastCol.$startRow;
 
-        $sheet->getStyle($headerRange)->getFont()->setBold(true);
+        $sheet->getStyle($headerRange)->getFont()->setBold(true)->getColor()->setRGB('FFFFFF');
         $sheet->getStyle($headerRange)->getFill()
             ->setFillType(Fill::FILL_SOLID)
-            ->getStartColor()->setRGB('EEF0F7');
-        $sheet->getStyle($headerRange)->getAlignment()->setVertical(Alignment::VERTICAL_CENTER);
+            ->getStartColor()->setRGB(self::NAVY);
+        $sheet->getStyle($headerRange)->getAlignment()
+            ->setVertical(Alignment::VERTICAL_CENTER)
+            ->setWrapText(true);
+        $sheet->getRowDimension($startRow)->setRowHeight(30);
 
         $dataStart = $startRow + 1;
         $dataEnd = $startRow + count($rows) - 1;
+
+        // Hairlines round every cell, so a printout reads as a table rather
+        // than as numbers floating on a page.
+        $sheet->getStyle('A'.$startRow.':'.$lastCol.$dataEnd)->getBorders()->getAllBorders()
+            ->setBorderStyle(Border::BORDER_THIN)->getColor()->setRGB('CFD4E6');
+
+        // A totals line is the last row: bold, shaded, ruled off from the data.
+        if (($table['totals'] ?? false) && $dataEnd > $startRow) {
+            $totals = 'A'.$dataEnd.':'.$lastCol.$dataEnd;
+            $sheet->getStyle($totals)->getFont()->setBold(true);
+            $sheet->getStyle($totals)->getFill()
+                ->setFillType(Fill::FILL_SOLID)
+                ->getStartColor()->setRGB('EEF0F7');
+            $sheet->getStyle($totals)->getBorders()->getTop()
+                ->setBorderStyle(Border::BORDER_MEDIUM)->getColor()->setRGB(self::NAVY);
+        }
 
         if ($dataEnd < $dataStart) {
             return;
@@ -324,6 +400,13 @@ class ReportExportController extends Controller
             $col = chr(65 + $i);
             $sheet->getStyle($col.$dataStart.':'.$col.$dataEnd)
                 ->getNumberFormat()->setFormatCode('#,##0');
+        }
+
+        // Stored as 12.5, shown as 12.5% — a real number, so it still sorts.
+        foreach ($table['pcts'] ?? [] as $i) {
+            $col = chr(65 + $i);
+            $sheet->getStyle($col.$dataStart.':'.$col.$dataEnd)
+                ->getNumberFormat()->setFormatCode('0.0"%"');
         }
 
         foreach ($table['ints'] as $i) {

@@ -120,7 +120,8 @@ class InstituteClockTest extends TestCase
 
         $this->seed(DatabaseSeeder::class);
         $user = User::where('username', 'adminansar')->firstOrFail();
-        $preamble = app(ReportBook::class)->build($user, Period::resolve('quarter'))[0]['preamble'];
+        $preamble = collect(app(ReportBook::class)->build($user, Period::resolve('quarter')))
+            ->firstWhere('title', 'Summary')['preamble'];
 
         $this->assertContains('Generated: 05 Sep 2026 15:44 PKT', $preamble);
         $this->assertContains('Report period: This quarter (01 Jul 2026 to 30 Sep 2026)', $preamble);

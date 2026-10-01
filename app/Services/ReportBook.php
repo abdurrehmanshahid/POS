@@ -28,7 +28,7 @@ use App\Support\Period;
  * a format added later cannot reintroduce a money sheet for an account that is
  * not allowed to see money.
  *
- * @phpstan-type Table array{heading: ?string, rows: list<list<mixed>>, money: list<int>, ints: list<int>}
+ * @phpstan-type Table array{heading: ?string, rows: list<list<mixed>>, money: list<int>, ints: list<int>, pcts?: list<int>, totals?: bool}
  * @phpstan-type Section array{title: string, preamble: list<string>, note: ?string, widths: array<string, int>, tables: list<Table>}
  */
 class ReportBook
@@ -44,7 +44,16 @@ class ReportBook
     {
         $canSeeMoney = $user->can('revenue.view');
 
-        $sections = [$this->summary($user, $period, $canSeeMoney)];
+        $sections = [];
+
+        // First, because it is the sheet people open the file for: who owes
+        // what, student by student. Money-gated as a whole — every column after
+        // the contact details is a fee.
+        if ($canSeeMoney) {
+            $sections[] = $this->studentFees($user, $period);
+        }
+
+        $sections[] = $this->summary($user, $period, $canSeeMoney);
 
         if ($canSeeMoney) {
             $sections[] = $this->collections($user, $period);
@@ -61,6 +70,58 @@ class ReportBook
     }
 
     // ---- Sections ------------------------------------------------------------
+
+    /** Column headings of the student fee report, shared with the PDF. */
+    public const STUDENT_FEE_COLUMNS = [
+        'Student ID', 'Student name', 'Father name', 'CNIC', 'Contact no', 'Course',
+        'Total amount', 'Discounted price', 'Discount %', 'Advance / installment paid',
+        'Pending amount', 'Receiving %', 'Status',
+    ];
+
+    /** @return Section */
+    private function studentFees(User $user, Period $period): array
+    {
+        $fees = $this->reporting->studentFees($user, $period);
+        $t = $this->reporting->studentFeeTotals($fees);
+
+        $rows = [self::STUDENT_FEE_COLUMNS];
+        foreach ($fees as $r) {
+            $rows[] = [
+                $r->code, $r->name, $r->father, $r->cnic, $r->phone, $r->course,
+                $r->total, $r->net, $r->discount_pct, $r->received,
+                $r->pending, $r->received_pct, $r->status,
+            ];
+        }
+        $rows[] = [
+            'TOTAL', $t->students.' student'.($t->students === 1 ? '' : 's').', '.$t->count.' registration'.($t->count === 1 ? '' : 's'),
+            '', '', '', '',
+            $t->total, $t->net, $t->discount_pct, $t->received,
+            $t->pending, $t->received_pct, '',
+        ];
+
+        return [
+            'title' => 'Student fee report',
+            'preamble' => [
+                config('institute.name', 'Big Binary Tech Institute'),
+                'Student Fee Report',
+                'Registrations issued: '.$period->label().' ('.$period->rangeLabel().')',
+                'Generated: '.Format::dateTime(now()).' '.Format::zone(),
+            ],
+            'note' => null,
+            'widths' => [
+                'A' => 14, 'B' => 24, 'C' => 24, 'D' => 17, 'E' => 16, 'F' => 38,
+                'G' => 14, 'H' => 16, 'I' => 11, 'J' => 16, 'K' => 15, 'L' => 12, 'M' => 13,
+            ],
+            'tables' => [[
+                'heading' => null,
+                'rows' => $rows,
+                'money' => [6, 7, 9, 10],
+                'ints' => [],
+                'pcts' => [8, 11],
+                'totals' => true,
+            ]],
+        ];
+    }
 
     /** @return Section */
     private function summary(User $user, Period $period, bool $money): array

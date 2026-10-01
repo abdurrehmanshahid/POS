@@ -337,7 +337,7 @@ new class extends Component {
                         <th>Role</th>
                         <th>Data scope</th>
                         <th>Sign-in</th>
-                        @if ($canManage)<th class="right">Actions</th>@endif
+                        @if ($canManage)<th class="right actions-col">Actions</th>@endif
                     </tr>
                 </thead>
                 <tbody>
@@ -389,7 +389,7 @@ new class extends Component {
                                 @endif
                             </td>
                             @if ($canManage)
-                                <td class="right">
+                                <td class="right actions-col">
                                     <button class="btn btn-ghost btn-sm" wire:click="editUser({{ $u->id }})"><x-icon name="edit" :size="14" /> Edit</button>
                                 </td>
                             @endif

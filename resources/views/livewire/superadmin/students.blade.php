@@ -167,7 +167,7 @@ new #[Layout('components.layouts.super')] class extends Component {
         <div class="scroll-x">
             <table class="table">
                 <thead>
-                    <tr><th>ID</th><th>Student</th><th>CNIC</th><th>Courses</th><th>Outstanding</th><th>Status</th><th class="right">Actions</th></tr>
+                    <tr><th>ID</th><th>Student</th><th>CNIC</th><th>Courses</th><th>Outstanding</th><th>Status</th><th class="right actions-col">Actions</th></tr>
                 </thead>
                 <tbody>
                     @forelse ($students as $s)
@@ -198,7 +198,7 @@ new #[Layout('components.layouts.super')] class extends Component {
                                     <x-ui.pill tone="paid" :dot="true">Active</x-ui.pill>
                                 @endif
                             </td>
-                            <td class="right" style="white-space:nowrap">
+                            <td class="right actions-col">
                                 @if ($s->trashed())
                                     <button class="btn btn-ghost btn-sm" wire:click="askRestore({{ $s->id }})">
                                         <x-icon name="restore" :size="14" /> Restore
