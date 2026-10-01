@@ -39,7 +39,20 @@
      the staff portal but never identical: you should never be in any doubt about
      which of the two you are about to click "delete" in. --}}
 <body class="super">
-<div class="shell" x-data="{ collapsed: false, mobileOpen: false, avatar: false }">
+{{-- The sidebar starts as an icon rail on laptop-sized screens. Expanded it
+     takes 256px, and at 1100px wide — a 1366 laptop at 125% zoom — that left
+     the lists too narrow for their own tables: Edit and Status went off the
+     edge. Whatever the person last chose with the menu button wins over that
+     default, so expanding it once keeps it expanded. --}}
+<div class="shell" x-data="{
+        collapsed: (() => { try { const s = localStorage.getItem('bbt-sidebar'); if (s) return s === 'collapsed'; } catch (e) {} return window.innerWidth <= 1280; })(),
+        mobileOpen: false,
+        avatar: false,
+        toggleSidebar() {
+            this.collapsed = ! this.collapsed;
+            try { localStorage.setItem('bbt-sidebar', this.collapsed ? 'collapsed' : 'expanded'); } catch (e) {}
+        },
+     }">
 
     <div x-show="mobileOpen" x-cloak @click="mobileOpen = false" class="drawer-backdrop" style="z-index:64"></div>
 
@@ -121,7 +134,7 @@
     <div class="content">
         <header class="topbar">
             <button class="btn-icon" title="Toggle menu"
-                    @click="window.innerWidth <= 820 ? (mobileOpen = !mobileOpen) : (collapsed = !collapsed)">
+                    @click="window.innerWidth <= 820 ? (mobileOpen = !mobileOpen) : toggleSidebar()">
                 <x-icon name="menu" :size="18" />
             </button>
             <div style="flex:1;min-width:0">

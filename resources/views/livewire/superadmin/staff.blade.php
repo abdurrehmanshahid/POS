@@ -316,7 +316,7 @@ new #[Layout('components.layouts.super')] class extends Component {
                 <thead>
                     <tr>
                         <th>Account</th><th>Role</th><th>Last sign-in</th><th>Status</th>
-                        <th class="right">Actions</th>
+                        <th class="right actions-col">Actions</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -344,7 +344,7 @@ new #[Layout('components.layouts.super')] class extends Component {
                                     <x-ui.pill tone="unpaid" :dot="true">Inactive</x-ui.pill>
                                 @endif
                             </td>
-                            <td class="right" style="white-space:nowrap">
+                            <td class="right actions-col">
                                 @if ($u->trashed())
                                     <button class="btn btn-ghost btn-sm" wire:click="askRestore({{ $u->id }})">
                                         <x-icon name="restore" :size="14" /> Restore
