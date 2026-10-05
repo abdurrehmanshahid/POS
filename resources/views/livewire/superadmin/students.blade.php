@@ -63,7 +63,7 @@ new #[Layout('components.layouts.super')] class extends Component {
             'id' => $s->id,
             'title' => 'Remove '.$s->name,
             'body' => 'The student disappears from the directory and every staff screen. Their admissions, challans and audit history are kept and the record can be restored. This is reversible.',
-            'phrase' => $s->student_code,
+            'phrase' => $s->student_code ?? $s->name,
             'confirmLabel' => 'Remove student',
             'needsReason' => true,
         ]);
@@ -99,7 +99,7 @@ new #[Layout('components.layouts.super')] class extends Component {
             'id' => $s->id,
             'title' => 'Permanently destroy '.$s->name,
             'body' => 'Deletes the student and any unpaid admissions and challans outright. This cannot be undone. A full snapshot is written to the audit log first.',
-            'phrase' => $s->student_code,
+            'phrase' => $s->student_code ?? $s->name,
             'irreversible' => true,
             'confirmLabel' => 'Purge permanently',
             'needsReason' => true,
@@ -176,7 +176,7 @@ new #[Layout('components.layouts.super')] class extends Component {
                             $blocker = $removal->purgeBlocker($s);
                         @endphp
                         <tr @style(['opacity:.5' => $s->trashed()])>
-                            <td class="tnum" style="color:var(--iris);font-weight:700">{{ $s->student_code }}</td>
+                            <td class="tnum" style="color:var(--iris);font-weight:700">{{ $s->codeLabel() }}</td>
                             <td>
                                 <div style="display:flex;align-items:center;gap:11px">
                                     <x-ui.avatar :name="$s->name" variant="orange" :size="30" />

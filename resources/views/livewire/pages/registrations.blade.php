@@ -587,7 +587,7 @@ new class extends Component {
         $clash = Student::withTrashed()->where('cnic', $cnic)->first();
 
         if ($clash && $clash->trashed()) {
-            $this->setFieldError('cnic', 'That CNIC belongs to a removed student ('.$clash->student_code.'). Restore that record instead.');
+            $this->setFieldError('cnic', 'That CNIC belongs to a removed student ('.$clash->codeLabel().'). Restore that record instead.');
 
             return;
         }
@@ -627,13 +627,13 @@ new class extends Component {
 
         $this->mode = 'existing';
         $this->pickedStudentId = $student->id;
-        $this->studentSearch = $student->student_code;
+        $this->studentSearch = $student->student_code ?? $student->name;
         $this->cnicClashId = null;
         $this->wizErrors = [];
         $this->wizTouched = [];
         $this->reset('newName', 'newGuardian', 'newPhone', 'newCnic');
 
-        $this->dispatch('bbt-toast', tone: 'ok', title: 'Existing student selected', msg: $student->name.' · '.$student->student_code);
+        $this->dispatch('bbt-toast', tone: 'ok', title: 'Existing student selected', msg: $student->name.' · '.$student->codeLabel());
     }
 
     /**
@@ -801,6 +801,8 @@ new class extends Component {
         ];
         if ($this->mode === 'existing') {
             $data['student_id'] = $this->pickedStudentId;
+            // Only read for a walk-in, who is given their ID by this enrolment.
+            $data['walk_in_type'] = $this->newType;
         } else {
             $data['new_student'] = [
                 'type' => $this->newType, 'name' => trim($this->newName), 'guardian_name' => trim($this->newGuardian),

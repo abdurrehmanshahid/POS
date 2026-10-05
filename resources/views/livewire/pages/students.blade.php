@@ -24,7 +24,7 @@ new class extends Component {
 
     public ?int $editingId = null;   // null => creating
 
-    public string $fType = 'R';
+    public string $fType = 'R';   // R | T | W (walk-in, W26 code until they register)
 
     public string $fName = '';
 
@@ -65,6 +65,10 @@ new class extends Component {
         // bookmark should land on the list, not on a 403.
         if (request()->boolean('new') && auth()->user()->can('registrations.create')) {
             $this->newStudent();
+            // The dashboard's "Add a student" tile is for walk-ins.
+            if (request()->boolean('walkin')) {
+                $this->fType = 'W';
+            }
         }
     }
 
@@ -139,7 +143,7 @@ new class extends Component {
                 // Not guarded: an update writes the same values whichever click
                 // wins, so a repeat is harmless. Creating is the dangerous one.
                 $service->update(auth()->user(), $student, $payload);
-                $msg = $student->student_code.' updated.';
+                $msg = $student->codeLabel().' updated.';
             } else {
                 abort_unless(auth()->user()->can('registrations.create'), 403);
                 // Guarded because nothing else catches this. `student_code` is
@@ -152,7 +156,9 @@ new class extends Component {
                 $student = $op->value;
                 $msg = $replayed
                     ? trim($this->fName).' is already on file.'
-                    : $student->name.' added as '.$student->student_code.'.';
+                    : ($student->isWalkIn()
+                        ? $student->name.' recorded as walk-in '.$student->student_code.'. They get a Regular or Track ID when they register.'
+                        : $student->name.' added as '.$student->student_code.'.');
             }
         } catch (ValidationException $e) {
             foreach ($e->errors() as $field => $messages) {
@@ -283,7 +289,7 @@ new class extends Component {
                             $billed = $courses > 0 || $charges->isNotEmpty();
                         @endphp
                         <tr class="clickable" wire:click="viewStudent({{ $s->id }})">
-                            <td class="tnum rec-id" data-label="ID" style="color:var(--iris);font-weight:700">{{ $s->student_code }}</td>
+                            <td class="tnum rec-id" data-label="ID" style="color:var(--iris);font-weight:700">{{ $s->codeLabel() }}</td>
                             <td data-label="Student">
                                 <div style="display:flex;align-items:center;gap:11px">
                                     <x-ui.avatar :name="$s->name" variant="orange" :size="30" />
@@ -297,6 +303,8 @@ new class extends Component {
                                                  finish. --}}
                                             @if ($s->isContact())
                                                 <x-ui.pill tone="navy">Contact</x-ui.pill>
+                                            @elseif ($s->isWalkIn())
+                                                <x-ui.pill tone="orange">Walk-in</x-ui.pill>
                                             @endif
                                         </div>
                                         {{-- What they bought, for a contact. The pill already
@@ -363,7 +371,7 @@ new class extends Component {
                             <x-ui.avatar :name="$selected->name" variant="orange" :size="42" />
                             <div style="flex:1;min-width:0">
                                 <div style="font-size:var(--fs-md);font-weight:800;color:var(--ink)">{{ $selected->name }}</div>
-                                <div class="tnum" style="font-size:var(--fs-xs);color:var(--iris);font-weight:700;margin-top:2px">{{ $selected->student_code }}</div>
+                                <div class="tnum" style="font-size:var(--fs-xs);color:var(--iris);font-weight:700;margin-top:2px">{{ $selected->codeLabel() }}</div>
                             </div>
                             <button class="btn-icon" wire:click="closeDrawer"><x-icon name="x" :size="18" /></button>
                         </div>
@@ -403,6 +411,9 @@ new class extends Component {
                                             Not enrolled on anything. This is a contact — someone the
                                             institute has billed for a service rather than a course.
                                             Enrolling them turns them into a student.
+                                        @elseif ($selected->isWalkIn())
+                                            Walk-in, not registered on a course yet. Their walk-in ID
+                                            is replaced by a Regular or Track ID when they register.
                                         @else
                                             No enrolments yet, this student is registered but not on a course.
                                         @endif
@@ -481,7 +492,7 @@ new class extends Component {
                                 {{-- Series picker, with a live preview of the ID to assign (spec §7.3) --}}
                                 <label class="label">Student type</label>
                                 <div style="display:flex;gap:10px;margin-bottom:8px">
-                                    @foreach ([['R', 'Regular', 'Regular courses'], ['T', 'Track', 'Track programmes']] as [$val, $title, $sub])
+                                    @foreach ([['R', 'Regular', 'Regular courses'], ['T', 'Track', 'Track programmes'], ['W', 'Walk-in', 'No course yet']] as [$val, $title, $sub])
                                         <button type="button" wire:click="$set('fType','{{ $val }}')"
                                                 style="flex:1;text-align:left;padding:12px 14px;border-radius:12px;cursor:pointer;border:1.5px solid {{ $fType === $val ? 'var(--iris)' : 'var(--border2)' }};background:{{ $fType === $val ? 'var(--iris-bg)' : 'var(--surface)' }}">
                                             <div style="font-size:var(--fs-sm);font-weight:700;color:var(--ink)">{{ $title }}</div>
@@ -492,11 +503,14 @@ new class extends Component {
                                 <div style="display:flex;align-items:center;gap:8px;padding:10px 13px;background:var(--surface2);border:1px dashed var(--border2);border-radius:11px;margin-bottom:18px">
                                     <span style="font-size:var(--fs-2xs);font-weight:700;color:var(--faint);letter-spacing:.05em;text-transform:uppercase">ID to assign</span>
                                     <span class="tnum" style="font-size:var(--fs-base);font-weight:800;color:var(--iris)">{{ $nextCode }}</span>
+                                    @if ($fType === 'W')
+                                        <span style="font-size:var(--fs-2xs);color:var(--muted);margin-left:auto">Regular / Track ID on registration</span>
+                                    @endif
                                 </div>
                             @else
                                 <div style="display:flex;align-items:center;gap:8px;padding:10px 13px;background:var(--surface2);border:1px dashed var(--border2);border-radius:11px;margin-bottom:18px">
                                     <span style="font-size:var(--fs-2xs);font-weight:700;color:var(--faint);letter-spacing:.05em;text-transform:uppercase">Student ID</span>
-                                    <span class="tnum" style="font-size:var(--fs-base);font-weight:800;color:var(--iris)">{{ $selected?->student_code }}</span>
+                                    <span class="tnum" style="font-size:var(--fs-base);font-weight:800;color:var(--iris)">{{ $selected?->codeLabel() }}</span>
                                     <span style="font-size:var(--fs-2xs);color:var(--muted);margin-left:auto">Cannot be changed</span>
                                 </div>
                             @endif

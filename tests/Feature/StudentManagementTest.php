@@ -5,6 +5,7 @@ namespace Tests\Feature;
 use App\Models\Course;
 use App\Models\Student;
 use App\Models\User;
+use App\Services\Sequences;
 use Database\Seeders\DatabaseSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Livewire\Livewire;
@@ -69,6 +70,74 @@ class StudentManagementTest extends TestCase
             ->assertHasNoErrors();
 
         $this->assertSame('BBT-T26-0003', Student::where('cnic', '35202-1112223-4')->value('student_code'));
+    }
+
+    // ---- Walk-ins ------------------------------------------------------------
+
+    private function recordWalkIn(User $by, string $name = 'Walk In Visitor'): Student
+    {
+        Livewire::actingAs($by)
+            ->test('pages.students')
+            ->call('newStudent')
+            ->set('fType', 'W')
+            ->set('fName', $name)
+            ->set('fPhone', '0300 5556667')
+            ->call('saveStudent')
+            ->assertHasNoErrors();
+
+        return Student::where('name', $name)->firstOrFail();
+    }
+
+    public function test_a_walk_in_gets_a_walk_in_id_not_a_regular_or_track_one(): void
+    {
+        $studentsBefore = Student::query()->students()->count();
+
+        $walkIn = $this->recordWalkIn($this->officer());
+
+        $this->assertSame('BBT-W26-0001', $walkIn->student_code);
+        $this->assertTrue($walkIn->isWalkIn());
+        $this->assertSame($studentsBefore, Student::query()->students()->count(), 'Not counted as a registered student.');
+        $this->assertDatabaseHas('audit_logs', ['action' => 'Walk-in recorded', 'subject_id' => $walkIn->id]);
+
+        // The R series was not touched, so the next real student gets 0011.
+        $this->assertSame('BBT-R26-0011', app(Sequences::class)->peekStudentCode('R'));
+    }
+
+    public function test_the_officer_who_recorded_a_walk_in_can_find_them(): void
+    {
+        $walkIn = $this->recordWalkIn($this->officer());
+
+        $this->assertTrue(Student::visibleTo($this->officer())->whereKey($walkIn->id)->exists());
+    }
+
+    public function test_enrolling_a_walk_in_gives_them_an_id_in_the_chosen_series(): void
+    {
+        $walkIn = $this->recordWalkIn($this->officer());
+        $course = Course::where('code', 'GD-101')->firstOrFail();
+
+        Livewire::actingAs($this->officer())
+            ->withQueryParams(['enrol' => $walkIn->id])
+            ->test('pages.registrations')
+            ->call('toggleCourse', $course->id)
+            ->call('next')      // step 2 -> 3
+            ->set('newType', 'T')
+            ->call('submit');
+
+        $walkIn->refresh();
+        $this->assertSame('BBT-T26-0003', $walkIn->student_code);
+        $this->assertSame('T', $walkIn->type);
+        $this->assertSame('student', $walkIn->kind);
+        $this->assertDatabaseHas('admissions', ['student_id' => $walkIn->id, 'course_id' => $course->id]);
+        $this->assertDatabaseHas('audit_logs', ['action' => 'Walk-in enrolled as a student', 'subject_id' => $walkIn->id]);
+    }
+
+    public function test_the_dashboard_link_opens_the_form_on_walk_in(): void
+    {
+        Livewire::actingAs($this->officer())
+            ->withQueryParams(['new' => 1, 'walkin' => 1])
+            ->test('pages.students')
+            ->assertSet('formOpen', true)
+            ->assertSet('fType', 'W');
     }
 
     public function test_phone_is_normalised_and_cnic_format_is_enforced(): void

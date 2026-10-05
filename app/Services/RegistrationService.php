@@ -32,6 +32,7 @@ class RegistrationService
     /**
      * @param  array{
      *   student_id?:int|null,
+     *   walk_in_type?:string|null,
      *   new_student?:array{type:string,name:string,guardian_name:string,phone:string,cnic:string}|null,
      *   course_ids:array<int>,
      *   modules?:array<int,list<int>>,
@@ -155,6 +156,7 @@ class RegistrationService
             $student = $this->resolveStudent($actor, $data);
 
             $this->promoteIfContact($student, $actor);
+            $this->promoteIfWalkIn($student, $actor, (string) ($data['walk_in_type'] ?? 'R'));
 
             $due = Clock::today()->copy()->addDays(7)->toDateString();
 
@@ -492,6 +494,40 @@ class RegistrationService
             'field' => 'kind',
             'old_value' => 'contact',
             'new_value' => 'student',
+        ]);
+    }
+
+    /**
+     * A walk-in who registers becomes a student, and their walk-in code
+     * (W26-####) is swapped for a Regular or Track one.
+     *
+     * Safe to replace because a walk-in has never been billed, so their W code
+     * is on no challan or receipt; the audit row keeps the old one. Allocated
+     * inside the registration transaction, so the first challan carries the
+     * new code and a failed registration uses up no number. The series comes
+     * from the wizard, because only now is the course known.
+     */
+    private function promoteIfWalkIn(Student $student, User $actor, string $type): void
+    {
+        if (! $student->isWalkIn()) {
+            return;
+        }
+
+        $type = $type === 'T' ? 'T' : 'R';
+        $walkInCode = $student->student_code;
+
+        $student->update([
+            'kind' => 'student',
+            'type' => $type,
+            'student_code' => $this->sequences->nextStudentCode($type),
+        ]);
+
+        Audit::record('Walk-in enrolled as a student', $actor, [
+            'subject' => $student,
+            'subject_label' => $student->student_code.' · '.$student->name,
+            'field' => 'student_code',
+            'old_value' => $walkInCode,
+            'new_value' => $student->student_code,
         ]);
     }
 

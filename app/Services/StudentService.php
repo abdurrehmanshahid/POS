@@ -30,16 +30,23 @@ class StudentService
      * person. The next code in the chosen series (R26-#### / T26-####) is
      * allocated atomically, exactly as the wizard does it.
      *
+     * Type `W` records a walk-in instead, with a code from the walk-in series
+     * (W26-####). It is replaced by an R or T code when they register
+     * (RegistrationService::promoteIfWalkIn).
+     *
      * @param  array{type:string,name:string,guardian_name:string,phone:string,cnic:string}  $data
      */
     public function create(User $actor, array $data): Student
     {
+        $walkIn = ($data['type'] ?? null) === 'W';
         $clean = $this->validate($data);
 
-        return DB::transaction(function () use ($actor, $clean) {
+        return DB::transaction(function () use ($actor, $clean, $walkIn) {
             $student = Student::create([
-                'student_code' => $this->sequences->nextStudentCode($clean['type']),
+                'student_code' => $this->sequences->nextStudentCode($walkIn ? 'W' : $clean['type']),
+                // A placeholder for a walk-in; it is overwritten on enrolment.
                 'type' => $clean['type'],
+                'kind' => $walkIn ? 'walkin' : 'student',
                 'name' => $clean['name'],
                 'guardian_name' => $clean['guardian_name'],
                 'cnic' => $clean['cnic'],
@@ -47,10 +54,10 @@ class StudentService
                 'created_by' => $actor->id,
             ]);
 
-            Audit::record('Student created', $actor, [
+            Audit::record($walkIn ? 'Walk-in recorded' : 'Student created', $actor, [
                 'subject' => $student,
-                'subject_label' => $student->student_code.' · '.$student->name,
-                'new_value' => $student->student_code,
+                'subject_label' => $student->codeLabel().' · '.$student->name,
+                'new_value' => $student->codeLabel(),
             ]);
 
             return $student;
@@ -88,7 +95,7 @@ class StudentService
                 if ($old !== $student->$field) {
                     Audit::record('Student details edited', $actor, [
                         'subject' => $student,
-                        'subject_label' => $student->student_code.' · '.$student->name,
+                        'subject_label' => $student->codeLabel().' · '.$student->name,
                         'field' => $field,
                         'old_value' => (string) $old,
                         'new_value' => (string) $student->$field,
@@ -146,8 +153,8 @@ class StudentService
 
             if ($clash) {
                 $errors['cnic'] = $clash->trashed()
-                    ? 'That CNIC belongs to a removed student ('.$clash->student_code.'). Restore that record instead.'
-                    : 'That CNIC is already registered to '.$clash->name.' ('.$clash->student_code.').';
+                    ? 'That CNIC belongs to a removed student ('.$clash->codeLabel().'). Restore that record instead.'
+                    : 'That CNIC is already registered to '.$clash->name.' ('.$clash->codeLabel().').';
             }
         }
 

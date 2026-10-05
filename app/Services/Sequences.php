@@ -28,7 +28,11 @@ class Sequences
         return (string) config('institute.code_prefix', '');
     }
 
-    /** BBT-R26-0011 / BBT-T26-0003, 4-digit, independent per type (spec §7.3). */
+    /**
+     * BBT-R26-0011 / BBT-T26-0003, 4-digit, independent per type (spec §7.3).
+     * `W` is the walk-in series (BBT-W26-0001), swapped for an R or T code when
+     * the walk-in registers.
+     */
     public function nextStudentCode(string $type): string
     {
         $value = $this->bump('student:'.$type);
@@ -39,7 +43,13 @@ class Sequences
     /** Format a student code from its parts, without touching the counter. */
     public static function studentCode(string $type, int $value): string
     {
-        return sprintf('%s%s26-%04d', self::prefix(), $type === 'T' ? 'T' : 'R', $value);
+        return sprintf('%s%s26-%04d', self::prefix(), self::series($type), $value);
+    }
+
+    /** R, T or W; anything else is Regular. */
+    private static function series(string $type): string
+    {
+        return in_array($type, ['T', 'W'], true) ? $type : 'R';
     }
 
     /** Format an admission number from its serial. */
@@ -62,7 +72,7 @@ class Sequences
      */
     public function peekStudentCode(string $type): string
     {
-        $type = $type === 'T' ? 'T' : 'R';
+        $type = self::series($type);
         $value = Counter::where('key', 'student:'.$type)->value('value') ?? 1;
 
         return self::studentCode($type, $value);

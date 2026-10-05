@@ -35,7 +35,7 @@
                     @forelse ($matches as $m)
                         <button wire:click="pickStudent({{ $m->id }})" style="display:flex;align-items:center;gap:12px;padding:12px 14px;border:1.5px solid {{ $pickedStudentId === $m->id ? 'var(--iris)' : 'var(--border2)' }};background:{{ $pickedStudentId === $m->id ? 'var(--iris-bg)' : 'var(--surface)' }};border-radius:12px;cursor:pointer;text-align:left">
                             <x-ui.avatar :name="$m->name" variant="orange" :size="34" />
-                            <div style="flex:1"><div style="font-size:var(--fs-sm);font-weight:700;color:var(--ink)">{{ $m->name }}</div><div class="tnum" style="font-size:var(--fs-2xs);color:var(--muted)">{{ $m->student_code }} · {{ $m->cnic }}</div></div>
+                            <div style="flex:1"><div style="font-size:var(--fs-sm);font-weight:700;color:var(--ink)">{{ $m->name }}</div><div class="tnum" style="font-size:var(--fs-2xs);color:var(--muted)">{{ $m->codeLabel() }} · {{ $m->cnic }}</div></div>
                             @if ($pickedStudentId === $m->id)<x-icon name="check-circle" :size="18" style="color:var(--iris)" />@endif
                         </button>
                     @empty
@@ -156,7 +156,7 @@
                         <div style="flex:1;min-width:0">
                             <div style="font-size:var(--fs-xs);font-weight:800;color:var(--due);letter-spacing:.02em;text-transform:uppercase">Already registered</div>
                             <div style="font-size:var(--fs-base);font-weight:700;color:var(--ink);margin-top:2px">{{ $cnicClash->name }}</div>
-                            <div class="tnum" style="font-size:var(--fs-xs);color:var(--muted)">{{ $cnicClash->student_code }} · {{ $cnicClash->cnic }}</div>
+                            <div class="tnum" style="font-size:var(--fs-xs);color:var(--muted)">{{ $cnicClash->codeLabel() }} · {{ $cnicClash->cnic }}</div>
                         </div>
                         <button class="btn btn-accent" style="flex:none" wire:click="useExistingStudent">
                             <x-icon name="check" :size="15" /> Enrol this student
@@ -479,11 +479,20 @@
             <h2 style="font-size:var(--fs-lg);font-weight:800;color:var(--ink);margin:0 0 18px">Review &amp; confirm</h2>
             <div style="background:linear-gradient(135deg,var(--navy),var(--navy2));border-radius:14px;padding:18px 20px;color:#fff;margin-bottom:18px">
                 <div style="display:flex;justify-content:space-between">
-                    <div><div style="font-size:var(--fs-2xs);color:#b9bcdd">Student ID to assign</div><div class="tnum" style="font-size:var(--fs-lg);font-weight:800">{{ $mode === 'existing' ? ($pickedStudent?->student_code ?? '') : $studentCodePreview }}</div></div>
+                    <div><div style="font-size:var(--fs-2xs);color:#b9bcdd">Student ID to assign</div><div class="tnum" style="font-size:var(--fs-lg);font-weight:800">{{ $mode === 'existing' && ! $pickedStudent?->isWalkIn() ? ($pickedStudent?->student_code ?? '') : $studentCodePreview }}</div></div>
                     <div style="text-align:right"><div style="font-size:var(--fs-2xs);color:#b9bcdd">Admission # to be assigned</div><div class="tnum" style="font-size:var(--fs-lg);font-weight:800">{{ $admPreview }}</div></div>
                 </div>
                 <div style="margin-top:8px;font-size:var(--fs-xs);color:#dfe0f2">{{ $mode === 'existing' ? $pickedStudent?->name : $newName }}</div>
             </div>
+            {{-- A walk-in has no ID yet. This enrolment gives them one, so the
+                 series is chosen here, now that the course is known. --}}
+            @if ($mode === 'existing' && $pickedStudent?->isWalkIn())
+                <div style="font-size:var(--fs-xs);color:var(--muted);margin-bottom:8px">Walk-in {{ $pickedStudent->student_code }}. Choose the series for their student ID:</div>
+                <div style="display:flex;gap:10px;margin-bottom:18px">
+                    <button wire:click="$set('newType','R')" style="flex:1;padding:14px;border:1.5px solid {{ $newType === 'R' ? 'var(--iris)' : 'var(--border2)' }};background:{{ $newType === 'R' ? 'var(--iris-bg)' : 'var(--surface)' }};border-radius:12px;cursor:pointer;text-align:left"><div style="font-size:var(--fs-sm);font-weight:700;color:var(--ink)">Regular</div><div class="tnum" style="font-size:var(--fs-2xs);color:var(--muted)">{{ Sequences::prefix() }}R26-####</div></button>
+                    <button wire:click="$set('newType','T')" style="flex:1;padding:14px;border:1.5px solid {{ $newType === 'T' ? 'var(--iris)' : 'var(--border2)' }};background:{{ $newType === 'T' ? 'var(--iris-bg)' : 'var(--surface)' }};border-radius:12px;cursor:pointer;text-align:left"><div style="font-size:var(--fs-sm);font-weight:700;color:var(--ink)">Track</div><div class="tnum" style="font-size:var(--fs-2xs);color:var(--muted)">{{ Sequences::prefix() }}T26-####</div></button>
+                </div>
+            @endif
 
             <div class="panel" style="margin-bottom:16px">
                 <div class="panel-head" style="padding:14px 16px"><h3 class="panel-title" style="font-size:var(--fs-sm)">Charges · derived</h3></div>
