@@ -5,6 +5,7 @@ use App\Models\Challan;
 use App\Models\Course;
 use App\Models\CourseModule;
 use App\Models\Teacher;
+use App\Services\Audit;
 use App\Support\Format;
 use App\Support\RevenueShare;
 use Illuminate\Support\Facades\DB;
@@ -62,6 +63,9 @@ new class extends Component {
      */
     public array $modules = [];
 
+    /** Which list is showing: active | inactive | archived. */
+    public string $tab = 'active';
+
     // ---- Detail drawer -----------------------------------------------------
 
     public function viewCourse(int $id): void
@@ -98,6 +102,41 @@ new class extends Component {
         $this->dispatch('bbt-toast', tone: 'info',
             title: $to ? 'Course activated' : 'Course deactivated',
             msg: $course->code);
+    }
+
+    // ---- Archive -----------------------------------------------------------
+
+    /**
+     * Archive or restore a course. Like setActive(), the caller states the
+     * result it wants, so a double-click writes the same value twice.
+     *
+     * Archiving also deactivates, so the wizard, attendance and batches screens
+     * stop offering the course without each learning about archiving. Restoring
+     * brings it back as inactive: putting it on sale again is a separate,
+     * deliberate step.
+     */
+    public function setArchived(int $id, bool $to): void
+    {
+        if (! auth()->user()->can('courses.manage')) {
+            return;
+        }
+        $course = Course::find($id);
+        if (! $course || $course->isArchived() === $to) {
+            return;
+        }
+        $course->update($to
+            ? ['archived_at' => now(), 'is_active' => false]
+            : ['archived_at' => null]);
+
+        Audit::record($to ? 'Course archived' : 'Course restored from archive', auth()->user(), [
+            'subject' => $course,
+            'subject_label' => $course->code.' · '.$course->title,
+        ]);
+
+        $this->detailOpen = false;
+        $this->dispatch('bbt-toast', tone: 'info',
+            title: $to ? 'Course archived' : 'Course restored',
+            msg: $to ? $course->code.' moved to Archived.' : $course->code.' is back under Inactive.');
     }
 
     // ---- Form drawer -------------------------------------------------------
@@ -222,7 +261,12 @@ new class extends Component {
             'fee' => $this->fee,
             'capacity' => $this->capacity,
             'is_active' => $this->fStatus === 'active',
-        ])->save();
+        ]);
+        // Making an archived course active is taking it out of the archive.
+        if ($course->is_active) {
+            $course->archived_at = null;
+        }
+        $course->save();
 
         $this->syncModules($course);
 
@@ -366,8 +410,15 @@ new class extends Component {
 
     public function with(): array
     {
-        $courses = Course::with(['trainer', 'admissions', 'modules'])->orderBy('code')->get();
-        $selected = $this->selectedId ? $courses->firstWhere('id', $this->selectedId) : null;
+        $all = Course::with(['trainer', 'admissions', 'modules'])->orderBy('code')->get();
+        $selected = $this->selectedId ? $all->firstWhere('id', $this->selectedId) : null;
+
+        $groups = [
+            'active' => $all->filter(fn (Course $c) => ! $c->isArchived() && $c->is_active)->values(),
+            'inactive' => $all->filter(fn (Course $c) => ! $c->isArchived() && ! $c->is_active)->values(),
+            'archived' => $all->filter(fn (Course $c) => $c->isArchived())->values(),
+        ];
+        $courses = $groups[$this->tab] ?? $groups['active'];
 
         $enrolled = collect();
         $revenue = 0;
@@ -397,6 +448,7 @@ new class extends Component {
 
         return [
             'courses' => $courses,
+            'tabCounts' => array_map(fn ($g) => $g->count(), $groups),
             'selected' => $selected,
             'enrolled' => $enrolled,
             'revenue' => $revenue,
@@ -408,10 +460,17 @@ new class extends Component {
 
 <div class="container-app anim-fade">
     {{-- Header row --}}
-    <div style="display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:18px">
-        <div style="font-size:var(--fs-base);color:var(--muted);font-weight:500">
-            <span class="tnum" style="color:var(--ink);font-weight:700">{{ $courses->count() }}</span>
-            courses · click a card to view roster
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:18px;flex-wrap:wrap">
+        <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap">
+            <div style="display:inline-flex;background:var(--surface3);border-radius:11px;padding:4px">
+                @foreach (['active' => 'Active', 'inactive' => 'Inactive', 'archived' => 'Archived'] as $key => $label)
+                    <button wire:click="$set('tab','{{ $key }}')" class="btn btn-sm {{ $tab === $key ? 'btn-primary' : '' }}"
+                            style="{{ $tab === $key ? '' : 'background:transparent;color:var(--ink2)' }}">
+                        {{ $label }} <span class="tnum" style="opacity:.75">{{ $tabCounts[$key] }}</span>
+                    </button>
+                @endforeach
+            </div>
+            <div style="font-size:var(--fs-sm);color:var(--muted);font-weight:500">Click a card to view roster</div>
         </div>
         @if ($canManage)
             <button class="btn btn-accent" wire:click="addCourse">
@@ -422,7 +481,15 @@ new class extends Component {
 
     {{-- Course grid --}}
     @if ($courses->isEmpty())
-        <div class="panel"><div class="empty-state">No courses in the catalog yet.</div></div>
+        <div class="panel"><div class="empty-state">
+            @if ($tab === 'archived')
+                No archived courses. Archive a course you no longer run to move it here.
+            @elseif ($tab === 'inactive')
+                No inactive courses.
+            @else
+                No active courses.
+            @endif
+        </div></div>
     @else
         <div class="grid-3">
             @foreach ($courses as $c)
@@ -441,7 +508,9 @@ new class extends Component {
                             <div class="tnum" style="font-size:var(--fs-xs);font-weight:800;letter-spacing:.03em;color:var(--iris)">{{ $c->code }}</div>
                             <div style="font-size:var(--fs-md);font-weight:700;color:var(--ink);margin-top:3px;line-height:1.3">{{ $c->title }}</div>
                         </div>
-                        @if ($c->is_active)
+                        @if ($c->isArchived())
+                            <x-ui.pill tone="navy">Archived</x-ui.pill>
+                        @elseif ($c->is_active)
                             <x-ui.pill tone="validated">Active</x-ui.pill>
                         @else
                             <x-ui.pill tone="cancelled">Inactive</x-ui.pill>
@@ -481,6 +550,19 @@ new class extends Component {
                         @if ($canManage)
                             @php $toggleLabel = $c->is_active ? 'Deactivate course' : 'Activate course'; @endphp
                             <div class="card-foot-actions">
+                                @if ($c->isArchived())
+                                <button class="btn btn-sm btn-ghost" wire:click.stop="setArchived({{ $c->id }}, false)"
+                                        wire:loading.attr="disabled" wire:target="setArchived({{ $c->id }}, false)">
+                                    <x-icon name="restore" :size="14" /> Restore
+                                </button>
+                                @else
+                                <button class="btn-icon btn-icon-plain"
+                                        wire:click.stop="setArchived({{ $c->id }}, true)"
+                                        wire:confirm="Archive {{ $c->code }}? It is hidden from the course lists and can no longer be registered for. You can restore it from the Archived tab."
+                                        wire:loading.attr="disabled" wire:target="setArchived({{ $c->id }}, true)"
+                                        title="Archive course" aria-label="Archive course">
+                                    <x-icon name="archive" :size="17" />
+                                </button>
                                 {{-- The state to move TO, not "flip". Two clicks
                                      on a flip cancel out; two clicks on this
                                      write the same value twice. --}}
@@ -497,6 +579,7 @@ new class extends Component {
                                 <button class="btn btn-sm btn-primary" wire:click.stop="editCourse({{ $c->id }})">
                                     <x-icon name="edit" :size="14" /> Edit
                                 </button>
+                                @endif
                             </div>
                         @endif
                     </div>
@@ -517,7 +600,9 @@ new class extends Component {
                                 <div class="tnum" style="font-size:var(--fs-xs);font-weight:800;letter-spacing:.03em;color:var(--iris)">{{ $selected->code }}</div>
                                 <div style="display:flex;align-items:center;gap:10px;margin-top:4px">
                                     <div style="font-size:var(--fs-lg);font-weight:800;color:var(--ink)">{{ $selected->title }}</div>
-                                    @if ($selected->is_active)
+                                    @if ($selected->isArchived())
+                                        <x-ui.pill tone="navy">Archived</x-ui.pill>
+                                    @elseif ($selected->is_active)
                                         <x-ui.pill tone="validated">Active</x-ui.pill>
                                     @else
                                         <x-ui.pill tone="cancelled">Inactive</x-ui.pill>
@@ -575,6 +660,16 @@ new class extends Component {
 
                         @if ($canManage)
                             <div class="drawer-foot">
+                                @if ($selected->isArchived())
+                                    <button class="btn btn-ghost" wire:click="setArchived({{ $selected->id }}, false)">
+                                        <x-icon name="restore" :size="16" /> Restore from archive
+                                    </button>
+                                @else
+                                    <button class="btn btn-ghost" wire:click="setArchived({{ $selected->id }}, true)"
+                                            wire:confirm="Archive {{ $selected->code }}? It is hidden from the course lists and can no longer be registered for. You can restore it from the Archived tab.">
+                                        <x-icon name="archive" :size="16" /> Archive
+                                    </button>
+                                @endif
                                 <button class="btn btn-primary" wire:click="editCourse({{ $selected->id }})">
                                     <x-icon name="edit" :size="16" /> Edit course
                                 </button>

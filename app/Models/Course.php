@@ -17,13 +17,20 @@ class Course extends Model
 {
     use HasFactory, SoftDeletes;
 
-    protected $fillable = ['code', 'title', 'trainer_id', 'fee', 'capacity', 'is_active'];
+    protected $fillable = ['code', 'title', 'trainer_id', 'fee', 'capacity', 'is_active', 'archived_at'];
 
     protected $casts = [
         'fee' => 'integer',
         'capacity' => 'integer',
         'is_active' => 'boolean',
+        'archived_at' => 'datetime',
     ];
+
+    /** Retired from the catalogue; see 2026_10_05_000002. */
+    public function isArchived(): bool
+    {
+        return $this->archived_at !== null;
+    }
 
     public function trainer(): BelongsTo
     {
