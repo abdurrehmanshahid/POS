@@ -74,6 +74,21 @@ class Student extends Model
         return $q->where('students.kind', 'contact');
     }
 
+    /**
+     * Someone recorded at the counter who has not registered on a course yet.
+     * Their code is from the walk-in series (W26-####) and is replaced by an R
+     * or T code when they register; see RegistrationService::promoteIfWalkIn().
+     */
+    public function isWalkIn(): bool
+    {
+        return $this->kind === 'walkin';
+    }
+
+    public function scopeWalkIns(Builder $q): Builder
+    {
+        return $q->where('students.kind', 'walkin');
+    }
+
     // ---- Scoping (spec §6) -------------------------------------------------
 
     /**
@@ -101,6 +116,11 @@ class Student extends Model
                 $a->where('enrolled_by', $user->id)->where('status', '!=', 'cancelled');
             })->orWhereHas('challans', function (Builder $c) use ($user) {
                 $c->whereNull('admission_id')->where('raised_by', $user->id);
+            })->orWhere(function (Builder $w) use ($user) {
+                // A walk-in has neither an admission nor a challan yet, so
+                // without this the officer who recorded them could not find
+                // them again to enrol them.
+                $w->where('students.kind', 'walkin')->where('students.created_by', $user->id);
             });
         });
     }
@@ -180,6 +200,12 @@ class Student extends Model
 
     // ---- Display -----------------------------------------------------------
 
+    /** The student ID, with a fallback for a row that somehow has none. */
+    public function codeLabel(): string
+    {
+        return $this->student_code ?? 'Walk-in';
+    }
+
     public function initials(): string
     {
         return Format::initials($this->name);
@@ -189,12 +215,16 @@ class Student extends Model
      * Regular or Track — which fee structure applies.
      *
      * Meaningless for a contact, who is on no structure at all, so it says
-     * "Contact" instead of picking one of two answers that are both wrong.
+     * "Contact" instead of picking one of two answers that are both wrong. The
+     * same goes for a walk-in, whose series is chosen when they enrol.
      */
     public function typeLabel(): string
     {
         if ($this->isContact()) {
             return 'Contact';
+        }
+        if ($this->isWalkIn()) {
+            return 'Walk-in';
         }
 
         return $this->type === 'T' ? 'Track' : 'Regular';

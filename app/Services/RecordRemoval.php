@@ -236,7 +236,7 @@ class RecordRemoval
     public function confirmationPhrase(Model $record): string
     {
         return match (true) {
-            $record instanceof Student => $record->student_code,
+            $record instanceof Student => $record->codeLabel(),
             $record instanceof User => $record->username,
             $record instanceof Course => $record->code,
             default => (string) $record->getKey(),
@@ -256,7 +256,7 @@ class RecordRemoval
     public function describe(Model $record): string
     {
         return match (true) {
-            $record instanceof Student => $record->student_code.' · '.$record->name,
+            $record instanceof Student => $record->codeLabel().' · '.$record->name,
             $record instanceof User => $record->username.' · '.$record->name,
             $record instanceof Course => $record->code.' · '.$record->title,
             default => (string) $record->getKey(),
