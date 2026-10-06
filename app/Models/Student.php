@@ -22,6 +22,12 @@ class Student extends Model
         'created_by', 'import_key',
     ];
 
+    // `frozen_at` and `freeze_reason` are deliberately not fillable: they are
+    // only ever set through StudentFreezes, which audits and moves deadlines.
+    protected $casts = [
+        'frozen_at' => 'datetime',
+    ];
+
     public function admissions(): HasMany
     {
         return $this->hasMany(Admission::class);
@@ -87,6 +93,20 @@ class Student extends Model
     public function scopeWalkIns(Builder $q): Builder
     {
         return $q->where('students.kind', 'walkin');
+    }
+
+    /**
+     * On hold: keeps their courses and fees but is off the register until
+     * unfrozen. See App\Services\StudentFreezes.
+     */
+    public function isFrozen(): bool
+    {
+        return $this->frozen_at !== null;
+    }
+
+    public function scopeNotFrozen(Builder $q): Builder
+    {
+        return $q->whereNull('students.frozen_at');
     }
 
     /** Students and contacts: everyone the Students tab lists. Walk-ins have their own tab. */
