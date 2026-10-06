@@ -55,6 +55,9 @@ Route::middleware('auth')->group(function () {
         Volt::route('cohorts', 'pages.cohorts')->middleware('permission:cohorts.manage')->name('cohorts');
         Volt::route('attendance', 'pages.attendance')->middleware('permission:attendance.manage')->name('attendance');
         Volt::route('students', 'pages.students')->middleware('permission:students.view')->name('students');
+        // The same screen narrowed to walk-ins, under the same permission and
+        // the same visibility scope as the Students tab it is split from.
+        Volt::route('walk-ins', 'pages.students')->middleware('permission:students.view')->name('walkins');
         Volt::route('staff', 'pages.staff')->middleware('permission:staff.view')->name('staff');
         Volt::route('reports', 'pages.reports')->middleware('permission:reports.view')->name('reports');
         Volt::route('datamodel', 'pages.datamodel')->middleware('permission:datamodel.view')->name('datamodel');

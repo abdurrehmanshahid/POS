@@ -31,6 +31,7 @@ final class Nav
                 ['route' => 'cohorts', 'perm' => 'cohorts.manage', 'label' => 'Batches', 'icon' => 'users'],
                 ['route' => 'attendance', 'perm' => 'attendance.manage', 'label' => 'Attendance', 'icon' => 'check-circle'],
                 ['route' => 'students', 'perm' => 'students.view', 'label' => 'Students', 'icon' => 'students'],
+                ['route' => 'walkins', 'perm' => 'students.view', 'label' => 'Walk-ins', 'icon' => 'signin'],
                 ['route' => 'staff', 'perm' => 'staff.view', 'label' => 'Staff & Roles', 'icon' => 'staff'],
             ],
             'Insight' => [
@@ -83,6 +84,7 @@ final class Nav
             'cohorts' => ['Batches', 'Course intakes and their students'],
             'attendance' => ['Attendance', 'Take the register and review it'],
             'students' => ['Students', 'Student records and fee status'],
+            'walkins' => ['Walk-ins', 'Visitors recorded before they register'],
             'staff' => ['Staff & Roles', 'Users, roles and permissions'],
             'reports' => ['Reports', 'Collections, dues and officer performance'],
             'datamodel' => ['Data Model', 'Entities, keys and relationships'],

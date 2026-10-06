@@ -89,6 +89,12 @@ class Student extends Model
         return $q->where('students.kind', 'walkin');
     }
 
+    /** Students and contacts: everyone the Students tab lists. Walk-ins have their own tab. */
+    public function scopeNotWalkIns(Builder $q): Builder
+    {
+        return $q->where('students.kind', '!=', 'walkin');
+    }
+
     // ---- Scoping (spec §6) -------------------------------------------------
 
     /**

@@ -30,7 +30,7 @@ new class extends Component {
                 'icon' => 'registrations', 'label' => 'New registration', 'sub' => 'Enrol a student on a course'],
             ['perm' => 'attendance.manage', 'route' => route('attendance'),
                 'icon' => 'check-circle', 'label' => 'Take the register', 'sub' => 'Mark today’s class'],
-            ['perm' => 'registrations.create', 'route' => route('students', ['new' => 1, 'walkin' => 1]),
+            ['perm' => 'registrations.create', 'route' => route('walkins', ['new' => 1]),
                 'icon' => 'students', 'label' => 'Add a student', 'sub' => 'Record a walk-in, no course yet'],
         ];
 
