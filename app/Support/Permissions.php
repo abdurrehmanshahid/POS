@@ -11,7 +11,8 @@ namespace App\Support;
  * an existing student's identity (name, CNIC, phone) is a distinct grant from
  * enrolling one, `cohorts.manage` a 17th for course batches,
  * `attendance.manage` an 18th for taking the register, and `payments.reverse`
- * a 19th for correcting a mistyped collection. Adding keys is safe,
+ * a 19th for correcting a mistyped collection, and `students.freeze` a 20th
+ * for pausing a student's studies. Adding keys is safe,
  * renaming them is not.
  */
 final class Permissions
@@ -49,6 +50,10 @@ final class Permissions
         // issued challans, so it is separated from `registrations.create`
         // (which merely enrols). Granted to Administrator only by default.
         'students.manage' => ['Add and edit student records',            'People and Catalog'],
+        // Freezing pauses a student and, on unfreeze, moves their unpaid fee
+        // deadlines forward, so it changes what they owe and when. Granted to
+        // Administrator only by default.
+        'students.freeze' => ['Freeze and unfreeze students',            'People and Catalog'],
         'courses.view' => ['View course catalog',                     'People and Catalog'],
         'courses.manage' => ['Add and edit courses',                    'People and Catalog'],
         // Batches decide which intake a student's enrolment lands in, so opening

@@ -3,6 +3,7 @@
 use App\Models\Student;
 use App\Services\Operations;
 use App\Services\Sequences;
+use App\Services\StudentFreezes;
 use App\Services\StudentService;
 use App\Support\Format;
 use App\Support\Concerns\GuardsDoubleSubmit;
@@ -43,6 +44,11 @@ new class extends Component {
 
     public string $fCnic = '';
 
+    // ---- Freeze ------------------------------------------------------------
+    public bool $freezeOpen = false;   // the reason box in the student drawer
+
+    public string $freezeReason = '';
+
     /**
      * `drawerOpen` and `selectedId` are two pieces of state describing one
      * thing, so they are only ever set together, and only for a student who
@@ -59,12 +65,60 @@ new class extends Component {
 
         $this->selectedId = $id;
         $this->drawerOpen = true;
+        $this->reset('freezeOpen', 'freezeReason');
     }
 
     public function closeDrawer(): void
     {
         $this->drawerOpen = false;
         $this->selectedId = null;
+        $this->reset('freezeOpen', 'freezeReason');
+    }
+
+    public function askFreeze(): void
+    {
+        abort_unless(auth()->user()->can('students.freeze'), 403);
+        $this->reset('freezeReason');
+        $this->resetValidation('freezeReason');
+        $this->freezeOpen = true;
+    }
+
+    public function freezeStudent(): void
+    {
+        abort_unless(auth()->user()->can('students.freeze'), 403);
+        $student = Student::visibleTo(auth()->user())->findOrFail($this->selectedId);
+        $this->resetValidation('freezeReason');
+
+        try {
+            app(StudentFreezes::class)->freeze(auth()->user(), $student, $this->freezeReason);
+        } catch (\RuntimeException $e) {
+            $this->addError('freezeReason', $e->getMessage());
+
+            return;
+        }
+
+        $this->reset('freezeOpen', 'freezeReason');
+        $this->dispatch('bbt-toast', tone: 'ok', title: 'Student frozen',
+            msg: $student->name.' is on hold and off the attendance register until unfrozen.');
+    }
+
+    public function unfreezeStudent(int $id): void
+    {
+        abort_unless(auth()->user()->can('students.freeze'), 403);
+        $student = Student::visibleTo(auth()->user())->findOrFail($id);
+
+        try {
+            $result = app(StudentFreezes::class)->unfreeze(auth()->user(), $student);
+        } catch (\RuntimeException $e) {
+            $this->dispatch('bbt-toast', tone: 'err', title: 'Cannot unfreeze', msg: $e->getMessage());
+
+            return;
+        }
+
+        $this->dispatch('bbt-toast', tone: 'ok', title: 'Student unfrozen',
+            msg: $student->name.' is back on their courses. '.($result['moved'] > 0
+                ? $result['moved'].' fee '.($result['moved'] === 1 ? 'deadline' : 'deadlines').' moved forward '.$result['days'].' '.($result['days'] === 1 ? 'day' : 'days').'.'
+                : 'No fee deadlines needed moving.'));
     }
 
     public function mount(bool $walkIns = false): void
@@ -244,6 +298,7 @@ new class extends Component {
             'selected' => $this->selectedId ? $students->firstWhere('id', $this->selectedId) : null,
             'canCreate' => $user->can('registrations.create'),
             'canEdit' => $user->can('students.manage'),
+            'canFreeze' => $user->can('students.freeze'),
             // Live preview of the ID this student will be given (spec §7.3),
             // peeked without consuming the counter.
             'nextCode' => $this->editingId ? null : app(Sequences::class)->peekStudentCode($this->fType),
@@ -327,6 +382,9 @@ new class extends Component {
                                             @elseif ($s->isWalkIn())
                                                 <x-ui.pill tone="orange">Walk-in</x-ui.pill>
                                             @endif
+                                            @if ($s->isFrozen())
+                                                <x-ui.pill tone="iris">Frozen</x-ui.pill>
+                                            @endif
                                         </div>
                                         {{-- What they bought, for a contact. The pill already
                                              says "Contact", so repeating typeLabel() here said
@@ -405,6 +463,19 @@ new class extends Component {
                             <button class="btn-icon" wire:click="closeDrawer"><x-icon name="x" :size="18" /></button>
                         </div>
                         <div class="drawer-body">
+                            @if ($selected->isFrozen())
+                                <div style="padding:12px 14px;border-radius:12px;background:var(--iris-bg);border:1px solid var(--border2);margin-bottom:20px">
+                                    <div style="font-size:var(--fs-sm);font-weight:700;color:var(--ink)">
+                                        Frozen since {{ Format::date($selected->frozen_at) }}
+                                    </div>
+                                    <div style="font-size:var(--fs-xs);color:var(--muted);margin-top:3px">
+                                        {{ $selected->freeze_reason }}
+                                    </div>
+                                    <div style="font-size:var(--fs-2xs);color:var(--muted);margin-top:6px">
+                                        Off the attendance register. On unfreeze, unpaid fee deadlines move forward by the days frozen.
+                                    </div>
+                                </div>
+                            @endif
                             <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px 18px;margin-bottom:24px">
                                 @foreach ([
                                     ['Guardian', $selected->guardian_name, false],
@@ -488,7 +559,38 @@ new class extends Component {
                                         <x-icon name="edit" :size="15" /> Edit details
                                     </button>
                                 @endif
+                                @if ($canFreeze && ! $selected->isWalkIn())
+                                    @if ($selected->isFrozen())
+                                        <button class="btn btn-ghost" wire:click="unfreezeStudent({{ $selected->id }})"
+                                                wire:loading.attr="disabled" wire:target="unfreezeStudent"
+                                                wire:confirm="Unfreeze {{ $selected->name }}? They go back on the register, and unpaid fee deadlines move forward by the days they were frozen.">
+                                            <x-icon name="restore" :size="15" /> Unfreeze
+                                        </button>
+                                    @elseif (! $freezeOpen)
+                                        <button class="btn btn-ghost" wire:click="askFreeze">
+                                            <x-icon name="clock" :size="15" /> Freeze
+                                        </button>
+                                    @endif
+                                @endif
                             </div>
+
+                            @if ($canFreeze && $freezeOpen && ! $selected->isFrozen())
+                                <form wire:submit="freezeStudent" style="margin-top:16px;padding:14px;border:1px solid var(--border);border-radius:12px">
+                                    <label class="label">Reason for freezing</label>
+                                    <input wire:model="freezeReason" type="text" class="input" maxlength="255"
+                                           placeholder="e.g. Exams, travelling, medical leave" style="margin-bottom:4px">
+                                    @error('freezeReason')<div style="font-size:var(--fs-2xs);color:var(--over);margin-bottom:8px">{{ $message }}</div>@enderror
+                                    <div style="font-size:var(--fs-2xs);color:var(--muted);margin:6px 0 12px">
+                                        Their courses and fees stay as they are. They come off the attendance register,
+                                        and when unfrozen, unpaid fee deadlines move forward by the days they were frozen.
+                                    </div>
+                                    <div style="display:flex;gap:10px">
+                                        <button type="button" class="btn btn-ghost" wire:click="$set('freezeOpen', false)">Cancel</button>
+                                        <button type="submit" class="btn btn-accent" style="flex:1"
+                                                wire:loading.attr="disabled" wire:target="freezeStudent">Freeze student</button>
+                                    </div>
+                                </form>
+                            @endif
                         </div>
                     </div>
                 </div>

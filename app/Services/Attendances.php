@@ -57,6 +57,9 @@ class Attendances
 
         return Student::query()
             ->whereIn('id', $studentIds)
+            // A frozen student is on hold, not absent. They return to the
+            // register when they are unfrozen.
+            ->notFrozen()
             ->orderBy('student_code')
             ->get();
     }

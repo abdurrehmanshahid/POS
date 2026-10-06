@@ -2,6 +2,7 @@
 
 use App\Models\Student;
 use App\Services\RecordRemoval;
+use App\Services\StudentFreezes;
 use App\Support\Concerns\ConfirmsDangerously;
 use App\Support\Format;
 use Illuminate\Support\Str;
@@ -82,6 +83,33 @@ new #[Layout('components.layouts.super')] class extends Component {
         ]);
     }
 
+    public function askFreeze(int $id): void
+    {
+        $s = Student::findOrFail($id);
+
+        $this->askDanger([
+            'kind' => 'freeze',
+            'id' => $s->id,
+            'title' => 'Freeze '.$s->name,
+            'body' => 'Puts the student on hold. Their courses and fees stay as they are and they come off the attendance register. When unfrozen, unpaid fee deadlines move forward by the days they were frozen.',
+            'confirmLabel' => 'Freeze student',
+            'needsReason' => true,
+        ]);
+    }
+
+    public function askUnfreeze(int $id): void
+    {
+        $s = Student::findOrFail($id);
+
+        $this->askDanger([
+            'kind' => 'unfreeze',
+            'id' => $s->id,
+            'title' => 'Unfreeze '.$s->name,
+            'body' => 'The student goes back on the attendance register, and every unpaid fee deadline that had not passed when they were frozen moves forward by the days they were frozen.',
+            'confirmLabel' => 'Unfreeze student',
+        ]);
+    }
+
     public function askPurge(int $id): void
     {
         $s = Student::withTrashed()->findOrFail($id);
@@ -120,14 +148,17 @@ new #[Layout('components.layouts.super')] class extends Component {
         }
 
         $removal = app(RecordRemoval::class);
+        $freezes = app(StudentFreezes::class);
         $kind = $this->dangerKind;
         $name = $s->name;
 
         try {
-            match ($kind) {
+            $result = match ($kind) {
                 'remove' => $removal->remove($s, $this->actor(), trim($this->dangerReason)),
                 'restore' => $removal->restore($s, $this->actor()),
                 'purge' => $removal->purge($s, $this->actor(), trim($this->dangerReason)),
+                'freeze' => $freezes->freeze($this->actor(), $s, $this->dangerReason),
+                'unfreeze' => $freezes->unfreeze($this->actor(), $s),
                 default => null,
             };
         } catch (\RuntimeException $e) {
@@ -143,9 +174,13 @@ new #[Layout('components.layouts.super')] class extends Component {
                 'remove' => 'Student removed',
                 'restore' => 'Student restored',
                 'purge' => 'Student destroyed',
+                'freeze' => 'Student frozen',
+                'unfreeze' => 'Student unfrozen',
                 default => 'Done',
             },
-            msg: $name,
+            msg: $kind === 'unfreeze'
+                ? $name.' · '.$result['moved'].' fee '.($result['moved'] === 1 ? 'deadline' : 'deadlines').' moved forward '.$result['days'].' '.($result['days'] === 1 ? 'day' : 'days')
+                : $name,
         );
     }
 }; ?>
@@ -194,6 +229,8 @@ new #[Layout('components.layouts.super')] class extends Component {
                             <td>
                                 @if ($s->trashed())
                                     <x-ui.pill tone="cancelled">Removed</x-ui.pill>
+                                @elseif ($s->isFrozen())
+                                    <x-ui.pill tone="iris" title="{{ $s->freeze_reason }}">Frozen since {{ Format::date($s->frozen_at) }}</x-ui.pill>
                                 @else
                                     <x-ui.pill tone="paid" :dot="true">Active</x-ui.pill>
                                 @endif
@@ -204,6 +241,15 @@ new #[Layout('components.layouts.super')] class extends Component {
                                         <x-icon name="restore" :size="14" /> Restore
                                     </button>
                                 @else
+                                    @if ($s->isFrozen())
+                                        <button class="btn btn-ghost btn-sm" wire:click="askUnfreeze({{ $s->id }})">
+                                            <x-icon name="restore" :size="14" /> Unfreeze
+                                        </button>
+                                    @elseif (! $s->isWalkIn())
+                                        <button class="btn btn-ghost btn-sm" wire:click="askFreeze({{ $s->id }})">
+                                            <x-icon name="clock" :size="14" /> Freeze
+                                        </button>
+                                    @endif
                                     <button class="btn btn-ghost btn-sm" style="color:var(--over)" wire:click="askRemove({{ $s->id }})">
                                         <x-icon name="trash" :size="14" /> Remove
                                     </button>
