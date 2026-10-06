@@ -61,7 +61,7 @@ class StudentFreezes
     }
 
     /**
-     * @return array{student: Student, days: int, moved: int}  `moved` counts the deadlines pushed forward
+     * @return array{student: Student, days: int, moved: int} `moved` counts the deadlines pushed forward
      */
     public function unfreeze(Model $actor, Student $student): array
     {
