@@ -216,7 +216,7 @@ class ScreensTest extends TestCase
     public function test_admin_can_render_every_screen(): void
     {
         $admin = $this->admin();
-        foreach (['dashboard', 'registrations', 'challans', 'courses', 'students', 'staff', 'reports', 'datamodel', 'settings'] as $r) {
+        foreach (['dashboard', 'registrations', 'challans', 'courses', 'students', 'walk-ins', 'staff', 'reports', 'datamodel', 'settings'] as $r) {
             $this->actingAs($admin)->get('/'.$r)->assertOk();
         }
     }

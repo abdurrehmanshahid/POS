@@ -8,10 +8,19 @@ use App\Support\Format;
 use App\Support\Concerns\GuardsDoubleSubmit;
 use App\Support\Matcher;
 use Illuminate\Validation\ValidationException;
+use Livewire\Attributes\Locked;
 use Livewire\Volt\Component;
 
 new class extends Component {
     use GuardsDoubleSubmit;
+
+    /**
+     * This screen serves two sidebar tabs: Students (registered students and
+     * contacts) and Walk-ins (people recorded at the counter who have not
+     * registered yet). Locked so a request cannot flip which list it is on.
+     */
+    #[Locked]
+    public bool $walkIns = false;
 
     public string $q = '';
 
@@ -58,17 +67,15 @@ new class extends Component {
         $this->selectedId = null;
     }
 
-    public function mount(): void
+    public function mount(bool $walkIns = false): void
     {
+        $this->walkIns = $walkIns || request()->routeIs('walkins');
+
         // ?new=1 opens the form straight away, for the dashboard's quick action.
         // Silently ignored without the permission rather than aborting: a stale
         // bookmark should land on the list, not on a 403.
         if (request()->boolean('new') && auth()->user()->can('registrations.create')) {
             $this->newStudent();
-            // The dashboard's "Add a student" tile is for walk-ins.
-            if (request()->boolean('walkin')) {
-                $this->fType = 'W';
-            }
         }
     }
 
@@ -83,6 +90,10 @@ new class extends Component {
     {
         abort_unless(auth()->user()->can('registrations.create'), 403);
         $this->reset('editingId', 'fType', 'fName', 'fGuardian', 'fPhone', 'fCnic');
+        // Whoever is added on a tab belongs on that tab.
+        if ($this->walkIns) {
+            $this->fType = 'W';
+        }
         $this->resetValidation();
         $this->formOpen = true;
         $this->freshOperationKey('student');
@@ -126,7 +137,7 @@ new class extends Component {
 
         $service = app(StudentService::class);
         $payload = [
-            'type' => $this->fType,
+            'type' => $this->walkIns && ! $this->editingId ? 'W' : $this->fType,
             'name' => $this->fName,
             'guardian_name' => $this->fGuardian,
             'phone' => $this->fPhone,
@@ -185,7 +196,7 @@ new class extends Component {
         }
         $this->dispatch('bbt-toast',
             tone: 'ok',
-            title: $this->editingId ? 'Student updated' : 'Student added',
+            title: $this->editingId ? 'Student updated' : ($this->walkIns ? 'Walk-in recorded' : 'Student added'),
             msg: $msg,
             note: $replayed ? 'Duplicate submission ignored' : null,
         );
@@ -200,6 +211,8 @@ new class extends Component {
         // Visible students, each with their scoped non-cancelled admissions
         // (officers only see enrolments they made) and the bits we render.
         $students = Student::visibleTo($user)
+            ->when($this->walkIns, fn ($q) => $q->walkIns(), fn ($q) => $q->notWalkIns())
+            ->with('creator')
             ->with(['admissions' => fn ($q) => $q
                 ->where('status', '!=', 'cancelled')
                 ->when(! $user->can('scope.all'), fn ($qq) => $qq->where('enrolled_by', $user->id))
@@ -224,7 +237,7 @@ new class extends Component {
         })->values();
 
         return [
-            'scopeLabel' => $user->can('scope.all') ? 'All students' : 'My students',
+            'scopeLabel' => ($user->can('scope.all') ? 'All ' : 'My ').($this->walkIns ? 'walk-ins' : 'students'),
             'total' => $rows->count(),
             'rows' => $rows,
             // Selected from the full visible set so the drawer survives filtering.
@@ -251,9 +264,9 @@ new class extends Component {
                 <input wire:model.live.debounce.200ms="q" placeholder="Search ID, name, CNIC, phone…" class="input">
             </div>
             <x-ui.busy target="q" label="Searching…" />
-            <a href="{{ route('students.export') }}" class="btn btn-ghost"><x-icon name="download" :size="16" />Export CSV</a>
+            <a href="{{ route('students.export', $walkIns ? ['walkins' => 1] : []) }}" class="btn btn-ghost"><x-icon name="download" :size="16" />Export CSV</a>
             @if ($canCreate)
-                <button class="btn btn-accent" wire:click="newStudent"><x-icon name="plus" :size="16" />Add student</button>
+                <button class="btn btn-accent" wire:click="newStudent"><x-icon name="plus" :size="16" />{{ $walkIns ? 'Add walk-in' : 'Add student' }}</button>
             @endif
         </div>
     </div>
@@ -267,9 +280,17 @@ new class extends Component {
                         <th>ID</th>
                         <th>Student</th>
                         <th>CNIC</th>
-                        <th>Enrolled by</th>
-                        <th>Courses</th>
-                        <th>Fees</th>
+                        {{-- A walk-in has no course and no fee yet, so those columns
+                             would read "0" and "Nothing billed" on every row. --}}
+                        @if ($walkIns)
+                            <th>Phone</th>
+                            <th>Recorded by</th>
+                            <th>Recorded on</th>
+                        @else
+                            <th>Enrolled by</th>
+                            <th>Courses</th>
+                            <th>Fees</th>
+                        @endif
                         @if ($canEdit)<th class="right actions-col">Actions</th>@endif
                     </tr>
                 </thead>
@@ -322,17 +343,23 @@ new class extends Component {
                                 </div>
                             </td>
                             <td class="tnum" data-label="CNIC">{{ $s->cnic }}</td>
-                            <td data-label="Enrolled by">{{ $enrolledBy }}</td>
-                            <td class="tnum" data-label="Courses">{{ $courses }}</td>
-                            <td data-label="Fees">
-                                @if (! $billed)
-                                    <x-ui.pill tone="cancelled">Nothing billed</x-ui.pill>
-                                @elseif ($outstanding <= 0)
-                                    <x-ui.pill tone="paid" :dot="true">Cleared</x-ui.pill>
-                                @else
-                                    <x-ui.pill tone="unpaid" :dot="true">Owes</x-ui.pill>
-                                @endif
-                            </td>
+                            @if ($walkIns)
+                                <td class="tnum" data-label="Phone">{{ $s->phone }}</td>
+                                <td data-label="Recorded by">{{ $s->creator?->name ?? 'Not recorded' }}</td>
+                                <td class="tnum" data-label="Recorded on">{{ Format::date($s->created_at) }}</td>
+                            @else
+                                <td data-label="Enrolled by">{{ $enrolledBy }}</td>
+                                <td class="tnum" data-label="Courses">{{ $courses }}</td>
+                                <td data-label="Fees">
+                                    @if (! $billed)
+                                        <x-ui.pill tone="cancelled">Nothing billed</x-ui.pill>
+                                    @elseif ($outstanding <= 0)
+                                        <x-ui.pill tone="paid" :dot="true">Cleared</x-ui.pill>
+                                    @else
+                                        <x-ui.pill tone="unpaid" :dot="true">Owes</x-ui.pill>
+                                    @endif
+                                </td>
+                            @endif
                             @if ($canEdit)
                                 <td class="right actions-col" data-label="Actions">
                                     {{-- wire:click.stop so editing does not also open the drawer --}}
@@ -345,7 +372,9 @@ new class extends Component {
                     @empty
                         <x-ui.table-empty :cols="$canEdit ? 7 : 6" target="q">
                             @if ($q !== '')
-                                No students match your filter.
+                                No {{ $walkIns ? 'walk-ins' : 'students' }} match your filter.
+                            @elseif ($walkIns)
+                                No walk-ins waiting. Once a walk-in registers on a course they move to Students.
                             @else
                                 No students yet. @if ($canCreate)Use <strong>Add student</strong> to create the first record.@endif
                             @endif
@@ -476,11 +505,13 @@ new class extends Component {
                     <div class="drawer-head">
                         <div class="drawer-head-icon"><x-icon name="students" :size="19" /></div>
                         <div class="drawer-head-text">
-                            <div class="drawer-head-title">{{ $editingId ? 'Edit student' : 'Add student' }}</div>
+                            <div class="drawer-head-title">{{ $editingId ? 'Edit student' : ($walkIns ? 'Add walk-in' : 'Add student') }}</div>
                             <div class="drawer-head-sub">
                                 {{ $editingId
                                     ? 'Identity changes are recorded in the audit trail.'
-                                    : 'Creates the record only. Enrol in a course afterwards.' }}
+                                    : ($walkIns
+                                        ? 'Records the visitor only. They get a Regular or Track ID when they register.'
+                                        : 'Creates the record only. Enrol in a course afterwards.') }}
                             </div>
                         </div>
                         <button class="btn-icon btn-icon-plain" @click="open=false" title="Close"><x-icon name="x" :size="17" /></button>
@@ -489,10 +520,12 @@ new class extends Component {
                     <div class="drawer-body">
                         <form wire:submit="saveStudent">
                             @if (! $editingId)
-                                {{-- Series picker, with a live preview of the ID to assign (spec §7.3) --}}
+                                {{-- Series picker, with a live preview of the ID to assign (spec §7.3).
+                                     No picker on the Walk-ins tab: everyone added there is a walk-in. --}}
+                                @unless ($walkIns)
                                 <label class="label">Student type</label>
                                 <div style="display:flex;gap:10px;margin-bottom:8px">
-                                    @foreach ([['R', 'Regular', 'Regular courses'], ['T', 'Track', 'Track programmes'], ['W', 'Walk-in', 'No course yet']] as [$val, $title, $sub])
+                                    @foreach ([['R', 'Regular', 'Regular courses'], ['T', 'Track', 'Track programmes']] as [$val, $title, $sub])
                                         <button type="button" wire:click="$set('fType','{{ $val }}')"
                                                 style="flex:1;text-align:left;padding:12px 14px;border-radius:12px;cursor:pointer;border:1.5px solid {{ $fType === $val ? 'var(--iris)' : 'var(--border2)' }};background:{{ $fType === $val ? 'var(--iris-bg)' : 'var(--surface)' }}">
                                             <div style="font-size:var(--fs-sm);font-weight:700;color:var(--ink)">{{ $title }}</div>
@@ -500,6 +533,7 @@ new class extends Component {
                                         </button>
                                     @endforeach
                                 </div>
+                                @endunless
                                 <div style="display:flex;align-items:center;gap:8px;padding:10px 13px;background:var(--surface2);border:1px dashed var(--border2);border-radius:11px;margin-bottom:18px">
                                     <span style="font-size:var(--fs-2xs);font-weight:700;color:var(--faint);letter-spacing:.05em;text-transform:uppercase">ID to assign</span>
                                     <span class="tnum" style="font-size:var(--fs-base);font-weight:800;color:var(--iris)">{{ $nextCode }}</span>
@@ -544,7 +578,7 @@ new class extends Component {
                                      Operations::once() is what actually closes it. --}}
                                 <button type="submit" class="btn btn-accent" style="flex:1"
                                         wire:loading.attr="disabled" wire:target="saveStudent">
-                                    {{ $editingId ? 'Save changes' : 'Add student' }}
+                                    {{ $editingId ? 'Save changes' : ($walkIns ? 'Add walk-in' : 'Add student') }}
                                 </button>
                             </div>
                         </form>

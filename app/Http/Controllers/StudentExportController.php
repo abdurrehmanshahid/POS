@@ -19,8 +19,11 @@ class StudentExportController extends Controller
     public function export(Request $request): StreamedResponse
     {
         $user = $request->user();
+        // The Walk-ins tab exports its own list; the Students tab leaves them out.
+        $walkIns = $request->boolean('walkins');
 
         $students = Student::visibleTo($user)
+            ->when($walkIns, fn ($q) => $q->walkIns(), fn ($q) => $q->notWalkIns())
             ->with(['admissions' => function ($q) use ($user) {
                 $q->where('status', '!=', 'cancelled')
                     ->when(! $user->can('scope.all'), fn ($qq) => $qq->where('enrolled_by', $user->id))
@@ -36,7 +39,7 @@ class StudentExportController extends Controller
             ->orderBy('student_code')
             ->get();
 
-        $filename = 'BBT Students.csv';
+        $filename = $walkIns ? 'BBT Walk-ins.csv' : 'BBT Students.csv';
 
         $headers = ['Content-Type' => 'text/csv; charset=UTF-8'];
 

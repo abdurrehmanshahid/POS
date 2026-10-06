@@ -77,9 +77,9 @@ class StudentManagementTest extends TestCase
     private function recordWalkIn(User $by, string $name = 'Walk In Visitor'): Student
     {
         Livewire::actingAs($by)
-            ->test('pages.students')
+            ->test('pages.students', ['walkIns' => true])
             ->call('newStudent')
-            ->set('fType', 'W')
+            ->assertSet('fType', 'W')
             ->set('fName', $name)
             ->set('fPhone', '0300 5556667')
             ->call('saveStudent')
@@ -134,10 +134,71 @@ class StudentManagementTest extends TestCase
     public function test_the_dashboard_link_opens_the_form_on_walk_in(): void
     {
         Livewire::actingAs($this->officer())
-            ->withQueryParams(['new' => 1, 'walkin' => 1])
-            ->test('pages.students')
+            ->withQueryParams(['new' => 1])
+            ->test('pages.students', ['walkIns' => true])
             ->assertSet('formOpen', true)
             ->assertSet('fType', 'W');
+    }
+
+    public function test_walk_ins_are_listed_on_their_own_tab_not_on_students(): void
+    {
+        $walkIn = $this->recordWalkIn($this->officer());
+        $student = Student::query()->students()->firstOrFail();
+
+        Livewire::actingAs($this->admin())
+            ->test('pages.students')
+            ->assertViewHas('rows', fn ($rows) => ! $rows->contains('id', $walkIn->id) && $rows->contains('id', $student->id));
+
+        Livewire::actingAs($this->admin())
+            ->test('pages.students', ['walkIns' => true])
+            ->assertViewHas('rows', fn ($rows) => $rows->pluck('id')->all() === [$walkIn->id]);
+    }
+
+    public function test_the_walk_ins_tab_follows_the_same_visibility_as_students(): void
+    {
+        $walkIn = $this->recordWalkIn($this->officer());
+        $other = User::where('role_id', $this->officer()->role_id)->where('is_active', true)->where('must_reset_password', false)
+            ->whereKeyNot($this->officer()->id)->first();
+
+        // The officer who recorded them sees them; an admin sees everyone's.
+        $this->actingAs($this->officer())->get(route('walkins'))->assertOk()->assertSee($walkIn->student_code);
+        $this->actingAs($this->admin())->get(route('walkins'))->assertOk()->assertSee($walkIn->student_code);
+
+        if ($other) {
+            $this->actingAs($other)->get(route('walkins'))->assertOk()->assertDontSee($walkIn->student_code);
+        }
+    }
+
+    public function test_a_walk_in_moves_to_students_once_registered(): void
+    {
+        $walkIn = $this->recordWalkIn($this->officer());
+        $course = Course::where('code', 'GD-101')->firstOrFail();
+
+        Livewire::actingAs($this->officer())
+            ->withQueryParams(['enrol' => $walkIn->id])
+            ->test('pages.registrations')
+            ->call('toggleCourse', $course->id)
+            ->call('next')
+            ->set('newType', 'R')
+            ->call('submit');
+
+        Livewire::actingAs($this->officer())
+            ->test('pages.students', ['walkIns' => true])
+            ->assertViewHas('rows', fn ($rows) => $rows->isEmpty());
+        Livewire::actingAs($this->officer())
+            ->test('pages.students')
+            ->assertViewHas('rows', fn ($rows) => $rows->contains('id', $walkIn->id));
+    }
+
+    public function test_the_students_export_leaves_walk_ins_to_their_own_export(): void
+    {
+        $walkIn = $this->recordWalkIn($this->officer());
+
+        $students = $this->actingAs($this->admin())->get(route('students.export'))->streamedContent();
+        $walkIns = $this->actingAs($this->admin())->get(route('students.export', ['walkins' => 1]))->streamedContent();
+
+        $this->assertStringNotContainsString($walkIn->student_code, $students);
+        $this->assertStringContainsString($walkIn->student_code, $walkIns);
     }
 
     public function test_phone_is_normalised_and_cnic_format_is_enforced(): void
