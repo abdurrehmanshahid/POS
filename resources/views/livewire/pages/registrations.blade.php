@@ -14,7 +14,6 @@ use App\Support\Concerns\GuardsDoubleSubmit;
 use App\Support\Concerns\ReversesPayments;
 use App\Support\Concerns\SchedulesInstallments;
 use App\Support\Contact;
-use App\Support\Format;
 use App\Support\Matcher;
 use Illuminate\Database\Eloquent\Builder;
 use Livewire\Volt\Component;
@@ -801,7 +800,7 @@ new class extends Component {
             if (! $this->courseIds) { $this->wizErrors['courses'] = 'Select at least one course.'; $this->dispatch('bbt-toast', tone: 'err', title: 'Select at least one course'); return; }
             if ($this->discountPct < 0 || $this->discountPct > 100) { $this->wizErrors['discount'] = 'Discount must be between 0 and 100%.'; return; }
             if (trim($this->discountedPrice) !== '' && ($this->typedPrice() === null || $this->typedPrice() > $this->baseFee())) {
-                $this->wizErrors['discount'] = 'Enter the discounted price in whole rupees, no more than the course fee ('.Format::money($this->baseFee()).').';
+                $this->wizErrors['discount'] = 'Enter the discounted price in whole rupees, no more than the course fee ('.\App\Support\Format::money($this->baseFee()).').';
 
                 return;
             }
