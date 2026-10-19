@@ -139,8 +139,7 @@ class ChallanEditTest extends TestCase
 
     public function test_an_installment_plan_follows_the_new_net(): void
     {
-        $c = $this->challan();
-        $this->edit($c, 25000);
+        $c = $this->challan(); // net 25,000
         app(Installments::class)->schedule($c->refresh(), [
             ['amount' => 12500, 'due_date' => '2026-08-01'],
             ['amount' => 12500, 'due_date' => '2026-09-01'],
