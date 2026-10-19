@@ -336,20 +336,23 @@
                     {{-- Typed as well as dragged: landing on 5.5% by mouse is
                          fiddly. Clamped and rounded to the hundredth here,
                          because an empty or out-of-range box must not reach
-                         the property. --}}
+                         the property. Bound to $wire rather than a value=""
+                         attribute, which the page update leaves alone once the
+                         box has been typed in, so it would go stale when a
+                         typed price changes the percentage. --}}
                     <span class="tnum" style="display:inline-flex;align-items:center;gap:4px;font-size:var(--fs-sm);font-weight:700;color:var(--orange)">
-                        <input type="number" min="0" max="100" step="0.01" inputmode="decimal" value="{{ $discountPct }}"
+                        <input type="number" min="0" max="100" step="0.01" inputmode="decimal" x-bind:value="$wire.discountPct"
                                aria-label="Discount percentage"
                                x-on:change="let v = Math.round(Number($el.value) * 100) / 100; if (! Number.isFinite(v)) v = 0; v = Math.min(100, Math.max(0, v)); $el.value = v; $wire.set('discountPct', v)"
                                class="input tnum" style="width:76px;padding:4px 6px;text-align:right;font-weight:700;color:var(--orange)">%
                     </span>
                 </div>
                 <input type="range" min="0" max="100" step="0.1" wire:model.live="discountPct" aria-label="Discount percentage" style="width:100%;accent-color:var(--orange)">
-                {{-- The other way in: the officer has agreed a price, e.g.
-                     75,000, and the percentage is worked out from it. Typing
-                     a percentage again clears this. --}}
+                {{-- The same discount as a price, e.g. 75,000. Kept in step
+                     with the percentage both ways: type either and the other
+                     follows. --}}
                 <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;margin-top:10px">
-                    <span style="font-size:var(--fs-xs);color:var(--faint)">or enter the discounted price (Rs, before certificate)</span>
+                    <span style="font-size:var(--fs-xs);color:var(--faint)">Discounted price (Rs, before certificate)</span>
                     <input type="number" min="0" max="{{ $base }}" step="1" inputmode="numeric" wire:model.live.debounce.500ms="discountedPrice"
                            aria-label="Discounted price" placeholder="e.g. 75000"
                            class="input tnum" style="width:120px;padding:4px 8px;text-align:right;font-weight:700">
