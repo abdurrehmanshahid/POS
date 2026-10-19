@@ -24,6 +24,7 @@ final class SuperNav
             'Records' => [
                 ['route' => 'superadmin.staff', 'label' => 'Staff', 'icon' => 'staff'],
                 ['route' => 'superadmin.students', 'label' => 'Students', 'icon' => 'students'],
+                ['route' => 'superadmin.challans', 'label' => 'Fee challans', 'icon' => 'challans'],
             ],
             'Oversight' => [
                 ['route' => 'superadmin.activity', 'label' => 'Activity log', 'icon' => 'activity'],
@@ -41,6 +42,7 @@ final class SuperNav
             'superadmin.reports' => ['Reports', 'Collections, revenue and dues, institute-wide'],
             'superadmin.staff' => ['Staff', 'Accounts, passwords and removal'],
             'superadmin.students' => ['Students', 'Every record, including removed ones'],
+            'superadmin.challans' => ['Fee challans', 'Every challan, and corrections to what it bills'],
             'superadmin.activity' => ['Activity log', 'Every consequential action, append-only'],
             'superadmin.backups' => ['Backup & export', 'Download the database and per-table CSVs'],
             default => ['Super admin', 'Platform administration'],
