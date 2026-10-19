@@ -56,6 +56,7 @@ Route::prefix('superadmin')->name('superadmin.')->group(function () {
         Route::get('reports/export', ReportExportController::class)->name('reports.export');
         Volt::route('staff', 'superadmin.staff')->name('staff');
         Volt::route('students', 'superadmin.students')->name('students');
+        Volt::route('challans', 'superadmin.challans')->name('challans');
         Volt::route('activity', 'superadmin.activity')->name('activity');
         Volt::route('backups', 'superadmin.backups')->name('backups');
         Volt::route('change-password', 'superadmin.change-password')->name('password.change');
