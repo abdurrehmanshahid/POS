@@ -27,6 +27,8 @@ new #[Layout('components.layouts.super')] class extends Component {
     public string $editBase = '';
     public string $editDiscount = '';
     public string $editCertificate = '';
+    /** Money collected so far, for correcting a payment typed wrong. */
+    public string $editCollected = '';
     public string $editReason = '';
     public string $editSecret = '';
     public string $editError = '';
@@ -49,6 +51,7 @@ new #[Layout('components.layouts.super')] class extends Component {
         $this->editBase = (string) $c->base_amount;
         $this->editDiscount = (string) $c->discount_amount;
         $this->editCertificate = (string) $c->certificate_amount;
+        $this->editCollected = (string) $c->paidAmount();
         $this->editReason = '';
         $this->editSecret = '';
         $this->editError = '';
@@ -56,7 +59,7 @@ new #[Layout('components.layouts.super')] class extends Component {
 
     public function closeEdit(): void
     {
-        $this->reset('editId', 'editBase', 'editDiscount', 'editCertificate', 'editReason', 'editSecret', 'editError');
+        $this->reset('editId', 'editBase', 'editDiscount', 'editCertificate', 'editCollected', 'editReason', 'editSecret', 'editError');
     }
 
     /** Whole rupees, or null for anything else (blank, decimals, minus). */
@@ -81,8 +84,9 @@ new #[Layout('components.layouts.super')] class extends Component {
         $base = $this->rupees($this->editBase);
         $discount = $this->rupees($this->editDiscount);
         $certificate = $this->rupees($this->editCertificate);
+        $collected = $this->rupees($this->editCollected);
 
-        if ($base === null || $discount === null || $certificate === null) {
+        if ($base === null || $discount === null || $certificate === null || $collected === null) {
             $this->editError = 'Enter every amount in whole rupees (0 for none).';
 
             return;
@@ -94,6 +98,7 @@ new #[Layout('components.layouts.super')] class extends Component {
                 'base_amount' => $base,
                 'discount_amount' => $discount,
                 'certificate_amount' => $certificate,
+                'collected' => $collected,
             ], $this->editReason);
         } catch (\RuntimeException $e) {
             $this->editError = $e->getMessage();
@@ -130,6 +135,7 @@ new #[Layout('components.layouts.super')] class extends Component {
             'rows' => $rows,
             'editing' => $editing,
             'newNet' => $base - $discount + $certificate,
+            'newCollected' => $this->rupees($this->editCollected) ?? 0,
         ];
     }
 }; ?>
@@ -237,9 +243,27 @@ new #[Layout('components.layouts.super')] class extends Component {
                             <span style="font-weight:800;color:var(--ink);margin-left:6px">{{ Format::money(max(0, $newNet)) }}</span>
                         </span>
                     </div>
-                    @if ($collected > 0)
+                    {{-- For a collection typed wrong. Never edits a payment:
+                         a rise is recorded as a correction payment, a cut as
+                         a reversal, so the activity log shows both. --}}
+                    <div class="grid-2" style="gap:12px;margin-top:14px">
+                        <div>
+                            <label class="label">Collected so far</label>
+                            <input type="number" min="0" step="1" inputmode="numeric" wire:model.live.debounce.300ms="editCollected" class="input tnum">
+                        </div>
+                        <div>
+                            <label class="label">Remaining</label>
+                            <div class="input tnum" style="background:var(--surface3);font-weight:700;color:{{ $newNet - $newCollected < 0 ? 'var(--over)' : 'var(--ink)' }}">
+                                {{ Format::money($newNet - $newCollected) }}
+                            </div>
+                        </div>
+                    </div>
+                    @if ($newCollected !== $collected)
                         <div style="font-size:var(--fs-xs);color:var(--muted);margin-top:8px">
-                            {{ Format::money($collected) }} already collected, so net payable cannot go below that.
+                            {{ $newCollected > $collected
+                                ? 'Records a '.Format::money($newCollected - $collected).' correction payment, dated with the last collection.'
+                                : 'Records a '.Format::money($collected - $newCollected).' reversal against the latest payments.' }}
+                            Was {{ Format::money($collected) }}.
                         </div>
                     @endif
                     @if ($editing->plan === 'split')

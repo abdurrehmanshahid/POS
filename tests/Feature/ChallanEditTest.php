@@ -116,7 +116,7 @@ class ChallanEditTest extends TestCase
             $this->edit($c, 8000);
             $this->fail('Net below the collected amount should be refused.');
         } catch (RuntimeException $e) {
-            $this->assertStringContainsString('already collected', $e->getMessage());
+            $this->assertStringContainsString('collected', $e->getMessage());
         }
 
         // Down to exactly what was collected settles it.
@@ -129,6 +129,65 @@ class ChallanEditTest extends TestCase
         $this->assertSame('unpaid', $edited->status);
         $this->assertNull($edited->paid_at);
         $this->assertSame(5000, $edited->balance());
+    }
+
+    /** 69,750 typed for 70,000: corrected up, without editing the payment. */
+    public function test_a_collection_typed_too_low_is_corrected_with_a_payment(): void
+    {
+        $c = $this->challan(); // net 25,000
+        app(ChallanActions::class)->recordPayment($c, $this->admin(), 24750, 'Bank transfer');
+        $first = $c->payments()->firstOrFail();
+
+        Livewire::actingAs($this->su(), 'superadmin')
+            ->test('superadmin.challans')
+            ->call('askEdit', $c->id)
+            ->assertSet('editCollected', '24750')
+            ->set('editCollected', '25000')
+            ->set('editReason', 'Typed 24,750 for 25,000')
+            ->set('editSecret', 'Owner@Pass1')
+            ->call('saveEdit')
+            ->assertSet('editId', null);
+
+        $c->refresh();
+        $this->assertSame(25000, $c->paidAmount());
+        $this->assertSame('paid', $c->status);
+        // The original handover is untouched; the difference is its own row,
+        // dated and attributed like the collection it corrects.
+        $this->assertSame(24750, $first->fresh()->amount);
+        $fix = $c->payments()->where('id', '!=', $first->id)->firstOrFail();
+        $this->assertSame(250, $fix->amount);
+        $this->assertSame('Bank transfer', $fix->method);
+        $this->assertSame($first->received_by, $fix->received_by);
+        $this->assertTrue(AuditLog::where('action', 'Collected amount corrected')->where('challan_id', $c->id)->exists());
+        // The fee did not change, so no amounts edit is logged.
+        $this->assertFalse(AuditLog::where('action', 'Challan amount edited')->where('challan_id', $c->id)->exists());
+    }
+
+    public function test_a_collection_typed_too_high_is_corrected_with_reversals(): void
+    {
+        $c = $this->challan(); // net 25,000
+        app(ChallanActions::class)->recordPayment($c, $this->admin(), 5000, 'Cash');
+        app(ChallanActions::class)->recordPayment($c, $this->admin(), 20000, 'Cash');
+        $this->assertSame('paid', $c->fresh()->status);
+
+        $edited = app(ChallanEdits::class)->edit($c, $this->su(), [
+            'base_amount' => 25000, 'discount_amount' => 0, 'certificate_amount' => 0, 'collected' => 15000,
+        ], 'Second handover was 10,000, not 20,000');
+
+        $this->assertSame(15000, $edited->paidAmount());
+        $this->assertSame(10000, $edited->balance());
+        $this->assertSame('unpaid', $edited->status);
+        // Taken off the latest payment, leaving the first as it was.
+        $this->assertSame([5000, 10000], $edited->payments()->with('reversals')->orderBy('id')->get()
+            ->map->netAmount()->all());
+    }
+
+    public function test_collected_cannot_exceed_net(): void
+    {
+        $this->expectException(RuntimeException::class);
+        app(ChallanEdits::class)->edit($this->challan(), $this->su(), [
+            'base_amount' => 25000, 'discount_amount' => 0, 'certificate_amount' => 0, 'collected' => 26000,
+        ], 'Too much');
     }
 
     public function test_the_discount_cannot_exceed_the_fee(): void
