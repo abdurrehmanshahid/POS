@@ -315,6 +315,69 @@ class InstituteCoreTest extends TestCase
         $this->assertSame($L->billed($this->admin()), $L->received($this->admin()) + $L->outstanding($this->admin()));
     }
 
+    public function test_a_discount_can_be_a_decimal_percentage(): void
+    {
+        $result = app(RegistrationService::class)->register($this->officer(), [
+            'new_student' => [
+                'type' => 'R', 'name' => 'Decimal Pct', 'guardian_name' => 'Guardian',
+                'phone' => '+92 300 7770000', 'cnic' => '35201-7770000-1',
+            ],
+            'course_ids' => Course::where('code', 'WD-101')->pluck('id')->all(),
+            'discount_pct' => 5.5,
+            'discount_reason' => 'Sibling',
+            'certificate_amount' => 0,
+        ]);
+
+        // 5.5% of 20,000.
+        $this->assertSame(1100, $result['challans'][0]->discount_amount);
+        $this->assertSame(18900, $result['challans'][0]->net_amount);
+    }
+
+    /**
+     * An agreed price must bill to the rupee, even when the percentage it
+     * comes to has more decimals than anyone would type.
+     */
+    public function test_a_discount_given_in_rupees_bills_the_agreed_price_exactly(): void
+    {
+        $result = app(RegistrationService::class)->register($this->officer(), [
+            'new_student' => [
+                'type' => 'R', 'name' => 'Agreed Price', 'guardian_name' => 'Guardian',
+                'phone' => '+92 300 7780000', 'cnic' => '35201-7780000-1',
+            ],
+            'course_ids' => Course::where('code', 'WD-101')->pluck('id')->all(),
+            // 18,333 on 20,000 is 8.335%, which no two-decimal pct reproduces.
+            'discount_pct' => 8.34,
+            'discount_amount' => 1667,
+            'discount_reason' => 'Agreed at the counter',
+            'certificate_amount' => 0,
+        ]);
+
+        $this->assertSame(1667, $result['challans'][0]->discount_amount);
+        $this->assertSame(18333, $result['challans'][0]->net_amount);
+    }
+
+    public function test_a_discount_in_rupees_above_the_fee_is_rejected(): void
+    {
+        $before = Challan::count();
+
+        try {
+            app(RegistrationService::class)->register($this->officer(), [
+                'new_student' => [
+                    'type' => 'R', 'name' => 'Too Much', 'guardian_name' => 'Guardian',
+                    'phone' => '+92 300 7790000', 'cnic' => '35201-7790000-1',
+                ],
+                'course_ids' => Course::where('code', 'WD-101')->pluck('id')->all(),
+                'discount_amount' => 25000,
+                'discount_reason' => 'Tampered request',
+            ]);
+            $this->fail('A discount above the fee should be rejected.');
+        } catch (InvalidArgumentException $e) {
+            $this->assertStringContainsString('more than the course fee', $e->getMessage());
+        }
+
+        $this->assertSame($before, Challan::count());
+    }
+
     // ---- Mark paid / cancel ------------------------------------------------
 
     public function test_mark_paid_records_payment_and_audit(): void

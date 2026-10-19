@@ -37,7 +37,8 @@ class RegistrationService
      *   course_ids:array<int>,
      *   modules?:array<int,list<int>>,
      *   cohorts?:array<int,int|null>,
-     *   discount_pct?:int,
+     *   discount_pct?:int|float,
+     *   discount_amount?:int|null,
      *   discount_reason?:string|null,
      *   certificate_amount?:int,
      *   generate_challans?:bool,
@@ -48,7 +49,14 @@ class RegistrationService
      */
     public function register(User $actor, array $data): array
     {
-        $pct = (int) ($data['discount_pct'] ?? 0);
+        // To the hundredth: an officer agrees 5.5% or 6.25%, never finer, and
+        // rounding here keeps a float like 5.499999 from reaching the maths.
+        $pct = round((float) ($data['discount_pct'] ?? 0), 2);
+        // The discount in rupees, when the officer typed the agreed price
+        // rather than a percentage. It wins over the percentage, because a
+        // price agreed to the rupee must come out to the rupee, and no
+        // two-decimal percentage of every base lands on every price exactly.
+        $amount = isset($data['discount_amount']) ? (int) $data['discount_amount'] : null;
         $reason = trim((string) ($data['discount_reason'] ?? '')) ?: null;
         $courseIds = array_values(array_unique($data['course_ids'] ?? []));
 
@@ -61,10 +69,14 @@ class RegistrationService
         // net_amount goes negative into an unsignedInteger column, which either
         // throws at the driver or silently wraps and breaks the reporting
         // invariant that billed = received + outstanding.
-        if ($pct < 0 || $pct > 100) {
+        if (! is_finite($pct) || $pct < 0 || $pct > 100) {
             throw new InvalidArgumentException('Discount must be between 0 and 100 percent.');
         }
-        if ($pct > 0 && $reason === null) {
+        // Checked against the base inside the transaction, once it is known.
+        if ($amount !== null && $amount < 0) {
+            throw new InvalidArgumentException('The discount cannot be negative.');
+        }
+        if (($amount ?? $pct) > 0 && $reason === null) {
             throw new InvalidArgumentException('A discount requires a reason.');
         }
 
@@ -118,7 +130,7 @@ class RegistrationService
         }
 
         return DB::transaction(function () use (
-            $actor, $data, $courseIds, $pct, $reason, $method, $issueChallans,
+            $actor, $data, $courseIds, $pct, $amount, $reason, $method, $issueChallans,
             $moduleChoice, $cohortChoice, $wantsSplit, $certificateAmount
         ) {
             // Resolve and validate the courses BEFORE creating the student, so a
@@ -220,7 +232,13 @@ class RegistrationService
                 // looked up at print time — see 2026_09_17_000003.
                 $certificate = $certificateAmount
                     ?? (int) config('institute.certificate_fee') * $courses->count();
-                $discount = $pct > 0 ? (int) round($base * $pct / 100) : 0;
+                $discount = $amount ?? ($pct > 0 ? (int) round($base * $pct / 100) : 0);
+
+                // Same reason as the percentage bound: past the base, net goes
+                // negative into an unsigned column.
+                if ($discount > $base) {
+                    throw new InvalidArgumentException('The discount cannot be more than the course fee.');
+                }
 
                 $challan = Challan::create([
                     'challan_no' => $this->sequences->nextChallanNo(),

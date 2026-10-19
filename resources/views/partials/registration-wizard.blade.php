@@ -1,5 +1,5 @@
 {{-- 3-step New Registration wizard (spec §9.3). Uses the registrations component's
-     props/methods: step, mode, newType, new*, courseIds, discountPct, discountReason,
+     props/methods: step, mode, newType, new*, courseIds, discountPct, discountedPrice, discountReason,
      genChallans, wizErrors; toggleCourse, pickStudent, next, back, submit, closeWizard. --}}
 @php use App\Support\Format; use App\Services\Sequences; @endphp
 
@@ -333,17 +333,27 @@
             <div class="card" style="padding:16px 18px;background:var(--surface2)">
                 <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
                     <label class="label" style="margin:0">Discount</label>
-                    {{-- Typed as well as dragged: landing on 23% by mouse is
-                         fiddly. Clamped and rounded here, because an empty or
-                         out-of-range box must not reach the int property. --}}
+                    {{-- Typed as well as dragged: landing on 5.5% by mouse is
+                         fiddly. Clamped and rounded to the hundredth here,
+                         because an empty or out-of-range box must not reach
+                         the property. --}}
                     <span class="tnum" style="display:inline-flex;align-items:center;gap:4px;font-size:var(--fs-sm);font-weight:700;color:var(--orange)">
-                        <input type="number" min="0" max="100" step="1" inputmode="numeric" value="{{ $discountPct }}"
+                        <input type="number" min="0" max="100" step="0.01" inputmode="decimal" value="{{ $discountPct }}"
                                aria-label="Discount percentage"
-                               x-on:change="let v = Math.round(Number($el.value)); if (! Number.isFinite(v)) v = 0; v = Math.min(100, Math.max(0, v)); $el.value = v; $wire.set('discountPct', v)"
-                               class="input tnum" style="width:64px;padding:4px 6px;text-align:right;font-weight:700;color:var(--orange)">%
+                               x-on:change="let v = Math.round(Number($el.value) * 100) / 100; if (! Number.isFinite(v)) v = 0; v = Math.min(100, Math.max(0, v)); $el.value = v; $wire.set('discountPct', v)"
+                               class="input tnum" style="width:76px;padding:4px 6px;text-align:right;font-weight:700;color:var(--orange)">%
                     </span>
                 </div>
-                <input type="range" min="0" max="100" step="1" wire:model.live="discountPct" aria-label="Discount percentage" style="width:100%;accent-color:var(--orange)">
+                <input type="range" min="0" max="100" step="0.1" wire:model.live="discountPct" aria-label="Discount percentage" style="width:100%;accent-color:var(--orange)">
+                {{-- The other way in: the officer has agreed a price, e.g.
+                     75,000, and the percentage is worked out from it. Typing
+                     a percentage again clears this. --}}
+                <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;margin-top:10px">
+                    <span style="font-size:var(--fs-xs);color:var(--faint)">or enter the discounted price (Rs, before certificate)</span>
+                    <input type="number" min="0" max="{{ $base }}" step="1" inputmode="numeric" wire:model.live.debounce.500ms="discountedPrice"
+                           aria-label="Discounted price" placeholder="e.g. 75000"
+                           class="input tnum" style="width:120px;padding:4px 8px;text-align:right;font-weight:700">
+                </div>
                 {{-- Stated on its own line, not folded into the base. It sits
                      outside the discount, so a student on a scholarship still
                      sees the full charge and the total still adds up on the
@@ -370,7 +380,7 @@
                     <div><div style="font-size:var(--fs-2xs);color:var(--faint);text-transform:uppercase;letter-spacing:.04em">Discount</div><div class="tnum" style="font-size:var(--fs-md);font-weight:800;color:var(--over)">− {{ Format::money($disc) }}</div></div>
                     <div><div style="font-size:var(--fs-2xs);color:var(--faint);text-transform:uppercase;letter-spacing:.04em">Net payable</div><div class="tnum" style="font-size:var(--fs-md);font-weight:800;color:var(--navy)">{{ Format::money($net) }}</div></div>
                 </div>
-                @if ($discountPct > 0)
+                @if ($disc > 0 || ($wizErrors['discount'] ?? false))
                     <div style="margin-top:14px">
                         <label class="label">Discount reason (required · recorded in audit trail)</label>
                         <input wire:model="discountReason" class="input {{ ($wizErrors['discount'] ?? false) ? 'is-error' : '' }}" placeholder="e.g. Sibling discount, merit scholarship">
