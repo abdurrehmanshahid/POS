@@ -97,13 +97,18 @@ new class extends Component {
     public float $discountPct = 0;
 
     /**
-     * The tuition after discount, when the officer types the agreed price
-     * instead of a percentage (e.g. 75000). While it holds a value it is what
-     * the discount is worked out from, and `discountPct` just shows the
-     * percentage it comes to. A string for the same reason as
-     * `certificateAmount`: a cleared box arrives as ''.
+     * The tuition after discount (e.g. 75000). Kept in step with
+     * `discountPct` both ways: whichever box the officer typed in last leads
+     * (`priceLed`), and the other is filled in from it. A string for the same
+     * reason as `certificateAmount`: a cleared box arrives as ''.
      */
     public string $discountedPrice = '';
+
+    /**
+     * True when the price was typed last, so the discount is base less that
+     * price to the rupee rather than a rounded percentage of the base.
+     */
+    public bool $priceLed = false;
     public string $discountReason = '';
 
     /**
@@ -206,7 +211,7 @@ new class extends Component {
     public function openWizard(): void
     {
         $this->reset(['step', 'mode', 'studentSearch', 'pickedStudentId', 'newType', 'newName',
-            'newGuardian', 'newPhone', 'newCnic', 'courseIds', 'discountPct', 'discountedPrice', 'discountReason', 'paymentMethod',
+            'newGuardian', 'newPhone', 'newCnic', 'courseIds', 'discountPct', 'discountedPrice', 'priceLed', 'discountReason', 'paymentMethod',
             'withCertificate', 'certificateAmount', 'moduleIds', 'batchIds', 'payPlan', 'planCount', 'planAdvance', 'planSecondAmount',
             'planFirstDue', 'planSecondDue', 'planThirdDue',
             'wizErrors', 'wizTouched']);
@@ -321,34 +326,49 @@ new class extends Component {
     // ---- Payment plan ------------------------------------------------------
 
     public function updatedPayPlan(): void { $this->syncPlanToFee(); }
-    /** A typed percentage takes over from a typed price. */
+    /** A typed percentage leads, and the price follows it. */
     public function updatedDiscountPct(): void
     {
         $this->discountPct = round(min(100, max(0, $this->discountPct)), 2);
-        $this->discountedPrice = '';
+        $this->priceLed = false;
         unset($this->wizErrors['discount']);
+        $this->syncDiscountFields();
         $this->syncPlanToFee();
     }
 
+    /** A typed price leads, and the percentage follows it. Cleared, no discount. */
     public function updatedDiscountedPrice(): void
     {
         unset($this->wizErrors['discount']);
-        $this->syncDiscountPct();
+        $this->priceLed = trim($this->discountedPrice) !== '';
+        if (! $this->priceLed) {
+            $this->discountPct = 0;
+        }
+        $this->syncDiscountFields();
         $this->syncPlanToFee();
     }
 
     /**
-     * While a price is typed, keep the percentage showing what it comes to,
-     * e.g. 75,000 on 80,000 shows 6.25%. Called again whenever the base can
-     * have moved (a course or module picked), via with().
+     * Fill in whichever of percentage and price was not typed last, e.g.
+     * 75,000 on 80,000 shows 6.25%, and 8.5% on 120,000 shows 109,800.
+     * Called again whenever the base can have moved (a course or module
+     * picked), via with().
      */
-    private function syncDiscountPct(?int $base = null): void
+    private function syncDiscountFields(?int $base = null): void
     {
         $base ??= $this->baseFee();
 
-        if ($this->typedPrice() !== null) {
-            $this->discountPct = $base > 0 ? round($this->discountAmount($base) / $base * 100, 2) : 0;
+        if ($this->priceLed) {
+            if ($this->typedPrice() !== null) {
+                $this->discountPct = $base > 0 ? round($this->discountAmount($base) / $base * 100, 2) : 0;
+            }
+
+            return;
         }
+
+        $this->discountedPrice = $this->discountPct > 0 && $base > 0
+            ? (string) ($base - $this->discountAmount($base))
+            : '';
     }
     public function updatedWithCertificate(): void { unset($this->wizErrors['certificate']); $this->syncPlanToFee(); }
     public function updatedCertificateAmount(): void { unset($this->wizErrors['certificate']); $this->syncPlanToFee(); }
@@ -463,13 +483,13 @@ new class extends Component {
     }
 
     /**
-     * The discount in rupees: base less the agreed price when one is typed,
-     * otherwise the percentage of the base. Never past the base either way.
+     * The discount in rupees: base less the agreed price when the price was
+     * typed last, otherwise the percentage of the base. Never past the base.
      */
     public function discountAmount(?int $base = null): int
     {
         $base ??= $this->baseFee();
-        $price = $this->typedPrice();
+        $price = $this->priceLed ? $this->typedPrice() : null;
 
         if ($price !== null) {
             return max(0, $base - min($price, $base));
@@ -799,7 +819,7 @@ new class extends Component {
         if ($this->step === 2) {
             if (! $this->courseIds) { $this->wizErrors['courses'] = 'Select at least one course.'; $this->dispatch('bbt-toast', tone: 'err', title: 'Select at least one course'); return; }
             if ($this->discountPct < 0 || $this->discountPct > 100) { $this->wizErrors['discount'] = 'Discount must be between 0 and 100%.'; return; }
-            if (trim($this->discountedPrice) !== '' && ($this->typedPrice() === null || $this->typedPrice() > $this->baseFee())) {
+            if ($this->priceLed && ($this->typedPrice() === null || $this->typedPrice() > $this->baseFee())) {
                 $this->wizErrors['discount'] = 'Enter the discounted price in whole rupees, no more than the course fee ('.\App\Support\Format::money($this->baseFee()).').';
 
                 return;
@@ -856,7 +876,7 @@ new class extends Component {
             'discount_pct' => $this->discountPct,
             // In rupees when a price was typed, so the challan bills exactly
             // that price rather than whatever the rounded percentage comes to.
-            'discount_amount' => $this->typedPrice() !== null ? $this->discountAmount() : null,
+            'discount_amount' => $this->priceLed && $this->typedPrice() !== null ? $this->discountAmount() : null,
             'discount_reason' => $this->discountReason,
             // Always stated, so an unticked box reaches the service as 0
             // rather than falling back to its per-course default.
@@ -938,7 +958,7 @@ new class extends Component {
             // Priced by what is actually being bought, not by courses.fee -
             // which for a modular course is not the price of anything.
             $base = (int) $selectedCourses->sum(fn (Course $c) => $c->priceFor($this->moduleIds[$c->id] ?? null));
-            $this->syncDiscountPct($base);
+            $this->syncDiscountFields($base);
             $disc = $this->discountAmount($base);
             $nextAdm = (int) (Counter::where('key', 'admission')->value('value') ?? 12);
             $nextStud = (int) (Counter::where('key', 'student:'.$this->newType)->value('value') ?? 1);
