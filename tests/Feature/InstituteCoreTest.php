@@ -356,6 +356,35 @@ class InstituteCoreTest extends TestCase
         $this->assertSame(18333, $result['challans'][0]->net_amount);
     }
 
+    /** Whichever box the officer types in, the other follows it. */
+    public function test_the_wizard_keeps_discount_percentage_and_price_in_step(): void
+    {
+        $this->actingAs($this->officer());
+        $course = Course::where('code', 'WD-101')->firstOrFail(); // 20,000
+
+        $page = Livewire::test('pages.registrations')
+            ->call('openWizard')
+            ->set('courseIds', [$course->id])
+            ->set('discountPct', 8.5)
+            ->assertSet('discountedPrice', '18300');
+
+        $page->set('discountedPrice', '15000')
+            ->assertSet('discountPct', 25.0)
+            ->assertSet('priceLed', true);
+
+        $this->assertSame(5000, $page->instance()->discountAmount());
+
+        // Back to the percentage: the price follows again.
+        $page->set('discountPct', 10)
+            ->assertSet('discountedPrice', '18000')
+            ->assertSet('priceLed', false);
+
+        // Cleared price, no discount.
+        $page->set('discountedPrice', '')
+            ->assertSet('discountPct', 0.0);
+        $this->assertSame(0, $page->instance()->discountAmount());
+    }
+
     public function test_a_discount_in_rupees_above_the_fee_is_rejected(): void
     {
         $before = Challan::count();
