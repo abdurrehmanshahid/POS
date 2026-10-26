@@ -50,6 +50,7 @@ class RolePermissionSeeder extends Seeder
             // it out of the box even though they cannot edit the catalog the
             // register is taken against.
             'attendance.manage',
+            'leads.manage',
             // Note: NOT students.manage, officers enrol students but do not
             // edit an existing student's identity (see Permissions::CATALOG).
         ]);

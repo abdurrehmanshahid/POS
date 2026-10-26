@@ -24,6 +24,7 @@ final class Nav
             ],
             'Operations' => [
                 ['route' => 'registrations', 'perm' => 'registrations.view', 'label' => 'Registrations', 'icon' => 'registrations'],
+                ['route' => 'leads', 'perm' => 'leads.manage', 'label' => 'Leads', 'icon' => 'users'],
                 ['route' => 'challans', 'perm' => 'challans.view', 'label' => 'Fee Challans', 'icon' => 'challans'],
             ],
             'Catalog & People' => [
@@ -79,6 +80,7 @@ final class Nav
                 ? 'Institute overview, reconciled figures'
                 : 'Your students, operational view'],
             'registrations' => ['Registrations', 'Enrol students and track status'],
+            'leads' => ['Leads', 'Enquiries and where each one stands'],
             'challans' => ['Fee Challans', 'Vouchers, payments and audit'],
             'courses' => ['Courses', 'Catalog, fees and capacity'],
             'cohorts' => ['Batches', 'Course intakes and their students'],
