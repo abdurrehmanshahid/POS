@@ -62,6 +62,9 @@ final class Permissions
         // Taking the register is a daily front-desk job, separate from editing
         // the catalog it happens against.
         'attendance.manage' => ['Take and review attendance',              'People and Catalog'],
+        // Leads are prospects, not records the institute is accountable for, so
+        // the front desk works them out of the box.
+        'leads.manage' => ['Manage leads',                              'Registrations and Fees'],
         'staff.view' => ['View staff and roles',                    'People and Catalog'],
         'staff.manage' => ['Manage staff, roles and permissions',     'People and Catalog'],
         'scope.all' => ['See ALL students, not only own-enrolled', 'Data scope'],

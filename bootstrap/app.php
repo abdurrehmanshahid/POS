@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Controllers\LeadWebhookController;
 use App\Http\Controllers\ReadinessController;
 use App\Http\Middleware\EnsureActiveUser;
 use App\Http\Middleware\EnsurePermission;
@@ -39,6 +40,11 @@ return Application::configure(basePath: dirname(__DIR__))
              * ReadinessController for why an empty body is the whole point.
              */
             Route::get('/ready', ReadinessController::class)->name('ready');
+
+            // Leads from Meta ads, pushed by Zapier/Make. Outside `web` for the
+            // same reason as /ready, and because a machine has no CSRF token.
+            Route::post('/webhooks/leads', LeadWebhookController::class)
+                ->middleware('throttle:60,1')->name('webhooks.leads');
 
             // The super admin panel is a separate guard on its own prefix.
             Route::middleware('web')->group(base_path('routes/superadmin.php'));
@@ -99,6 +105,6 @@ return Application::configure(basePath: dirname(__DIR__))
     })
     ->withExceptions(function (Exceptions $exceptions): void {
         $exceptions->shouldRenderJsonWhen(
-            fn (Request $request) => $request->is('api/*'),
+            fn (Request $request) => $request->is('api/*', 'webhooks/*'),
         );
     })->create();

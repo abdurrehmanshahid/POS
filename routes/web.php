@@ -50,6 +50,7 @@ Route::middleware('auth')->group(function () {
         // Each screen is permission-gated on the server, not just hidden in nav (spec §15).
         Volt::route('dashboard', 'pages.dashboard')->middleware('permission:dashboard.view')->name('dashboard');
         Volt::route('registrations', 'pages.registrations')->middleware('permission:registrations.view')->name('registrations');
+        Volt::route('leads', 'pages.leads')->middleware('permission:leads.manage')->name('leads');
         Volt::route('challans', 'pages.challans')->middleware('permission:challans.view')->name('challans');
         Volt::route('courses', 'pages.courses')->middleware('permission:courses.view')->name('courses');
         Volt::route('cohorts', 'pages.cohorts')->middleware('permission:cohorts.manage')->name('cohorts');
