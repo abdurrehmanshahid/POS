@@ -109,3 +109,17 @@ Schedule::command('queue:prune-failed', ['--hours' => 336])
     ->timezone(config('institute.timezone'))
     ->withoutOverlapping(30)
     ->onFailure(fn () => logger()->warning('Pruning failed_jobs did not complete.'));
+
+/*
+| New leads from the Meta lead forms, into Unread. Two minutes is as long as a
+| lead waits before somebody can see it; each run is a handful of small
+| requests, far inside Meta's rate limits.
+|
+| Scheduled only once the page and token are in .env, so a box that has not
+| been connected to Meta does not log a failure every two minutes.
+*/
+Schedule::command('leads:pull-meta')
+    ->everyTwoMinutes()
+    ->when(fn () => filled(config('services.meta.page_id')) && filled(config('services.meta.token')))
+    ->withoutOverlapping(5)
+    ->onFailure(fn () => logger()->warning('Pulling leads from Meta failed — see leads:pull-meta.'));
