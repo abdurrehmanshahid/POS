@@ -33,6 +33,14 @@ return [
         'webhook_token' => env('LEADS_WEBHOOK_TOKEN'),
     ],
 
+    // Reading leads straight from the page's Meta lead forms (leads:pull-meta).
+    // With either of the first two unset, nothing is scheduled.
+    'meta' => [
+        'page_id' => env('META_PAGE_ID'),
+        'token' => env('META_LEADS_TOKEN'),
+        'graph_version' => env('META_GRAPH_VERSION', 'v24.0'),
+    ],
+
     'slack' => [
         'notifications' => [
             'bot_user_oauth_token' => env('SLACK_BOT_USER_OAUTH_TOKEN'),
